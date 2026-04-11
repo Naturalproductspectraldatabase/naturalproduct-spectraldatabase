@@ -4096,66 +4096,54 @@ def show_overview_page(all_compounds_df):
 
     left, right = st.columns(2)
 
-with left:
-    st.markdown('<div class="chart-card">', unsafe_allow_html=True)
-    section_header("Compound Distribution")
+    with left:
+        st.markdown('<div class="chart-card">', unsafe_allow_html=True)
+        section_header("Compound Distribution")
 
-    if filtered_df.empty:
-        st.info("No compounds available for the selected filters.")
-    else:
-        class_counts = (
-            filtered_df["compound_class"]
-            .fillna("Uncategorized")
-            .replace("", "Uncategorized")
-            .value_counts()
-            .reset_index()
-        )
-        class_counts.columns = ["Compound Class", "Count"]
+        if filtered_df.empty:
+            st.info("No compounds available for the selected filters.")
+        else:
+            class_counts = (
+                filtered_df["compound_class"]
+                .fillna("Uncategorized")
+                .replace("", "Uncategorized")
+                .value_counts()
+                .reset_index()
+            )
+            class_counts.columns = ["Compound Class", "Count"]
 
-        render_dashboard_bar_chart(
-            class_counts,
-            x_col="Compound Class",
-            y_col="Count",
-            color_hex="#61D8ED",  # CYAN
-        )
+            render_dashboard_bar_chart(
+                class_counts,
+                x_col="Compound Class",
+                y_col="Count",
+                color_hex="#61D8ED",
+            )
 
-    st.markdown('</div>', unsafe_allow_html=True)
-
-
-with right:
-    st.markdown('<div class="chart-card">', unsafe_allow_html=True)
-    section_header("Source Material Distribution")
-
-    if filtered_df.empty:
-        st.info("No compounds available for the selected filters.")
-    else:
-        source_counts = (
-            filtered_df["source_material"]
-            .fillna("Uncategorized")
-            .replace("", "Uncategorized")
-            .value_counts()
-            .reset_index()
-        )
-        source_counts.columns = ["Source Material", "Count"]
-
-        render_dashboard_bar_chart(
-            source_counts,
-            x_col="Source Material",
-            y_col="Count",
-            color_hex="#9C63F1",  # PURPLE
-        )
-
-    st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
     with right:
         st.markdown('<div class="chart-card">', unsafe_allow_html=True)
         section_header("Source Material Distribution")
+
         if filtered_df.empty:
-            st.info("No source-material data available for the current dashboard filters.")
+            st.info("No compounds available for the selected filters.")
         else:
-            source_counts = filtered_df["source_material"].fillna("Unspecified").replace("", "Unspecified").value_counts().reset_index()
+            source_counts = (
+                filtered_df["source_material"]
+                .fillna("Uncategorized")
+                .replace("", "Uncategorized")
+                .value_counts()
+                .reset_index()
+            )
             source_counts.columns = ["Source Material", "Count"]
-            st.bar_chart(source_counts.set_index("Source Material"))
+
+            render_dashboard_bar_chart(
+                source_counts,
+                x_col="Source Material",
+                y_col="Count",
+                color_hex="#9C63F1",
+            )
+
         st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="quick-browse-card">', unsafe_allow_html=True)
