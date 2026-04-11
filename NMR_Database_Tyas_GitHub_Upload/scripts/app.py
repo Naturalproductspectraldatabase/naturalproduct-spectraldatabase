@@ -281,7 +281,10 @@ def get_secret_object(*keys: str):
 def load_approved_users() -> list[dict[str, str]]:
     raw_users = get_secret_object("NPDB_APPROVED_USERS", "approved_users")
     if isinstance(raw_users, dict):
-        iterable = [{"username": username, "password": password} for username, password in raw_users.items()]
+        iterable = [
+            {"username": username, "password": password}
+            for username, password in raw_users.items()
+        ]
     elif isinstance(raw_users, list):
         iterable = raw_users
     else:
@@ -295,14 +298,17 @@ def load_approved_users() -> list[dict[str, str]]:
         password = str(item.get("password", "")).strip()
         role = str(item.get("role", "viewer")).strip() or "viewer"
         if username and password:
-            users.append({"username": username, "password": password, "role": role})
+            users.append(
+                {"username": username, "password": password, "role": role}
+            )
     return users
 
 
- def load_approved_names() -> list[str]:
+def load_approved_names() -> list[str]:
     raw_names = get_secret_object("NPDB_APPROVED_NAMES", "approved_names")
     if not isinstance(raw_names, list):
         return []
+
     names = []
     for item in raw_names:
         text = str(item).strip() if item is not None else ""
@@ -324,7 +330,7 @@ def is_access_gate_enabled() -> bool:
         or load_approved_names()
     )
 
-def load_approved_names()
+
 def verify_access_gate():
     if not is_access_gate_enabled():
         return
@@ -332,9 +338,15 @@ def verify_access_gate():
     if st.session_state.get("npdb_authenticated"):
         return
 
-    expected_username = get_secret_setting("NPDB_ACCESS_USERNAME", "access_username")
-    expected_password = get_secret_setting("NPDB_ACCESS_PASSWORD", "access_password")
-    approved_password = get_secret_setting("NPDB_APPROVED_PASSWORD", "approved_password")
+    expected_username = get_secret_setting(
+        "NPDB_ACCESS_USERNAME", "access_username"
+    )
+    expected_password = get_secret_setting(
+        "NPDB_ACCESS_PASSWORD", "access_password"
+    )
+    approved_password = get_secret_setting(
+        "NPDB_APPROVED_PASSWORD", "approved_password"
+    )
     approved_users = load_approved_users()
     approved_names = load_approved_names()
 
@@ -376,7 +388,9 @@ def verify_access_gate():
     with st.form("npdb_access_gate"):
         username = st.text_input("Username", value="")
         password = st.text_input("Password", value="", type="password")
-        submitted = st.form_submit_button("Open Database", use_container_width=True)
+        submitted = st.form_submit_button(
+            "Open Database", use_container_width=True
+        )
 
     if submitted:
         authenticated = False
@@ -384,23 +398,36 @@ def verify_access_gate():
 
         if approved_users:
             for user in approved_users:
-                username_ok = hmac.compare_digest(username.strip(), user["username"])
-                password_ok = hmac.compare_digest(password, user["password"])
+                username_ok = hmac.compare_digest(
+                    username.strip(), user["username"]
+                )
+                password_ok = hmac.compare_digest(
+                    password, user["password"]
+                )
                 if username_ok and password_ok:
                     authenticated = True
                     matched_role = user.get("role", "viewer")
                     break
+
         elif approved_names and approved_password:
             submitted_username = str(username).strip() if username is not None else ""
             if submitted_username.lower().startswith("npdb_"):
                 submitted_name = submitted_username[5:]
                 submitted_slug = normalize_login_slug(submitted_name)
-                allowed_slugs = {normalize_login_slug(name) for name in approved_names}
-                if submitted_slug in allowed_slugs and hmac.compare_digest(password, approved_password):
+                allowed_slugs = {
+                    normalize_login_slug(name) for name in approved_names
+                }
+                if (
+                    submitted_slug in allowed_slugs
+                    and hmac.compare_digest(password, approved_password)
+                ):
                     authenticated = True
                     matched_role = "approved-viewer"
+
         else:
-            username_ok = True if not expected_username else hmac.compare_digest(username.strip(), expected_username)
+            username_ok = True if not expected_username else hmac.compare_digest(
+                username.strip(), expected_username
+            )
             password_ok = hmac.compare_digest(password, expected_password)
             authenticated = username_ok and password_ok
 
@@ -409,6 +436,7 @@ def verify_access_gate():
             st.session_state["npdb_username"] = username.strip()
             st.session_state["npdb_role"] = matched_role
             st.rerun()
+
         st.error("Access denied. Please check the approved credentials.")
 
     st.stop()
