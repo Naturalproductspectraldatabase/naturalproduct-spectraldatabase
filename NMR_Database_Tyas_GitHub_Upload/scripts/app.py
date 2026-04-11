@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import pandas as pd
+import plotly.express as px
 import streamlit as st
 
 # =========================
@@ -4094,7 +4095,7 @@ def show_overview_page(all_compounds_df):
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-       left, right = st.columns(2)
+    left, right = st.columns(2)
 
     with left:
         st.markdown('<div class="chart-card">', unsafe_allow_html=True)
