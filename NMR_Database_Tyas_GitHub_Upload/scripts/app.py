@@ -299,20 +299,21 @@ def load_approved_users() -> list[dict[str, str]]:
     return users
 
 
-def load_approved_names() -> list[str]:
+ def load_approved_names() -> list[str]:
     raw_names = get_secret_object("NPDB_APPROVED_NAMES", "approved_names")
     if not isinstance(raw_names, list):
         return []
     names = []
     for item in raw_names:
-        text = maybe_blank(item)
+        text = str(item).strip() if item is not None else ""
         if text:
             names.append(text)
     return names
 
 
 def normalize_login_slug(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", maybe_blank(value).lower())
+    text = str(value).strip().lower() if value is not None else ""
+    return re.sub(r"[^a-z0-9]+", "", text)
 
 
 def is_access_gate_enabled() -> bool:
@@ -323,7 +324,7 @@ def is_access_gate_enabled() -> bool:
         or load_approved_names()
     )
 
-
+def load_approved_names()
 def verify_access_gate():
     if not is_access_gate_enabled():
         return
