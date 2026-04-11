@@ -391,7 +391,7 @@ def verify_access_gate():
                     matched_role = user.get("role", "viewer")
                     break
         elif approved_names and approved_password:
-            submitted_username = maybe_blank(username)
+            submitted_username = str(username).strip() if username is not None else ""
             if submitted_username.lower().startswith("npdb_"):
                 submitted_name = submitted_username[5:]
                 submitted_slug = normalize_login_slug(submitted_name)
