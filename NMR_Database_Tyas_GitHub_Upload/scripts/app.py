@@ -1112,6 +1112,45 @@ ensure_compounds_schema()
 # =========================
 # Generic helpers
 # =========================
+def render_dashboard_bar_chart(dataframe, x_col, y_col, color_hex):
+    fig = px.bar(
+        dataframe,
+        x=x_col,
+        y=y_col,
+        text=y_col,
+    )
+
+    fig.update_traces(
+        marker=dict(
+            color=color_hex,
+            line=dict(color="rgba(255,255,255,0.15)", width=1)
+        ),
+        textposition="outside",
+        hovertemplate=f"<b>%{{x}}</b><br>{y_col}: %{{y}}<extra></extra>",
+    )
+
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#C9D4E0", size=13),
+        margin=dict(l=10, r=10, t=10, b=10),
+        showlegend=False,
+        height=320,
+        bargap=0.4,
+    )
+
+    fig.update_xaxes(
+        showgrid=False,
+        color="#9FB0C3",
+    )
+
+    fig.update_yaxes(
+        gridcolor="rgba(255,255,255,0.08)",
+        zeroline=False,
+        color="#9FB0C3",
+    )
+
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 def clean_text(value):
     if pd.isna(value) or value is None:
         return "-"
