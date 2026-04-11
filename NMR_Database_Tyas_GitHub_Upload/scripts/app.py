@@ -3921,169 +3921,233 @@ def show_overview_page(all_compounds_df):
         dashboard_class_filter = st.selectbox(
             "Compound Class",
             build_filter_options(all_compounds_df, "compound_class"),
-         st.markdown(
-    f"""
-    <div class="metric-strip">
-        <div class="metric-cell">
-            <div class="metric-strip-value">{len(filtered_df)}</div>
-            <div class="metric-strip-label">Compounds</div>
-        </div>
-        <div class="metric-cell">
-            <div class="metric-strip-value">{proton_count}</div>
-            <div class="metric-strip-label">1H Peaks</div>
-        </div>
-        <div class="metric-cell">
-            <div class="metric-strip-value">{carbon_count}</div>
-            <div class="metric-strip-label">13C Peaks</div>
-        </div>
-        <div class="metric-cell">
-            <div class="metric-strip-value">{spectra_count}</div>
-            <div class="metric-strip-label">Spectra Files</div>
-        </div>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
-
-st.markdown(
-    f"""
-    <div class="metric-strip" style="margin-top:-0.1rem;">
-        <div class="metric-cell">
-            <div class="metric-strip-value">{health["structure_ready"]}</div>
-            <div class="metric-strip-label">Structure IDs Ready</div>
-        </div>
-        <div class="metric-cell">
-            <div class="metric-strip-value">{health["reference_ready"]}</div>
-            <div class="metric-strip-label">Reference Ready</div>
-        </div>
-        <div class="metric-cell">
-            <div class="metric-strip-value">{health["external_ready"]}</div>
-            <div class="metric-strip-label">Drive-linked Records</div>
-        </div>
-        <div class="metric-cell">
-            <div class="metric-strip-value">{health["submission_ready"]}</div>
-            <div class="metric-strip-label">Submission-ready Metadata</div>
-        </div>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
-
-    insight_left, insight_right = st.columns([1.25, 1])
-    with insight_left:
-        render_helper_card(
-            "Curation priorities",
-            "Prioritize records that still miss SMILES/InChI/InChIKey, citation metadata, or external raw-data links. Those three areas will have the biggest effect on future structure search, reproducibility, and public usability.",
+            key="dashboard_class"
         )
-    with insight_right:
-        render_helper_card(
-            "Public access readiness",
-            "For public small-scale access, keep preview images lightweight, keep raw data in Google Drive, and make sure each shared file has viewer permission for approved users.",
+        dashboard_subclass_filter = st.selectbox(
+            "Compound Subclass",
+            build_filter_options(all_compounds_df, "compound_subclass"),
+            key="dashboard_subclass"
+        )
+        dashboard_source_filter = st.selectbox(
+            "Source Material",
+            build_filter_options(all_compounds_df, "source_material"),
+            key="dashboard_source"
+        )
+        dashboard_data_source_filter = st.selectbox(
+            "Data Source",
+            build_filter_options(all_compounds_df, "data_source"),
+            key="dashboard_data_source"
         )
 
-    section_header("Quick Actions")
+    filtered_df = apply_dataframe_filters(
+        all_compounds_df,
+        class_filter=dashboard_class_filter,
+        subclass_filter=dashboard_subclass_filter,
+        source_filter=dashboard_source_filter,
+        data_source_filter=dashboard_data_source_filter
+    )
+
+    filtered_ids = filtered_df["id"].tolist()
+    proton_count, carbon_count, spectra_count = count_related_records(filtered_ids)
+    health = calculate_workspace_health(filtered_df)
+
+    st.markdown(
+        f"""
+        <div class="metric-strip">
+            <div class="metric-cell">
+                <div class="metric-strip-value">{len(filtered_df)}</div>
+                <div class="metric-strip-label">Compounds</div>
+            </div>
+            <div class="metric-cell">
+                <div class="metric-strip-value">{proton_count}</div>
+                <div class="metric-strip-label">1H Peaks</div>
+            </div>
+            <div class="metric-cell">
+                <div class="metric-strip-value">{carbon_count}</div>
+                <div class="metric-strip-label">13C Peaks</div>
+            </div>
+            <div class="metric-cell">
+                <div class="metric-strip-value">{spectra_count}</div>
+                <div class="metric-strip-label">Spectra Files</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    st.markdown(
+        f"""
+        <div class="metric-strip" style="margin-top:-0.1rem;">
+            <div class="metric-cell">
+                <div class="metric-strip-value">{health["structure_ready"]}</div>
+                <div class="metric-strip-label">Structure IDs Ready</div>
+            </div>
+            <div class="metric-cell">
+                <div class="metric-strip-value">{health["reference_ready"]}</div>
+                <div class="metric-strip-label">Reference Ready</div>
+            </div>
+            <div class="metric-cell">
+                <div class="metric-strip-value">{health["external_ready"]}</div>
+                <div class="metric-strip-label">Drive-linked Records</div>
+            </div>
+            <div class="metric-cell">
+                <div class="metric-strip-value">{health["submission_ready"]}</div>
+                <div class="metric-strip-label">Submission-ready Metadata</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    st.markdown(
+        """
+        <div class="insight-grid">
+            <div class="insight-card">
+                <div class="insight-title">Curation priorities</div>
+                <div class="insight-text">
+                    Prioritize records that still miss SMILES, InChI, InChIKey, citation metadata,
+                    and external raw-data links. These areas will have the biggest effect on future
+                    search, reproducibility, and public usability.
+                </div>
+            </div>
+            <div class="insight-card">
+                <div class="insight-title">Public access readiness</div>
+                <div class="insight-text">
+                    For public small-scale access, keep preview images lightweight, keep raw data in
+                    Google Drive, and make sure each shared file has viewer permission for approved users.
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    st.markdown('<div class="quick-actions-card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title" style="font-size:1.55rem;">Quick Actions</div>', unsafe_allow_html=True)
+
     qa1, qa2, qa3, qa4 = st.columns(4)
 
     with qa1:
-        if st.button("Keyword Search", use_container_width=True, key="overview_search_name"):
+        st.markdown('<div class="quick-action-primary">', unsafe_allow_html=True)
+        if st.button("Keyword Search", use_container_width=True, key="overview_keyword_search"):
             set_main_nav("Search & Match")
-            st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
     with qa2:
-        if st.button("Run Spectral Match", use_container_width=True, key="overview_search_nmr"):
+        st.markdown('<div class="quick-action-secondary">', unsafe_allow_html=True)
+        if st.button("Run Spectral Match", use_container_width=True, key="overview_spectral_match"):
             set_main_nav("Search & Match")
-            st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
     with qa3:
-        if st.button("Start Submission", use_container_width=True, key="overview_add_compound"):
+        st.markdown('<div class="quick-action-secondary">', unsafe_allow_html=True)
+        if st.button("Start Submission", use_container_width=True, key="overview_start_submission"):
             set_main_nav("Compound Workspace")
             set_compound_page("New Submission")
-            st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
     with qa4:
-        if st.button("Browse Records", use_container_width=True, key="overview_open_detail"):
+        st.markdown('<div class="quick-action-secondary">', unsafe_allow_html=True)
+        if st.button("Browse Records", use_container_width=True, key="overview_browse_records"):
             set_main_nav("Compound Workspace")
             set_compound_page("Browse Record")
-            st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    left, right = st.columns([1.25, 1])
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    left, right = st.columns(2)
 
     with left:
+        st.markdown('<div class="chart-card">', unsafe_allow_html=True)
         section_header("Compound Distribution")
         if filtered_df.empty:
-            st.info("No compounds available for the selected filters.")
+            st.info("No compound records match the current dashboard filters.")
         else:
-            class_counts = filtered_df["compound_class"].fillna("Uncategorized").value_counts()
-            st.bar_chart(class_counts)
+            class_counts = filtered_df["compound_class"].fillna("Unspecified").replace("", "Unspecified").value_counts().reset_index()
+            class_counts.columns = ["Compound Class", "Count"]
+            st.bar_chart(class_counts.set_index("Compound Class"))
+        st.markdown('</div>', unsafe_allow_html=True)
 
     with right:
+        st.markdown('<div class="chart-card">', unsafe_allow_html=True)
         section_header("Source Material Distribution")
         if filtered_df.empty:
-            st.info("No compounds available for the selected filters.")
+            st.info("No source-material data available for the current dashboard filters.")
         else:
-            source_counts = filtered_df["source_material"].fillna("Uncategorized").value_counts()
-            st.bar_chart(source_counts)
+            source_counts = filtered_df["source_material"].fillna("Unspecified").replace("", "Unspecified").value_counts().reset_index()
+            source_counts.columns = ["Source Material", "Count"]
+            st.bar_chart(source_counts.set_index("Source Material"))
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    section_header("Quick Browse")
-    if filtered_df.empty:
-        st.info("No compounds available for the selected filters.")
-    else:
-        browse_limit = st.slider("Number of compounds to preview", min_value=3, max_value=20, value=8)
-        for _, row in filtered_df.head(browse_limit).iterrows():
-            c1, c2 = st.columns([5, 1])
-            with c1:
-                render_compound_card(row)
-            with c2:
-                st.write("")
-                if st.button("Open", key=f"overview_open_{row['id']}"):
-                    open_compound_detail(int(row["id"]))
-                    st.rerun()
-
-    section_header("Compound Table")
-    if filtered_df.empty:
-        st.info("No rows available.")
-    else:
-        display_df = filtered_df[
-            [
-                "id",
-                "trivial_name",
-                "molecular_formula",
-                "compound_class",
-                "compound_subclass",
-                "source_material",
-                "sample_code"
-            ]
-        ].rename(columns={
-            "id": "ID",
-            "trivial_name": "Trivial Name",
-            "molecular_formula": "Molecular Formula",
-            "compound_class": "Compound Class",
-            "compound_subclass": "Compound Subclass",
-            "source_material": "Source Material",
-            "sample_code": "Sample Code"
-        })
-
-        st.download_button(
-            label="Download Current Overview as CSV",
-            data=dataframe_to_csv_bytes(display_df),
-            file_name="overview_filtered_compounds.csv",
-            mime="text/csv",
-            key="download_overview_csv"
-        )
-
-        st.dataframe(display_df, width="stretch", hide_index=True)
-
-    section_header("Backup")
-    backup_filename = f"nmr_database_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
-    st.download_button(
-        label="Download SQLite Backup",
-        data=get_backup_bytes(),
-        file_name=backup_filename,
-        mime="application/octet-stream",
-        key="download_db_backup"
+    st.markdown('<div class="quick-browse-card">', unsafe_allow_html=True)
+    section_header("Quick Browse", "Card-based browsing for faster scanning than a dense table.")
+    preview_count = st.slider(
+        "Number of compounds to preview",
+        min_value=1,
+        max_value=max(1, min(12, len(filtered_df) if not filtered_df.empty else 1)),
+        value=min(8, max(1, len(filtered_df) if not filtered_df.empty else 1)),
+        key="overview_preview_count"
     )
 
+    if filtered_df.empty:
+        st.info("No compounds match the current dashboard filters.")
+    else:
+        preview_df = filtered_df.head(preview_count)
+        for _, row in preview_df.iterrows():
+            st.markdown('<div class="compound-card">', unsafe_allow_html=True)
+            st.markdown(f"### {clean_text(row.get('trivial_name'))}")
+            st.caption(clean_text(row.get("molecular_formula")))
+            st.markdown(
+                f"""
+                <div class="info-chip-row">
+                    <span class="info-chip">Class: {clean_text(row.get('compound_class'))}</span>
+                    <span class="info-chip">Subclass: {clean_text(row.get('compound_subclass'))}</span>
+                    <span class="info-chip">Source: {clean_text(row.get('source_material'))}</span>
+                    <span class="info-chip">Sample: {clean_text(row.get('sample_code'))}</span>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            if st.button("Open", key=f"overview_open_{int(row['id'])}"):
+                open_compound_detail(int(row["id"]))
+            st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
+    section_header("Compound Table", "Full filtered table view for exact inspection and export.")
+    if filtered_df.empty:
+        st.info("No compounds to display.")
+    else:
+        export_columns = [
+            "id",
+            "trivial_name",
+            "molecular_formula",
+            "compound_class",
+            "compound_subclass",
+            "source_material",
+            "sample_code",
+        ]
+        export_df = filtered_df[[col for col in export_columns if col in filtered_df.columns]].copy()
+        st.download_button(
+            "Download Current Overview as CSV",
+            data=dataframe_to_csv_bytes(export_df),
+            file_name="dashboard_overview.csv",
+            mime="text/csv",
+            key="dashboard_export_csv"
+        )
+        st.dataframe(export_df, use_container_width=True)
+
+    section_header("Backup")
+    if DB_PATH.exists():
+        st.download_button(
+            "Download SQLite Backup",
+            data=DB_PATH.read_bytes(),
+            file_name="nmr_backup.db",
+            mime="application/octet-stream",
+            key="dashboard_backup_db"
+        )
+    else:
+        st.warning("Database file not found.")
+        
 def show_guide_page():
     section_header("Guide", "Complete usage, submission, storage, and access guidance for this database.")
 
