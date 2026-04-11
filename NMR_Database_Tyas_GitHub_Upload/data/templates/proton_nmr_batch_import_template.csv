@@ -1,0 +1,2 @@
+compound_id,compound_name,delta_ppm,multiplicity,j_value,proton_count,assignment,solvent,instrument_mhz,note
+,TEMPLATE_Existing_Compound_Name,1.55,m,,2H,H-1a,CDCl3,500.0,Delete or replace this template row before import.

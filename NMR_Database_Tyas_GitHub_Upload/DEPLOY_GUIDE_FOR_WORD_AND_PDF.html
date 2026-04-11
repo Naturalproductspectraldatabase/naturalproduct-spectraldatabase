@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Natural Product Spectral Database Deployment Guide</title>
+  <style>
+    body { font-family: Georgia, "Times New Roman", serif; line-height: 1.6; color: #1f2937; max-width: 900px; margin: 40px auto; padding: 0 24px; }
+    h1, h2, h3 { color: #0f172a; }
+    h1 { border-bottom: 2px solid #cbd5e1; padding-bottom: 10px; }
+    code, pre { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; }
+    code { padding: 2px 6px; }
+    pre { padding: 12px; overflow-x: auto; }
+    .note { background: #eff6ff; border-left: 4px solid #2563eb; padding: 12px 14px; margin: 16px 0; }
+    .warn { background: #fff7ed; border-left: 4px solid #ea580c; padding: 12px 14px; margin: 16px 0; }
+  </style>
+</head>
+<body>
+  <h1>Natural Product Spectral Database: Step-by-Step Deploy Guide</h1>
+
+  <p>Dokumen ini dibuat supaya kamu bisa mengikuti langkah deploy dengan pelan, jelas, dan minim istilah teknis.</p>
+
+  <div class="note">
+    <strong>Target URL yang disarankan:</strong><br>
+    <code>https://naturalproduct-spectraldatabase.streamlit.app</code>
+  </div>
+
+  <h2>Bagian 1. Yang Sudah Kamu Punya</h2>
+  <ol>
+    <li>Akun GitHub</li>
+    <li>Akun Streamlit Community Cloud</li>
+    <li>Akun Supabase</li>
+  </ol>
+
+  <h2>Bagian 2. Repository GitHub</h2>
+  <ol>
+    <li>Masuk ke GitHub.</li>
+    <li>Klik <code>New repository</code>.</li>
+    <li>Nama repo: <code>naturalproduct-spectraldatabase</code>.</li>
+    <li>Pilih <code>Public</code>.</li>
+    <li>Klik <code>Create repository</code>.</li>
+  </ol>
+
+  <div class="warn">
+    <strong>Jangan upload file ini ke GitHub:</strong><br>
+    <code>.streamlit/secrets.toml</code>
+  </div>
+
+  <h2>Bagian 3. File yang Perlu Diupload ke GitHub</h2>
+  <p>Upload isi folder project <code>Desktop/NMR_Database_Tyas</code> ke repo.</p>
+
+  <h2>Bagian 4. Buat Database Supabase</h2>
+  <ol>
+    <li>Masuk ke Supabase.</li>
+    <li>Klik <code>New project</code>.</li>
+    <li>Setelah project jadi, buka <code>SQL Editor</code>.</li>
+    <li>Buka file lokal <code>database/supabase_schema.sql</code>.</li>
+    <li>Copy seluruh isinya.</li>
+    <li>Paste ke SQL Editor.</li>
+    <li>Klik <code>Run</code>.</li>
+  </ol>
+
+  <h2>Bagian 5. Import Data Lama ke Supabase</h2>
+  <p>File CSV sudah disiapkan di:</p>
+  <pre>/Users/triandatyas/Desktop/NMR_Database_Tyas/data/exports/supabase_import/</pre>
+
+  <p>Import dengan urutan ini:</p>
+  <ol>
+    <li><code>compounds.csv</code></li>
+    <li><code>proton_nmr.csv</code></li>
+    <li><code>carbon_nmr.csv</code></li>
+    <li><code>spectra_files.csv</code></li>
+  </ol>
+
+  <h2>Bagian 6. Deploy di Streamlit Cloud</h2>
+  <p>Saat klik <code>Create app</code>, isi seperti ini:</p>
+  <ol>
+    <li><strong>Repository</strong>: repo GitHub kamu</li>
+    <li><strong>Branch</strong>: <code>main</code></li>
+    <li><strong>Main file path</strong>: <code>scripts/app.py</code></li>
+    <li><strong>App URL</strong>: <code>naturalproduct-spectraldatabase</code></li>
+  </ol>
+
+  <h2>Bagian 7. Isi Secrets</h2>
+  <p>Paste ini di <code>Advanced settings &gt; Secrets</code>:</p>
+  <pre>NPDB_APPROVED_PASSWORD = "OnnamideA13."
+NPDB_APPROVED_NAMES = ["tyas", "sensei"]</pre>
+
+  <p>Lalu tambahkan nilai Supabase setelah tersedia:</p>
+  <pre>SUPABASE_URL = "https://your-project.supabase.co"
+SUPABASE_ANON_KEY = "your-anon-key"</pre>
+
+  <h2>Bagian 8. Login User</h2>
+  <p>Format login:</p>
+  <ol>
+    <li>Username: <code>npdb_tyas</code></li>
+    <li>Username: <code>npdb_sensei</code></li>
+    <li>Password: <code>OnnamideA13.</code></li>
+  </ol>
+
+  <h2>Bagian 9. Backup Lokal</h2>
+  <p>Kalau hosting bermasalah, jalankan app lokal:</p>
+  <pre>streamlit run /Users/triandatyas/Desktop/NMR_Database_Tyas/scripts/app.py</pre>
+  <p>Lalu buka dari HP di Wi-Fi yang sama:</p>
+  <pre>http://IP_LAPTOP:8501</pre>
+
+  <h2>Bagian 10. Cara Menjadi PDF</h2>
+  <ol>
+    <li>Buka file HTML ini di browser.</li>
+    <li>Tekan <code>Cmd + P</code>.</li>
+    <li>Pilih <code>Save as PDF</code>.</li>
+  </ol>
+
+  <h2>Bagian 11. Cara Membuka di Word</h2>
+  <ol>
+    <li>Buka file HTML ini dengan Microsoft Word.</li>
+    <li>Word biasanya bisa membaca format HTML.</li>
+    <li>Lalu simpan sebagai dokumen Word jika kamu mau.</li>
+  </ol>
+
+  <div class="note">
+    Jika ada satu layar yang membuatmu ragu, berhenti di sana dan kirimkan screenshot atau tulisan yang muncul. Saya lanjutkan dari titik itu.
+  </div>
+</body>
+</html>
