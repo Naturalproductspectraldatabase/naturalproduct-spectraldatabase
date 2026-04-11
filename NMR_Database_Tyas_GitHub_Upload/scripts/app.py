@@ -1661,9 +1661,9 @@ def render_sidebar_workspace_summary(active_section: str, all_compounds_df: pd.D
 
     st.markdown(
         f"""
-        <div class="sidebar-note">
-            <strong>{active_copy['title']}</strong><br><br>
-            {active_copy['summary']}
+        <div class="helper-card">
+            <div class="helper-title">{active_copy['title']}</div>
+            <div class="helper-text">{active_copy['summary']}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -4147,7 +4147,6 @@ def show_overview_page(all_compounds_df):
         )
     else:
         st.warning("Database file not found.")
-        
 def show_guide_page():
     section_header("Guide", "Complete usage, submission, storage, and access guidance for this database.")
 
