@@ -1661,9 +1661,9 @@ def render_sidebar_workspace_summary(active_section: str, all_compounds_df: pd.D
 
     st.markdown(
         f"""
-        <div class="helper-card">
-            <div class="helper-title">{active_copy['title']}</div>
-            <div class="helper-text">{active_copy['summary']}</div>
+        <div class="sidebar-note">
+            <strong>{active_copy['title']}</strong><br><br>
+            {active_copy['summary']}
         </div>
         """,
         unsafe_allow_html=True,
@@ -3915,7 +3915,7 @@ def show_search_page(all_compounds_df):
 # Overview page
 # =========================
 def show_overview_page(all_compounds_df):
-    section_header("Dashboard", "Overview of records, readiness, and curation status.")
+    section_header("Dashboard")
 
     with st.sidebar.expander("Dashboard Filters", expanded=True):
         dashboard_class_filter = st.selectbox(
@@ -4029,32 +4029,28 @@ def show_overview_page(all_compounds_df):
 
     with qa1:
         st.markdown('<div class="quick-action-primary">', unsafe_allow_html=True)
-        if st.button("Keyword Search", use_container_width=True, key="overview_search_name"):
+        if st.button("Keyword Search", use_container_width=True, key="overview_keyword_search"):
             set_main_nav("Search & Match")
-            st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
     with qa2:
         st.markdown('<div class="quick-action-secondary">', unsafe_allow_html=True)
-        if st.button("Run Spectral Match", use_container_width=True, key="overview_search_nmr"):
+        if st.button("Run Spectral Match", use_container_width=True, key="overview_spectral_match"):
             set_main_nav("Search & Match")
-            st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
     with qa3:
         st.markdown('<div class="quick-action-secondary">', unsafe_allow_html=True)
-        if st.button("Start Submission", use_container_width=True, key="overview_add_compound"):
+        if st.button("Start Submission", use_container_width=True, key="overview_start_submission"):
             set_main_nav("Compound Workspace")
             set_compound_page("New Submission")
-            st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
     with qa4:
         st.markdown('<div class="quick-action-secondary">', unsafe_allow_html=True)
-        if st.button("Browse Records", use_container_width=True, key="overview_open_detail"):
+        if st.button("Browse Records", use_container_width=True, key="overview_browse_records"):
             set_main_nav("Compound Workspace")
             set_compound_page("Browse Record")
-            st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('</div>', unsafe_allow_html=True)
@@ -4067,13 +4063,7 @@ def show_overview_page(all_compounds_df):
         if filtered_df.empty:
             st.info("No compound records match the current dashboard filters.")
         else:
-            class_counts = (
-                filtered_df["compound_class"]
-                .fillna("Unspecified")
-                .replace("", "Unspecified")
-                .value_counts()
-                .reset_index()
-            )
+            class_counts = filtered_df["compound_class"].fillna("Unspecified").replace("", "Unspecified").value_counts().reset_index()
             class_counts.columns = ["Compound Class", "Count"]
             st.bar_chart(class_counts.set_index("Compound Class"))
         st.markdown('</div>', unsafe_allow_html=True)
@@ -4084,32 +4074,25 @@ def show_overview_page(all_compounds_df):
         if filtered_df.empty:
             st.info("No source-material data available for the current dashboard filters.")
         else:
-            source_counts = (
-                filtered_df["source_material"]
-                .fillna("Unspecified")
-                .replace("", "Unspecified")
-                .value_counts()
-                .reset_index()
-            )
+            source_counts = filtered_df["source_material"].fillna("Unspecified").replace("", "Unspecified").value_counts().reset_index()
             source_counts.columns = ["Source Material", "Count"]
             st.bar_chart(source_counts.set_index("Source Material"))
         st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="quick-browse-card">', unsafe_allow_html=True)
     section_header("Quick Browse", "Card-based browsing for faster scanning than a dense table.")
+    preview_count = st.slider(
+        "Number of compounds to preview",
+        min_value=1,
+        max_value=max(1, min(12, len(filtered_df) if not filtered_df.empty else 1)),
+        value=min(8, max(1, len(filtered_df) if not filtered_df.empty else 1)),
+        key="overview_preview_count"
+    )
 
     if filtered_df.empty:
         st.info("No compounds match the current dashboard filters.")
     else:
-        preview_count = st.slider(
-            "Number of compounds to preview",
-            min_value=1,
-            max_value=max(1, min(12, len(filtered_df))),
-            value=min(8, max(1, len(filtered_df))),
-            key="overview_preview_count"
-        )
         preview_df = filtered_df.head(preview_count)
-
         for _, row in preview_df.iterrows():
             st.markdown('<div class="compound-card">', unsafe_allow_html=True)
             st.markdown(f"### {clean_text(row.get('trivial_name'))}")
@@ -4127,9 +4110,7 @@ def show_overview_page(all_compounds_df):
             )
             if st.button("Open", key=f"overview_open_{int(row['id'])}"):
                 open_compound_detail(int(row["id"]))
-                st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
-
     st.markdown('</div>', unsafe_allow_html=True)
 
     section_header("Compound Table", "Full filtered table view for exact inspection and export.")
@@ -4166,6 +4147,1406 @@ def show_overview_page(all_compounds_df):
         )
     else:
         st.warning("Database file not found.")
+        
+def show_guide_page():
+    section_header("Guide", "Complete usage, submission, storage, and access guidance for this database.")
+
+    intro_left, intro_right = st.columns([1.2, 1])
+    with intro_left:
+        render_helper_card(
+            "What this web app is for",
+            "This database is designed to connect compounds, structural metadata, spectra previews, raw-data references, and publication details in one searchable workspace.",
+        )
+    with intro_right:
+        render_helper_card(
+            "Who can use it",
+            "Researchers can search and compare records. Curators can submit, revise, import, and maintain compounds, peaks, and spectra links.",
+        )
+
+    section_header("How To Use")
+    use_tabs = st.tabs(["Browse", "Submit", "Spectra & Raw Data", "Storage Layout", "Access & Deployment"])
+
+    with use_tabs[0]:
+        st.markdown(
+            """
+            1. Open `Dashboard` to see coverage, quick browsing, and backup.
+            2. Use `Search & Match` for keyword lookup or 1H/13C spectral matching.
+            3. Open `Compound Workspace` to inspect full records, references, and linked files.
+            4. Use `1H Peaks`, `13C Peaks`, and `Spectra Library` when you want to manage sub-records directly.
+            """
+        )
+
+    with use_tabs[1]:
+        st.markdown(
+            """
+            1. Start in `Compound Workspace` > `New Submission`.
+            2. Fill the core identity fields first: trivial name, formula, SMILES/InChI/InChIKey, class, subclass, source material, and structure.
+            3. Add publication information, notes, and reference fields.
+            4. Save the compound record.
+            5. Add 1H peaks, 13C peaks, preview images, PDFs, and raw-data links from the dedicated sections if needed.
+            """
+        )
+
+    with use_tabs[2]:
+        st.markdown(
+            """
+            1. Keep lightweight preview images locally or in Google Drive if you want them visible directly in the app.
+            2. Store large raw 1H/13C data files in Google Drive to avoid filling the laptop.
+            3. Paste the Google Drive sharing link into `Spectra Library` so the database stays metadata-first and device-friendly.
+            4. Use spectrum types such as `1H`, `13C`, `COSY`, `HSQC`, or `HMBC` for preview images.
+            5. Use `1H Raw Data`, `13C Raw Data`, `JCAMP-DX`, or `MNova` for raw downloadable files.
+            6. If a Google Drive link points to an image and sharing is allowed, the spectra image can preview directly inside the web app without opening Google Drive first.
+            7. For future structure search, keep `SMILES`, `InChI`, and `InChIKey` filled as consistently as possible.
+            """
+        )
+        st.caption("Preview depends on the Google Drive link being shared with the right viewing permission.")
+
+    with use_tabs[3]:
+        st.markdown(
+            """
+            Recommended local folder layout in `Desktop/NMR_Database_Tyas`:
+
+            1. `database/nmr.db` for the main SQLite metadata database.
+            2. `database/backups/` for timestamped backup copies before major edits.
+            3. `data/structures/` for lightweight structure images only.
+            4. `data/spectra/` for lightweight preview images or PDFs only.
+            5. `data/templates/` for batch import CSV templates generated by the app.
+            6. `data/submissions/inbox/` for newly received material not yet curated.
+            7. `data/submissions/reviewed/` for material already checked but not yet approved.
+            8. `data/submissions/approved/` for curated source files that match the published record.
+            9. `data/exports/` for CSV exports or reports shared with collaborators.
+            """
+        )
+        st.markdown(
+            """
+            Recommended Google Drive layout:
+
+            1. `NPDB_Public_Previews/` for shareable image previews.
+            2. `NPDB_Raw_Data/Compound_Name_or_ID/1H/`
+            3. `NPDB_Raw_Data/Compound_Name_or_ID/13C/`
+            4. `NPDB_Raw_Data/Compound_Name_or_ID/JCAMP_DX/`
+            5. `NPDB_Raw_Data/Compound_Name_or_ID/MNova/`
+            6. `NPDB_Submission_Source/Year/LabMember_or_Paper/`
+            """
+        )
+        st.markdown(
+            """
+            Recommended naming convention:
+
+            1. Structure preview: `NPDB_<compound_id>_<trivial_name>_structure.png`
+            2. Spectra preview: `NPDB_<compound_id>_<trivial_name>_<spectrum_type>_preview.png`
+            3. Raw file: `NPDB_<compound_id>_<trivial_name>_<nucleus>_raw.<ext>`
+            4. JCAMP-DX: `NPDB_<compound_id>_<trivial_name>_jcamp.dx`
+            5. MNova: `NPDB_<compound_id>_<trivial_name>_mnova.mnova`
+            """
+        )
+        st.caption("Keep one canonical file per dataset. If a better version appears later, replace the old file and update the database link instead of making silent duplicates.")
+
+    with use_tabs[4]:
+        st.markdown(
+            """
+            1. `http://localhost:8501` is still your local development address. It only works on your own machine while Streamlit is running there.
+            2. A local app can sometimes be opened from another device on the same network using your computer IP, but that is temporary and depends on your network and firewall.
+            3. If people need stable access from phone, laptop, Windows, macOS, or Linux, deploy the app to a server or cloud platform and share the public HTTPS URL from there.
+            4. The current access gate supports either one shared login with `NPDB_ACCESS_USERNAME` and `NPDB_ACCESS_PASSWORD`, or multiple approved users with `NPDB_APPROVED_USERS`.
+            5. After deployment, users should open the public URL, not `localhost`.
+            6. Mobile access is possible after deployment, but the best experience still needs responsive visual QA.
+            """
+        )
+
+    section_header("Important Notes")
+    note_left, note_right = st.columns(2)
+    with note_left:
+        render_helper_card(
+            "Storage limits",
+            "This app does not enforce its own storage quota. The real limits come from your laptop disk, Google Drive quota, and whichever server or hosting platform you use.",
+        )
+    with note_right:
+        render_helper_card(
+            "Stable public access",
+            "If you want the same address that people can open anytime from anywhere, you will need deployment. A local `localhost` address will not stay public forever and cannot be your permanent access URL.",
+        )
+
+
+# =========================
+# Compound pages
+# =========================
+def show_compound_pages():
+    compound_options = COMPOUND_PAGE_OPTIONS
+
+    current_page = st.session_state.get("compound_page", "Browse Record")
+    if current_page not in compound_options:
+        current_page = "Browse Record"
+        st.session_state["compound_page"] = current_page
+        st.session_state["_pending_compound_page_radio"] = current_page
+
+    compound_radio_kwargs = {
+        "label": "Compound Workflow",
+        "options": compound_options,
+        "horizontal": True,
+        "key": "compound_page_radio",
+    }
+    if "compound_page_radio" not in st.session_state:
+        compound_radio_kwargs["index"] = compound_options.index(current_page)
+    compound_page = st.radio(**compound_radio_kwargs)
+    set_compound_page(compound_page)
+
+    render_helper_card(
+        "Compound workspace",
+        "Browse full records, create new submissions, import batches, update metadata, and remove outdated entries from one consistent workflow. The editor now lives in a single clear place instead of appearing as a duplicated menu.",
+    )
+
+    if compound_page == "Browse Record":
+        section_header("Compound Browser", "Inspect the full record, structure, spectral tables, and attached spectra from one focused review page.")
+        compounds_df = load_all_compounds()
+
+        if compounds_df.empty:
+            st.info("No compounds available.")
+        else:
+            options = compounds_df[["id", "trivial_name"]].copy()
+            options["label"] = options["id"].astype(str) + " - " + options["trivial_name"].fillna("")
+            label_list = options["label"].tolist()
+
+            default_index = 0
+            selected_id = st.session_state.get("selected_compound_id")
+            if selected_id is not None and selected_id in options["id"].tolist():
+                default_index = options.index[options["id"] == selected_id][0]
+
+            render_selector_card(
+                "Record selector",
+                "Choose a compound to inspect. The selected record is also reused in the edit and peak-management workspaces.",
+            )
+            selected = st.selectbox("Choose compound record", label_list, index=default_index)
+            current_selected_id = int(selected.split(" - ")[0])
+            st.session_state["selected_compound_id"] = current_selected_id
+            show_compound_detail(current_selected_id)
+
+    elif compound_page == "New Submission":
+        section_header("New Submission", "Submit a new compound with a guided workflow, automatic file upload, and a review step before saving.")
+
+        compounds_df = load_all_compounds()
+        spectra_df = load_all_spectra_files()
+        wizard_step = st.session_state.get("compound_wizard_step", 1)
+        step_labels = {
+            1: "Identity",
+            2: "Origin",
+            3: "Spectral Data & Files",
+            4: "Reference & Review",
+        }
+
+        st.progress(wizard_step / 4)
+        st.caption(
+            f"Step {wizard_step} of 4: {step_labels[wizard_step]}. "
+            "Your inputs stay in place while you move between steps."
+        )
+
+        if wizard_step == 1:
+            c1, c2 = st.columns(2)
+            with c1:
+                st.text_input("Trivial Name", key="wizard_trivial_name")
+                st.text_area("IUPAC Name", key="wizard_iupac_name")
+                st.text_input("Molecular Formula", key="wizard_formula")
+                st.text_input("Mr", key="wizard_molecular_weight")
+                st.text_area("SMILES", key="wizard_smiles", placeholder="e.g. C1=CC=CC=C1")
+            with c2:
+                st.text_area("InChI", key="wizard_inchi", placeholder="e.g. InChI=1S/...")
+                st.text_input("InChIKey", key="wizard_inchikey", placeholder="e.g. BSYNRYMUTXBXSQ-UHFFFAOYSA-N")
+                class_options = build_existing_options(compounds_df, "compound_class", DEFAULT_CLASS_OPTIONS)
+                subclass_options = build_existing_options(compounds_df, "compound_subclass")
+                data_source_options = build_existing_options(compounds_df, "data_source", DEFAULT_DATA_SOURCE_OPTIONS)
+                select_or_custom("Compound Class", class_options, "wizard_compound_class")
+                select_or_custom("Compound Subclass", subclass_options, "wizard_compound_subclass")
+                select_or_custom("Data Source", data_source_options, "wizard_data_source", value="Experimental")
+
+        elif wizard_step == 2:
+            c1, c2 = st.columns(2)
+            with c1:
+                source_options = build_existing_options(compounds_df, "source_material", DEFAULT_SOURCE_OPTIONS)
+                select_or_custom("Source Material", source_options, "wizard_source_material")
+                st.text_input("Sample Code", key="wizard_sample_code")
+                st.text_input("Collection Location", key="wizard_collection_location")
+            with c2:
+                st.text_input("GPS Coordinates", key="wizard_gps_coordinates")
+                st.text_input("Depth (m)", key="wizard_depth_m")
+                st.text_area("Notes", key="wizard_note")
+
+        elif wizard_step == 3:
+            c1, c2 = st.columns(2)
+            with c1:
+                st.text_input("UV Data", key="wizard_uv_data")
+                st.text_input("FTIR Data", key="wizard_ftir_data")
+                st.text_input("Optical Rotation", key="wizard_optical_rotation")
+                st.text_input("Melting Point", key="wizard_melting_point")
+                st.text_input("Crystallization Method", key="wizard_crystallization_method")
+                st.text_area(
+                    "HRMS Data",
+                    key="wizard_hrms_data",
+                    placeholder="e.g. HRMS (ESI) m/z: [M + Na]+ calcd..., found...",
+                )
+                st.text_input("CCDC", key="wizard_ccdc_number")
+            with c2:
+                st.text_input(
+                    "Structure Image Path (optional)",
+                    key="wizard_structure_path",
+                    placeholder="e.g. data/structures/example.png",
+                )
+                st.file_uploader(
+                    "Upload Structure Image",
+                    type=["png", "jpg", "jpeg", "webp"],
+                    key="wizard_structure_upload",
+                )
+                wizard_spectrum_options = build_existing_options(
+                    spectra_df,
+                    "spectrum_type",
+                    DEFAULT_SPECTRUM_TYPES,
+                )
+                select_or_custom(
+                    "Uploaded Spectra Type",
+                    wizard_spectrum_options,
+                    "wizard_submission_spectrum_type",
+                    value="Supporting Data",
+                    help_text="All files uploaded in this step will use the same type label. You can fine-tune them later in the Spectra section.",
+                )
+                st.file_uploader(
+                    "Upload Supporting Spectra Files",
+                    accept_multiple_files=True,
+                    key="wizard_submission_spectra_uploads",
+                )
+                st.text_area("Uploaded Spectra Note", key="wizard_submission_spectra_note")
+                st.caption("Tip: for large raw 1H/13C datasets, store the raw files in Google Drive and register the share link later from Spectra Library. Keep only lightweight preview files locally when necessary.")
+
+        else:
+            c1, c2 = st.columns(2)
+            with c1:
+                st.text_input("Journal Name", key="wizard_journal_name")
+                st.text_input("Article Title", key="wizard_article_title")
+                st.text_input("Publication Year", key="wizard_publication_year")
+                st.text_input("Volume", key="wizard_volume")
+                st.text_input("Issue", key="wizard_issue")
+                st.text_input("Pages", key="wizard_pages")
+                st.text_input("DOI", key="wizard_doi")
+            with c2:
+                draft_row = {
+                    "trivial_name": st.session_state.get("wizard_trivial_name", ""),
+                    "molecular_formula": st.session_state.get("wizard_formula", ""),
+                    "smiles": st.session_state.get("wizard_smiles", ""),
+                    "inchi": st.session_state.get("wizard_inchi", ""),
+                    "inchikey": st.session_state.get("wizard_inchikey", ""),
+                    "compound_class": st.session_state.get("wizard_compound_class_custom") or st.session_state.get("wizard_compound_class_select", ""),
+                    "source_material": st.session_state.get("wizard_source_material_custom") or st.session_state.get("wizard_source_material_select", ""),
+                    "data_source": st.session_state.get("wizard_data_source_custom") or st.session_state.get("wizard_data_source_select", ""),
+                    "hrms_data": st.session_state.get("wizard_hrms_data", ""),
+                    "doi": st.session_state.get("wizard_doi", ""),
+                    "journal_name": st.session_state.get("wizard_journal_name", ""),
+                    "article_title": st.session_state.get("wizard_article_title", ""),
+                    "structure_image_path": st.session_state.get("wizard_structure_path", "") or ("uploaded" if st.session_state.get("wizard_structure_upload") else ""),
+                }
+                completeness_preview = calculate_completeness_score(
+                    draft_row,
+                    pd.DataFrame(),
+                    pd.DataFrame(),
+                    pd.DataFrame(),
+                )
+                st.markdown('<div class="panel-card">', unsafe_allow_html=True)
+                st.write(f"**Draft completeness estimate:** {completeness_preview}%")
+                st.write(f"**Trivial Name:** {clean_text(draft_row['trivial_name'])}")
+                st.write(f"**Formula:** {clean_text(draft_row['molecular_formula'])}")
+                st.write(f"**SMILES:** {clean_text(draft_row['smiles'])}")
+                st.write(f"**InChIKey:** {clean_text(draft_row['inchikey'])}")
+                st.write(f"**Class:** {clean_text(draft_row['compound_class'])}")
+                st.write(f"**Source:** {clean_text(draft_row['source_material'])}")
+                st.write(f"**Data Source:** {clean_text(draft_row['data_source'])}")
+                st.write(f"**Journal:** {clean_text(st.session_state.get('wizard_journal_name'))}")
+                st.write(f"**Article:** {clean_text(st.session_state.get('wizard_article_title'))}")
+                st.markdown('</div>', unsafe_allow_html=True)
+
+        nav_left, nav_right = st.columns([1, 1])
+        with nav_left:
+            if wizard_step > 1 and st.button("Back", use_container_width=True, key=f"wizard_back_{wizard_step}"):
+                st.session_state["compound_wizard_step"] = wizard_step - 1
+                st.rerun()
+
+        with nav_right:
+            if wizard_step < 4:
+                if st.button("Continue", use_container_width=True, key=f"wizard_next_{wizard_step}"):
+                    if wizard_step == 1 and not maybe_blank(st.session_state.get("wizard_trivial_name")):
+                        st.error("Trivial Name is required before moving to the next step.")
+                    else:
+                        st.session_state["compound_wizard_step"] = wizard_step + 1
+                        st.rerun()
+            else:
+                if st.button("Save New Record", use_container_width=True, key="wizard_submit_compound"):
+                    trivial_name = maybe_blank(st.session_state.get("wizard_trivial_name"))
+                    iupac_name = maybe_blank(st.session_state.get("wizard_iupac_name"))
+                    molecular_formula = maybe_blank(st.session_state.get("wizard_formula"))
+                    smiles = maybe_blank(st.session_state.get("wizard_smiles"))
+                    inchi = maybe_blank(st.session_state.get("wizard_inchi"))
+                    inchikey = maybe_blank(st.session_state.get("wizard_inchikey"))
+                    compound_class = maybe_blank(st.session_state.get("wizard_compound_class_custom")) or maybe_blank(st.session_state.get("wizard_compound_class_select"))
+                    compound_subclass = maybe_blank(st.session_state.get("wizard_compound_subclass_custom")) or maybe_blank(st.session_state.get("wizard_compound_subclass_select"))
+                    source_material = maybe_blank(st.session_state.get("wizard_source_material_custom")) or maybe_blank(st.session_state.get("wizard_source_material_select"))
+                    sample_code = maybe_blank(st.session_state.get("wizard_sample_code"))
+                    collection_location = maybe_blank(st.session_state.get("wizard_collection_location"))
+                    gps_coordinates = maybe_blank(st.session_state.get("wizard_gps_coordinates"))
+                    depth_m_text = maybe_blank(st.session_state.get("wizard_depth_m"))
+                    uv_data = maybe_blank(st.session_state.get("wizard_uv_data"))
+                    ftir_data = maybe_blank(st.session_state.get("wizard_ftir_data"))
+                    optical_rotation = maybe_blank(st.session_state.get("wizard_optical_rotation"))
+                    melting_point = maybe_blank(st.session_state.get("wizard_melting_point"))
+                    crystallization_method = maybe_blank(st.session_state.get("wizard_crystallization_method"))
+                    structure_image_path = maybe_blank(st.session_state.get("wizard_structure_path"))
+                    structure_upload = st.session_state.get("wizard_structure_upload")
+                    journal_name = maybe_blank(st.session_state.get("wizard_journal_name"))
+                    article_title = maybe_blank(st.session_state.get("wizard_article_title"))
+                    publication_year = maybe_blank(st.session_state.get("wizard_publication_year"))
+                    volume = maybe_blank(st.session_state.get("wizard_volume"))
+                    issue = maybe_blank(st.session_state.get("wizard_issue"))
+                    pages = maybe_blank(st.session_state.get("wizard_pages"))
+                    doi = maybe_blank(st.session_state.get("wizard_doi"))
+                    ccdc_number = maybe_blank(st.session_state.get("wizard_ccdc_number"))
+                    molecular_weight_text = maybe_blank(st.session_state.get("wizard_molecular_weight"))
+                    hrms_data = maybe_blank(st.session_state.get("wizard_hrms_data"))
+                    data_source = maybe_blank(st.session_state.get("wizard_data_source_custom")) or maybe_blank(st.session_state.get("wizard_data_source_select"))
+                    note = maybe_blank(st.session_state.get("wizard_note"))
+                    uploaded_spectra = st.session_state.get("wizard_submission_spectra_uploads") or []
+                    uploaded_spectrum_type = maybe_blank(st.session_state.get("wizard_submission_spectrum_type_custom")) or maybe_blank(st.session_state.get("wizard_submission_spectrum_type_select")) or "Supporting Data"
+                    uploaded_spectrum_note = maybe_blank(st.session_state.get("wizard_submission_spectra_note"))
+
+                    if not trivial_name:
+                        st.error("Trivial Name is required.")
+                        st.stop()
+
+                    depth_value = safe_float_or_none(depth_m_text)
+                    if depth_m_text and depth_value is None:
+                        st.error("Depth (m) must be a valid number.")
+                        st.stop()
+
+                    molecular_weight_value = safe_float_or_none(molecular_weight_text)
+                    if molecular_weight_text and molecular_weight_value is None:
+                        st.error("Mr must be a valid number.")
+                        st.stop()
+
+                    if structure_upload is not None:
+                        structure_image_path = save_uploaded_asset(
+                            structure_upload,
+                            STRUCTURES_DIR,
+                            f"{trivial_name}_{sample_code or 'structure'}",
+                        )
+
+                    new_id = insert_compound_record(
+                        trivial_name=trivial_name,
+                        iupac_name=iupac_name,
+                        molecular_formula=molecular_formula,
+                        compound_class=compound_class,
+                        compound_subclass=compound_subclass,
+                        smiles=smiles,
+                        inchi=inchi,
+                        inchikey=inchikey,
+                        source_material=source_material,
+                        sample_code=sample_code,
+                        collection_location=collection_location,
+                        gps_coordinates=gps_coordinates,
+                        depth_m=depth_value,
+                        uv_data=uv_data,
+                        ftir_data=ftir_data,
+                        optical_rotation=optical_rotation,
+                        melting_point=melting_point,
+                        crystallization_method=crystallization_method,
+                        structure_image_path=structure_image_path,
+                        journal_name=journal_name,
+                        article_title=article_title,
+                        publication_year=publication_year,
+                        volume=volume,
+                        issue=issue,
+                        pages=pages,
+                        doi=doi,
+                        ccdc_number=ccdc_number,
+                        molecular_weight=molecular_weight_value,
+                        hrms_data=hrms_data,
+                        data_source=data_source,
+                        note=note,
+                    )
+
+                    for uploaded_file in uploaded_spectra:
+                        saved_path = save_uploaded_asset(
+                            uploaded_file,
+                            SPECTRA_DIR,
+                            f"compound_{new_id}_{uploaded_spectrum_type}_{uploaded_file.name}",
+                        )
+                        insert_spectrum_file_record(
+                            compound_id=new_id,
+                            spectrum_type=uploaded_spectrum_type,
+                            file_path=saved_path,
+                            note=uploaded_spectrum_note,
+                        )
+
+                    st.success(f"Record saved successfully. New Compound ID: {new_id}")
+                    reset_compound_wizard()
+                    open_compound_detail(new_id)
+                    st.rerun()
+
+    elif compound_page == "Batch Import":
+        render_batch_import_workspace()
+
+    elif compound_page == "Update Metadata":
+        section_header("Update Metadata", "Revise compound metadata, references, and structure links without leaving the database workspace.")
+        compounds_df = load_all_compounds()
+
+        if compounds_df.empty:
+            st.info("No compounds available.")
+        else:
+            options = compounds_df[["id", "trivial_name"]].copy()
+            options["label"] = options["id"].astype(str) + " - " + options["trivial_name"].fillna("")
+            label_list = options["label"].tolist()
+
+            default_index = 0
+            selected_id = st.session_state.get("selected_compound_id")
+            if selected_id is not None and selected_id in options["id"].tolist():
+                default_index = options.index[options["id"] == selected_id][0]
+
+            render_selector_card(
+                "Editing target",
+                "Choose the record you want to revise. This is the only main editing entry point in the compound workspace.",
+            )
+            selected_label = st.selectbox(
+                "Select record to edit",
+                label_list,
+                index=default_index,
+                key="edit_compound_select"
+            )
+
+            edit_compound_id = int(selected_label.split(" - ")[0])
+            st.session_state["selected_compound_id"] = edit_compound_id
+
+            row_df = load_compound_row(edit_compound_id)
+            if row_df.empty:
+                st.error("Record not found.")
+            else:
+                row = row_df.iloc[0]
+
+                with st.form("edit_compound_form", clear_on_submit=False):
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        trivial_name = st.text_input("Trivial Name", value=maybe_blank(row["trivial_name"]))
+                        iupac_name = st.text_area("IUPAC Name", value=maybe_blank(row["iupac_name"]))
+                        molecular_formula = st.text_input("Molecular Formula", value=maybe_blank(row["molecular_formula"]))
+                        smiles = st.text_area("SMILES", value=maybe_blank(row.get("smiles")))
+                        inchi = st.text_area("InChI", value=maybe_blank(row.get("inchi")))
+                        inchikey = st.text_input("InChIKey", value=maybe_blank(row.get("inchikey")))
+                        compound_class = select_or_custom(
+                            "Compound Class",
+                            build_existing_options(compounds_df, "compound_class", DEFAULT_CLASS_OPTIONS),
+                            f"edit_compound_class_{edit_compound_id}",
+                            value=maybe_blank(row["compound_class"]),
+                        )
+                        compound_subclass = select_or_custom(
+                            "Compound Subclass",
+                            build_existing_options(compounds_df, "compound_subclass"),
+                            f"edit_compound_subclass_{edit_compound_id}",
+                            value=maybe_blank(row["compound_subclass"]),
+                        )
+                        source_material = select_or_custom(
+                            "Source Material",
+                            build_existing_options(compounds_df, "source_material", DEFAULT_SOURCE_OPTIONS),
+                            f"edit_source_material_{edit_compound_id}",
+                            value=maybe_blank(row["source_material"]),
+                        )
+                        sample_code = st.text_input("Sample Code", value=maybe_blank(row["sample_code"]))
+                        collection_location = st.text_input("Collection Location", value=maybe_blank(row["collection_location"]))
+                        gps_coordinates = st.text_input("GPS Coordinates", value=maybe_blank(row["gps_coordinates"]))
+                        depth_m_text = st.text_input("Depth (m)", value=maybe_blank(row["depth_m"]))
+
+                    with col2:
+                        uv_data = st.text_input("UV Data", value=maybe_blank(row["uv_data"]))
+                        ftir_data = st.text_input("FTIR Data", value=maybe_blank(row["ftir_data"]))
+                        optical_rotation = st.text_input("Optical Rotation", value=maybe_blank(row["optical_rotation"]))
+                        melting_point = st.text_input("Melting Point", value=maybe_blank(row["melting_point"]))
+                        crystallization_method = st.text_input("Crystallization Method", value=maybe_blank(row["crystallization_method"]))
+                        structure_image_path = st.text_input("Structure Image Path", value=maybe_blank(row["structure_image_path"]))
+                        structure_upload = st.file_uploader(
+                            "Replace Structure Image",
+                            type=["png", "jpg", "jpeg", "webp"],
+                            key=f"edit_structure_upload_{edit_compound_id}",
+                        )
+                        journal_name = st.text_input("Journal Name", value=maybe_blank(row["journal_name"]))
+                        article_title = st.text_area("Article Title", value=maybe_blank(row["article_title"]))
+                        publication_year = st.text_input("Publication Year", value=maybe_blank(row["publication_year"]))
+                        volume = st.text_input("Volume", value=maybe_blank(row["volume"]))
+                        issue = st.text_input("Issue / Journal Number", value=maybe_blank(row["issue"]))
+                        pages = st.text_input("Pages", value=maybe_blank(row["pages"]))
+                        doi = st.text_input("DOI", value=maybe_blank(row["doi"]))
+                        ccdc_number = st.text_input("CCDC", value=maybe_blank(row["ccdc_number"]))
+                        molecular_weight_text = st.text_input("Mr", value=maybe_blank(row["molecular_weight"]))
+                        hrms_data = st.text_area("HRMS Data", value=maybe_blank(row["hrms_data"]))
+                        data_source = select_or_custom(
+                            "Data Source",
+                            build_existing_options(compounds_df, "data_source", DEFAULT_DATA_SOURCE_OPTIONS),
+                            f"edit_data_source_{edit_compound_id}",
+                            value=maybe_blank(row["data_source"]),
+                        )
+
+                    note = st.text_area("Note", value=maybe_blank(row["note"]))
+                    submitted_edit = st.form_submit_button("Save Changes")
+
+                if submitted_edit:
+                    if not trivial_name.strip():
+                        st.error("Trivial Name is required.")
+                    else:
+                        depth_value = None
+                        if depth_m_text.strip():
+                            try:
+                                depth_value = float(depth_m_text.strip())
+                            except ValueError:
+                                st.error("Depth (m) must be a valid number.")
+                                st.stop()
+
+                        molecular_weight_value = None
+                        if molecular_weight_text.strip():
+                            try:
+                                molecular_weight_value = float(molecular_weight_text.strip())
+                            except ValueError:
+                                st.error("Mr must be a valid number.")
+                                st.stop()
+
+                        if structure_upload is not None:
+                            structure_image_path = save_uploaded_asset(
+                                structure_upload,
+                                STRUCTURES_DIR,
+                                f"{trivial_name}_{sample_code or edit_compound_id}_structure",
+                            )
+
+                        update_compound_record(
+                            compound_id=edit_compound_id,
+                            trivial_name=trivial_name.strip(),
+                            iupac_name=iupac_name.strip(),
+                            molecular_formula=molecular_formula.strip(),
+                            compound_class=compound_class.strip(),
+                            compound_subclass=compound_subclass.strip(),
+                            smiles=smiles.strip(),
+                            inchi=inchi.strip(),
+                            inchikey=inchikey.strip(),
+                            source_material=source_material.strip(),
+                            sample_code=sample_code.strip(),
+                            collection_location=collection_location.strip(),
+                            gps_coordinates=gps_coordinates.strip(),
+                            depth_m=depth_value,
+                            uv_data=uv_data.strip(),
+                            ftir_data=ftir_data.strip(),
+                            optical_rotation=optical_rotation.strip(),
+                            melting_point=melting_point.strip(),
+                            crystallization_method=crystallization_method.strip(),
+                            structure_image_path=structure_image_path.strip(),
+                            journal_name=journal_name.strip(),
+                            article_title=article_title.strip(),
+                            publication_year=publication_year.strip(),
+                            volume=volume.strip(),
+                            issue=issue.strip(),
+                            pages=pages.strip(),
+                            doi=doi.strip(),
+                            ccdc_number=ccdc_number.strip(),
+                            molecular_weight=molecular_weight_value,
+                            hrms_data=hrms_data.strip(),
+                            data_source=data_source.strip(),
+                            note=note.strip()
+                        )
+
+                        st.success(f"Record ID {edit_compound_id} updated successfully.")
+
+                        left_btn, right_btn = st.columns([1, 1])
+                        with left_btn:
+                            if st.button("Open Updated Record", key=f"open_updated_compound_{edit_compound_id}"):
+                                open_compound_detail(edit_compound_id)
+                                st.rerun()
+                        with right_btn:
+                            if st.button("Refresh Form", key=f"stay_editor_{edit_compound_id}"):
+                                st.rerun()
+
+    else:
+        section_header("Delete Record", "Delete a compound together with all related spectral records.")
+        compounds_df = load_all_compounds()
+
+        if compounds_df.empty:
+            st.info("No compounds available.")
+        else:
+            options = compounds_df[["id", "trivial_name"]].copy()
+            options["label"] = options["id"].astype(str) + " - " + options["trivial_name"].fillna("")
+            selected_label = st.selectbox("Select record to delete", options["label"].tolist(), key="delete_compound_select")
+            compound_id = int(selected_label.split(" - ")[0])
+
+            row_df = load_compound_row(compound_id)
+            if not row_df.empty:
+                row = row_df.iloc[0]
+                proton_count = len(load_proton_data(compound_id))
+                carbon_count = len(load_carbon_data(compound_id))
+                spectra_count = len(load_spectra_files(compound_id))
+
+                st.warning("This action cannot be undone.")
+                c1, c2, c3 = st.columns(3)
+                render_metric_card("1H records", proton_count, c1)
+                render_metric_card("13C records", carbon_count, c2)
+                render_metric_card("Spectra records", spectra_count, c3)
+
+                st.markdown('<div class="panel-card">', unsafe_allow_html=True)
+                st.write(f"**Compound:** {clean_text(row['trivial_name'])}")
+                st.write(f"**Compound ID:** {compound_id}")
+                st.markdown('</div>', unsafe_allow_html=True)
+
+                with st.form("delete_compound_form"):
+                    confirm = st.checkbox("I understand that this will permanently delete the compound record and all related database records.")
+                    submitted_delete = st.form_submit_button("Delete Record")
+
+                if submitted_delete:
+                    if not confirm:
+                        st.error("Please confirm deletion first.")
+                    else:
+                        delete_compound_record(compound_id)
+                        st.success(f"Compound ID {compound_id} and its related records were deleted.")
+                        st.session_state["selected_compound_id"] = None
+
+
+# =========================
+# 1H pages
+# =========================
+def show_proton_pages():
+    proton_page = st.radio(
+        "1H Peak Tools",
+        ["Add Peak", "Edit Peak", "Delete Peak"],
+        horizontal=True
+    )
+
+    if proton_page == "Add Peak":
+        section_header("Add 1H Peak", "Register a single 1H NMR peak for a selected compound.")
+        compounds_df = load_all_compounds()
+
+        if compounds_df.empty:
+            st.info("No compounds available. Please add a compound first.")
+        else:
+            options = compounds_df[["id", "trivial_name"]].copy()
+            options["label"] = options["id"].astype(str) + " - " + options["trivial_name"].fillna("")
+            label_list = options["label"].tolist()
+
+            default_index = 0
+            selected_id = st.session_state.get("selected_compound_id")
+            if selected_id is not None and selected_id in options["id"].tolist():
+                default_index = options.index[options["id"] == selected_id][0]
+
+            selected_compound_label = st.selectbox(
+                "Select Compound",
+                label_list,
+                index=default_index,
+                key="add1h_compound"
+            )
+
+            selected_compound_id = int(selected_compound_label.split(" - ")[0])
+
+            with st.form("add_1h_form", clear_on_submit=False):
+                c1, c2 = st.columns(2)
+
+                with c1:
+                    delta_ppm_text = st.text_input("δH (ppm)")
+                    multiplicity = st.text_input("Multiplicity")
+                    j_value = st.text_input("J Value")
+                    proton_count = st.text_input("Proton Count", placeholder="e.g. 1H or 3H")
+                    assignment = st.text_input("Assignment")
+
+                with c2:
+                    solvent = st.text_input("Solvent", value="CDCl3")
+                    instrument_mhz_text = st.text_input("Instrument (MHz)", value="500")
+                    note = st.text_area("Note")
+
+                submitted_1h = st.form_submit_button("Save 1H Peak")
+
+            if submitted_1h:
+                if not delta_ppm_text.strip():
+                    st.error("δH (ppm) is required.")
+                elif not assignment.strip():
+                    st.error("Assignment is required.")
+                else:
+                    try:
+                        delta_ppm_value = float(delta_ppm_text.strip())
+                    except ValueError:
+                        st.error("δH (ppm) must be a valid number.")
+                        st.stop()
+
+                    instrument_mhz_value = None
+                    if instrument_mhz_text.strip():
+                        try:
+                            instrument_mhz_value = float(instrument_mhz_text.strip())
+                        except ValueError:
+                            st.error("Instrument (MHz) must be a valid number.")
+                            st.stop()
+
+                    new_peak_id = insert_proton_record(
+                        compound_id=selected_compound_id,
+                        delta_ppm=delta_ppm_value,
+                        multiplicity=multiplicity.strip(),
+                        j_value=j_value.strip(),
+                        proton_count=proton_count.strip(),
+                        assignment=assignment.strip(),
+                        solvent=solvent.strip(),
+                        instrument_mhz=instrument_mhz_value,
+                        note=note.strip()
+                    )
+
+                    st.success(f"1H NMR peak saved successfully. New Peak ID: {new_peak_id}")
+
+                    if st.button("Open Record", key=f"open_detail_after_1h_{new_peak_id}"):
+                        open_compound_detail(selected_compound_id)
+                        st.rerun()
+
+    elif proton_page == "Edit Peak":
+        section_header("Edit 1H Peak", "Update a single 1H record directly from the web interface.")
+        proton_df = load_all_proton_data()
+
+        if proton_df.empty:
+            st.info("No 1H NMR records available.")
+        else:
+            proton_df["label"] = (
+                proton_df["id"].astype(str)
+                + " | "
+                + proton_df["trivial_name"].fillna("-").astype(str)
+                + " | δH "
+                + proton_df["delta_ppm"].astype(str)
+                + " | "
+                + proton_df["assignment"].fillna("-").astype(str)
+            )
+
+            selected_label = st.selectbox(
+                "Select 1H NMR Record",
+                proton_df["label"].tolist(),
+                key="edit_1h_select"
+            )
+
+            proton_id = int(selected_label.split(" | ")[0])
+            row_df = load_proton_row(proton_id)
+
+            if row_df.empty:
+                st.error("1H NMR record not found.")
+            else:
+                row = row_df.iloc[0]
+                compounds_df = load_all_compounds()
+                options = compounds_df[["id", "trivial_name"]].copy()
+                options["label"] = options["id"].astype(str) + " - " + options["trivial_name"].fillna("")
+                label_list = options["label"].tolist()
+
+                default_index = 0
+                if row["compound_id"] in options["id"].tolist():
+                    default_index = options.index[options["id"] == row["compound_id"]][0]
+
+                with st.form("edit_1h_form", clear_on_submit=False):
+                    selected_compound_label = st.selectbox(
+                        "Select Compound",
+                        label_list,
+                        index=default_index,
+                        key="edit1h_compound"
+                    )
+
+                    c1, c2 = st.columns(2)
+
+                    with c1:
+                        delta_ppm_text = st.text_input("δH (ppm)", value=maybe_blank(row["delta_ppm"]))
+                        multiplicity = st.text_input("Multiplicity", value=maybe_blank(row["multiplicity"]))
+                        j_value = st.text_input("J Value", value=maybe_blank(row["j_value"]))
+                        proton_count = st.text_input("Proton Count", value=maybe_blank(row["proton_count"]))
+                        assignment = st.text_input("Assignment", value=maybe_blank(row["assignment"]))
+
+                    with c2:
+                        solvent = st.text_input("Solvent", value=maybe_blank(row["solvent"]))
+                        instrument_mhz_text = st.text_input("Instrument (MHz)", value=maybe_blank(row["instrument_mhz"]))
+                        note = st.text_area("Note", value=maybe_blank(row["note"]))
+
+                    submitted_edit_1h = st.form_submit_button("Save Changes")
+
+                if submitted_edit_1h:
+                    if not delta_ppm_text.strip():
+                        st.error("δH (ppm) is required.")
+                    elif not assignment.strip():
+                        st.error("Assignment is required.")
+                    else:
+                        try:
+                            delta_ppm_value = float(delta_ppm_text.strip())
+                        except ValueError:
+                            st.error("δH (ppm) must be a valid number.")
+                            st.stop()
+
+                        instrument_mhz_value = None
+                        if instrument_mhz_text.strip():
+                            try:
+                                instrument_mhz_value = float(instrument_mhz_text.strip())
+                            except ValueError:
+                                st.error("Instrument (MHz) must be a valid number.")
+                                st.stop()
+
+                        selected_compound_id = int(selected_compound_label.split(" - ")[0])
+
+                        update_proton_record(
+                            proton_id=proton_id,
+                            compound_id=selected_compound_id,
+                            delta_ppm=delta_ppm_value,
+                            multiplicity=multiplicity.strip(),
+                            j_value=j_value.strip(),
+                            proton_count=proton_count.strip(),
+                            assignment=assignment.strip(),
+                            solvent=solvent.strip(),
+                            instrument_mhz=instrument_mhz_value,
+                            note=note.strip()
+                        )
+
+                        st.success(f"1H NMR record ID {proton_id} updated successfully.")
+
+                        left_btn, right_btn = st.columns([1, 1])
+                        with left_btn:
+                            if st.button("Open Record", key=f"open_detail_after_edit_1h_{proton_id}"):
+                                open_compound_detail(selected_compound_id)
+                                st.rerun()
+                        with right_btn:
+                            if st.button("Refresh Form", key=f"reload_edit_1h_{proton_id}"):
+                                st.rerun()
+
+    else:
+        section_header("Delete 1H Peak", "Remove a single 1H NMR record.")
+        proton_df = load_all_proton_data()
+
+        if proton_df.empty:
+            st.info("No 1H NMR records available.")
+        else:
+            proton_df["label"] = (
+                proton_df["id"].astype(str)
+                + " | "
+                + proton_df["trivial_name"].fillna("-").astype(str)
+                + " | δH "
+                + proton_df["delta_ppm"].astype(str)
+                + " | "
+                + proton_df["assignment"].fillna("-").astype(str)
+            )
+
+            selected_label = st.selectbox("Select 1H NMR Record to Delete", proton_df["label"].tolist(), key="delete_1h_select")
+            proton_id = int(selected_label.split(" | ")[0])
+            row_df = load_proton_row(proton_id)
+
+            if not row_df.empty:
+                row = row_df.iloc[0]
+                st.warning("This action cannot be undone.")
+                st.markdown('<div class="panel-card">', unsafe_allow_html=True)
+                st.write(f"**Record ID:** {proton_id}")
+                st.write(f"**Compound ID:** {row['compound_id']}")
+                st.write(f"**δH (ppm):** {clean_text(row['delta_ppm'])}")
+                st.write(f"**Assignment:** {clean_text(row['assignment'])}")
+                st.markdown('</div>', unsafe_allow_html=True)
+
+                with st.form("delete_1h_form"):
+                    confirm = st.checkbox("I understand that this will permanently delete this 1H NMR record.")
+                    submitted_delete = st.form_submit_button("Delete 1H Record")
+
+                if submitted_delete:
+                    if not confirm:
+                        st.error("Please confirm deletion first.")
+                    else:
+                        compound_id = int(row["compound_id"])
+                        delete_proton_record_by_id(proton_id)
+                        st.success(f"1H NMR record ID {proton_id} was deleted.")
+                        if st.button("Open Record", key=f"open_detail_after_delete_1h_{proton_id}"):
+                            open_compound_detail(compound_id)
+                            st.rerun()
+
+
+# =========================
+# 13C pages
+# =========================
+def show_carbon_pages():
+    carbon_page = st.radio(
+        "13C Peak Tools",
+        ["Add Peak", "Edit Peak", "Delete Peak"],
+        horizontal=True
+    )
+
+    if carbon_page == "Add Peak":
+        section_header("Add 13C Peak", "Register a single 13C NMR peak for a selected compound.")
+        compounds_df = load_all_compounds()
+
+        if compounds_df.empty:
+            st.info("No compounds available. Please add a compound first.")
+        else:
+            options = compounds_df[["id", "trivial_name"]].copy()
+            options["label"] = options["id"].astype(str) + " - " + options["trivial_name"].fillna("")
+            label_list = options["label"].tolist()
+
+            default_index = 0
+            selected_id = st.session_state.get("selected_compound_id")
+            if selected_id is not None and selected_id in options["id"].tolist():
+                default_index = options.index[options["id"] == selected_id][0]
+
+            selected_compound_label = st.selectbox(
+                "Select Compound",
+                label_list,
+                index=default_index,
+                key="add13c_compound"
+            )
+
+            selected_compound_id = int(selected_compound_label.split(" - ")[0])
+
+            with st.form("add_13c_form", clear_on_submit=False):
+                c1, c2 = st.columns(2)
+
+                with c1:
+                    delta_ppm_text = st.text_input("δC (ppm)")
+                    carbon_type = st.text_input("Carbon Type", placeholder="e.g. CH3, CH2, CH, C")
+                    assignment = st.text_input("Assignment")
+
+                with c2:
+                    solvent = st.text_input("Solvent", value="CDCl3", key="add13c_solvent")
+                    instrument_mhz_text = st.text_input("Instrument (MHz)", value="125")
+                    note = st.text_area("Note", key="add13c_note")
+
+                submitted_13c = st.form_submit_button("Save 13C Peak")
+
+            if submitted_13c:
+                if not delta_ppm_text.strip():
+                    st.error("δC (ppm) is required.")
+                elif not assignment.strip():
+                    st.error("Assignment is required.")
+                else:
+                    try:
+                        delta_ppm_value = float(delta_ppm_text.strip())
+                    except ValueError:
+                        st.error("δC (ppm) must be a valid number.")
+                        st.stop()
+
+                    instrument_mhz_value = None
+                    if instrument_mhz_text.strip():
+                        try:
+                            instrument_mhz_value = float(instrument_mhz_text.strip())
+                        except ValueError:
+                            st.error("Instrument (MHz) must be a valid number.")
+                            st.stop()
+
+                    new_peak_id = insert_carbon_record(
+                        compound_id=selected_compound_id,
+                        delta_ppm=delta_ppm_value,
+                        carbon_type=carbon_type.strip(),
+                        assignment=assignment.strip(),
+                        solvent=solvent.strip(),
+                        instrument_mhz=instrument_mhz_value,
+                        note=note.strip()
+                    )
+
+                    st.success(f"13C NMR peak saved successfully. New Peak ID: {new_peak_id}")
+
+                    if st.button("Open Record", key=f"open_detail_after_13c_{new_peak_id}"):
+                        open_compound_detail(selected_compound_id)
+                        st.rerun()
+
+    elif carbon_page == "Edit Peak":
+        section_header("Edit 13C Peak", "Update a single 13C record directly from the web interface.")
+        carbon_df = load_all_carbon_data()
+
+        if carbon_df.empty:
+            st.info("No 13C NMR records available.")
+        else:
+            carbon_df["label"] = (
+                carbon_df["id"].astype(str)
+                + " | "
+                + carbon_df["trivial_name"].fillna("-").astype(str)
+                + " | δC "
+                + carbon_df["delta_ppm"].astype(str)
+                + " | "
+                + carbon_df["assignment"].fillna("-").astype(str)
+            )
+
+            selected_label = st.selectbox(
+                "Select 13C NMR Record",
+                carbon_df["label"].tolist(),
+                key="edit_13c_select"
+            )
+
+            carbon_id = int(selected_label.split(" | ")[0])
+            row_df = load_carbon_row(carbon_id)
+
+            if row_df.empty:
+                st.error("13C NMR record not found.")
+            else:
+                row = row_df.iloc[0]
+                compounds_df = load_all_compounds()
+                options = compounds_df[["id", "trivial_name"]].copy()
+                options["label"] = options["id"].astype(str) + " - " + options["trivial_name"].fillna("")
+                label_list = options["label"].tolist()
+
+                default_index = 0
+                if row["compound_id"] in options["id"].tolist():
+                    default_index = options.index[options["id"] == row["compound_id"]][0]
+
+                with st.form("edit_13c_form", clear_on_submit=False):
+                    selected_compound_label = st.selectbox(
+                        "Select Compound",
+                        label_list,
+                        index=default_index,
+                        key="edit13c_compound"
+                    )
+
+                    c1, c2 = st.columns(2)
+
+                    with c1:
+                        delta_ppm_text = st.text_input("δC (ppm)", value=maybe_blank(row["delta_ppm"]))
+                        carbon_type = st.text_input("Carbon Type", value=maybe_blank(row["carbon_type"]))
+                        assignment = st.text_input("Assignment", value=maybe_blank(row["assignment"]))
+
+                    with c2:
+                        solvent = st.text_input("Solvent", value=maybe_blank(row["solvent"]))
+                        instrument_mhz_text = st.text_input("Instrument (MHz)", value=maybe_blank(row["instrument_mhz"]))
+                        note = st.text_area("Note", value=maybe_blank(row["note"]))
+
+                    submitted_edit_13c = st.form_submit_button("Save Changes")
+
+                if submitted_edit_13c:
+                    if not delta_ppm_text.strip():
+                        st.error("δC (ppm) is required.")
+                    elif not assignment.strip():
+                        st.error("Assignment is required.")
+                    else:
+                        try:
+                            delta_ppm_value = float(delta_ppm_text.strip())
+                        except ValueError:
+                            st.error("δC (ppm) must be a valid number.")
+                            st.stop()
+
+                        instrument_mhz_value = None
+                        if instrument_mhz_text.strip():
+                            try:
+                                instrument_mhz_value = float(instrument_mhz_text.strip())
+                            except ValueError:
+                                st.error("Instrument (MHz) must be a valid number.")
+                                st.stop()
+
+                        selected_compound_id = int(selected_compound_label.split(" - ")[0])
+
+                        update_carbon_record(
+                            carbon_id=carbon_id,
+                            compound_id=selected_compound_id,
+                            delta_ppm=delta_ppm_value,
+                            carbon_type=carbon_type.strip(),
+                            assignment=assignment.strip(),
+                            solvent=solvent.strip(),
+                            instrument_mhz=instrument_mhz_value,
+                            note=note.strip()
+                        )
+
+                        st.success(f"13C NMR record ID {carbon_id} updated successfully.")
+
+                        left_btn, right_btn = st.columns([1, 1])
+                        with left_btn:
+                            if st.button("Open Record", key=f"open_detail_after_edit_13c_{carbon_id}"):
+                                open_compound_detail(selected_compound_id)
+                                st.rerun()
+                        with right_btn:
+                            if st.button("Refresh Form", key=f"reload_edit_13c_{carbon_id}"):
+                                st.rerun()
+
+    else:
+        section_header("Delete 13C Peak", "Remove a single 13C NMR record.")
+        carbon_df = load_all_carbon_data()
+
+        if carbon_df.empty:
+            st.info("No 13C NMR records available.")
+        else:
+            carbon_df["label"] = (
+                carbon_df["id"].astype(str)
+                + " | "
+                + carbon_df["trivial_name"].fillna("-").astype(str)
+                + " | δC "
+                + carbon_df["delta_ppm"].astype(str)
+                + " | "
+                + carbon_df["assignment"].fillna("-").astype(str)
+            )
+
+            selected_label = st.selectbox("Select 13C NMR Record to Delete", carbon_df["label"].tolist(), key="delete_13c_select")
+            carbon_id = int(selected_label.split(" | ")[0])
+            row_df = load_carbon_row(carbon_id)
+
+            if not row_df.empty:
+                row = row_df.iloc[0]
+                st.warning("This action cannot be undone.")
+                st.markdown('<div class="panel-card">', unsafe_allow_html=True)
+                st.write(f"**Record ID:** {carbon_id}")
+                st.write(f"**Compound ID:** {row['compound_id']}")
+                st.write(f"**δC (ppm):** {clean_text(row['delta_ppm'])}")
+                st.write(f"**Assignment:** {clean_text(row['assignment'])}")
+                st.markdown('</div>', unsafe_allow_html=True)
+
+                with st.form("delete_13c_form"):
+                    confirm = st.checkbox("I understand that this will permanently delete this 13C NMR record.")
+                    submitted_delete = st.form_submit_button("Delete 13C Record")
+
+                if submitted_delete:
+                    if not confirm:
+                        st.error("Please confirm deletion first.")
+                    else:
+                        compound_id = int(row["compound_id"])
+                        delete_carbon_record_by_id(carbon_id)
+                        st.success(f"13C NMR record ID {carbon_id} was deleted.")
+                        if st.button("Open Record", key=f"open_detail_after_delete_13c_{carbon_id}"):
+                            open_compound_detail(compound_id)
+                            st.rerun()
+
+
+# =========================
+# Spectra pages
+# =========================
+def show_spectra_pages():
+    spectra_page = st.radio(
+        "Spectra Tools",
+        ["Add Files", "Edit Files", "Delete Files"],
+        horizontal=True
+    )
+
+    if spectra_page == "Add Files":
+        section_header("Add Spectra Files", "Upload files directly or register an existing file path for a selected compound.")
+        render_helper_card(
+            "Tip",
+            "Use Google Drive for large raw-data files and keep local uploads for lighter preview images only.",
+        )
+        compounds_df = load_all_compounds()
+        spectra_df = load_all_spectra_files()
+
+        if compounds_df.empty:
+            st.info("No compounds available. Please add a compound first.")
+        else:
+            options = compounds_df[["id", "trivial_name"]].copy()
+            options["label"] = options["id"].astype(str) + " - " + options["trivial_name"].fillna("")
+            label_list = options["label"].tolist()
+
+            default_index = 0
+            selected_id = st.session_state.get("selected_compound_id")
+            if selected_id is not None and selected_id in options["id"].tolist():
+                default_index = options.index[options["id"] == selected_id][0]
+
+            selected_compound_label = st.selectbox(
+                "Select Compound",
+                label_list,
+                index=default_index,
+                key="add_spectra_compound"
+            )
+
+            selected_compound_id = int(selected_compound_label.split(" - ")[0])
+
+            with st.form("add_spectra_form", clear_on_submit=False):
+                spectrum_type = select_or_custom(
+                    "Spectrum Type",
+                    build_existing_options(spectra_df, "spectrum_type", DEFAULT_SPECTRUM_TYPES),
+                    "add_spectrum_type",
+                    value="Supporting Data",
+                )
+                file_path = st.text_input("File Path or External URL (optional if uploading)", placeholder="e.g. data/spectra/RU207-C1_1H.png or https://drive.google.com/...")
+                uploaded_files = st.file_uploader(
+                    "Upload Spectra Files",
+                    accept_multiple_files=True,
+                    key="add_spectra_uploads",
+                )
+                note = st.text_area("Note", key="add_spectra_note")
+                st.caption("Recommended: raw data types such as 1H Raw Data, 13C Raw Data, JCAMP-DX, and MNova should use Google Drive links.")
+
+                submitted_spectra = st.form_submit_button("Save Spectra File")
+
+            if submitted_spectra:
+                if not spectrum_type.strip():
+                    st.error("Spectrum Type is required.")
+                elif not file_path.strip() and not uploaded_files:
+                    st.error("Provide at least one uploaded file or a file path.")
+                else:
+                    created_records = []
+
+                    if file_path.strip():
+                        validation_errors, validation_warnings = validate_spectrum_entry(file_path.strip(), spectrum_type.strip())
+                        for warning_message in validation_warnings:
+                            st.warning(warning_message)
+                        if validation_errors:
+                            for error_message in validation_errors:
+                                st.error(error_message)
+                            st.stop()
+
+                        created_records.append(
+                            insert_spectrum_file_record(
+                                compound_id=selected_compound_id,
+                                spectrum_type=spectrum_type.strip(),
+                                file_path=file_path.strip(),
+                                note=note.strip()
+                            )
+                        )
+
+                    for uploaded_file in uploaded_files or []:
+                        saved_path = save_uploaded_asset(
+                            uploaded_file,
+                            SPECTRA_DIR,
+                            f"compound_{selected_compound_id}_{spectrum_type}_{uploaded_file.name}",
+                        )
+                        created_records.append(
+                            insert_spectrum_file_record(
+                                compound_id=selected_compound_id,
+                                spectrum_type=spectrum_type.strip(),
+                                file_path=saved_path,
+                                note=note.strip()
+                            )
+                        )
+
+                    st.success(f"Saved {len(created_records)} spectra file record(s).")
+
+                    if st.button("Open Record", key=f"open_detail_after_spectra_{selected_compound_id}"):
+                        open_compound_detail(selected_compound_id)
+                        st.rerun()
+
+    elif spectra_page == "Edit Files":
+        section_header("Edit Spectra Files", "Update a spectra file record and verify its path.")
+        render_helper_card(
+            "Tip",
+            "You can switch a local path to a Google Drive link at any time, especially for large raw files before public deployment.",
+        )
+        spectra_df = load_all_spectra_files()
+
+        if spectra_df.empty:
+            st.info("No spectra file records available.")
+        else:
+            spectra_df["label"] = (
+                spectra_df["id"].astype(str)
+                + " | "
+                + spectra_df["trivial_name"].fillna("-").astype(str)
+                + " | "
+                + spectra_df["spectrum_type"].fillna("-").astype(str)
+                + " | "
+                + spectra_df["file_path"].fillna("-").astype(str)
+            )
+
+            selected_label = st.selectbox(
+                "Select Spectra File Record",
+                spectra_df["label"].tolist(),
+                key="edit_spectra_select"
+            )
+
+            file_id = int(selected_label.split(" | ")[0])
+            row_df = load_spectrum_file_row(file_id)
+
+            if row_df.empty:
+                st.error("Spectra file record not found.")
+            else:
+                row = row_df.iloc[0]
+                compounds_df = load_all_compounds()
+                options = compounds_df[["id", "trivial_name"]].copy()
+                options["label"] = options["id"].astype(str) + " - " + options["trivial_name"].fillna("")
+                label_list = options["label"].tolist()
+
+                default_index = 0
+                if row["compound_id"] in options["id"].tolist():
+                    default_index = options.index[options["id"] == row["compound_id"]][0]
+
+                with st.form("edit_spectra_form", clear_on_submit=False):
+                    selected_compound_label = st.selectbox(
+                        "Select Compound",
+                        label_list,
+                        index=default_index,
+                        key="edit_spectra_compound"
+                    )
+
+                    spectrum_type = select_or_custom(
+                        "Spectrum Type",
+                        build_existing_options(spectra_df, "spectrum_type", DEFAULT_SPECTRUM_TYPES),
+                        f"edit_spectrum_type_{file_id}",
+                        value=maybe_blank(row["spectrum_type"]),
+                    )
+                    file_path = st.text_input("File Path or External URL", value=maybe_blank(row["file_path"]))
+                    replacement_upload = st.file_uploader(
+                        "Replace File by Upload",
+                        key=f"edit_spectrum_upload_{file_id}",
+                    )
+                    note = st.text_area("Note", value=maybe_blank(row["note"]))
+
+                    submitted_edit_spectra = st.form_submit_button("Save Changes")
+
+                if submitted_edit_spectra:
+                    if not spectrum_type.strip():
+                        st.error("Spectrum Type is required.")
+                    elif not file_path.strip() and replacement_upload is None:
+                        st.error("File Path is required.")
+                    else:
+                        selected_compound_id = int(selected_compound_label.split(" - ")[0])
+
+                        if replacement_upload is not None:
+                            file_path = save_uploaded_asset(
+                                replacement_upload,
+                                SPECTRA_DIR,
+                                f"compound_{selected_compound_id}_{spectrum_type}_{replacement_upload.name}",
+                            )
+
+                        validation_errors, validation_warnings = validate_spectrum_entry(file_path.strip(), spectrum_type.strip())
+                        for warning_message in validation_warnings:
+                            st.warning(warning_message)
+                        if validation_errors:
+                            for error_message in validation_errors:
+                                st.error(error_message)
+                            st.stop()
+
+                        update_spectrum_file_record(
+                            file_id=file_id,
+                            compound_id=selected_compound_id,
+                            spectrum_type=spectrum_type.strip(),
+                            file_path=file_path.strip(),
+                            note=note.strip()
+                        )
+
+                        st.success(f"Spectra file record ID {file_id} updated successfully.")
+
+                        left_btn, right_btn = st.columns([1, 1])
+                        with left_btn:
+                            if st.button("Open Record", key=f"open_detail_after_edit_spectra_{file_id}"):
+                                open_compound_detail(selected_compound_id)
+                                st.rerun()
+                        with right_btn:
+                            if st.button("Refresh Form", key=f"reload_edit_spectra_{file_id}"):
+                                st.rerun()
+
+    else:
+        section_header("Delete Spectra Files", "Remove a spectra file record from the database.")
+        spectra_df = load_all_spectra_files()
+
+        if spectra_df.empty:
+            st.info("No spectra file records available.")
+        else:
+            spectra_df["label"] = (
+                spectra_df["id"].astype(str)
+                + " | "
+                + spectra_df["trivial_name"].fillna("-").astype(str)
+                + " | "
+                + spectra_df["spectrum_type"].fillna("-").astype(str)
+                + " | "
+                + spectra_df["file_path"].fillna("-").astype(str)
+            )
+
+            selected_label = st.selectbox("Select Spectra File Record to Delete", spectra_df["label"].tolist(), key="delete_spectra_select")
+            file_id = int(selected_label.split(" | ")[0])
+            row_df = load_spectrum_file_row(file_id)
+
+            if not row_df.empty:
+                row = row_df.iloc[0]
+                st.warning("This action cannot be undone.")
+                st.markdown('<div class="panel-card">', unsafe_allow_html=True)
+                st.write(f"**Record ID:** {file_id}")
+                st.write(f"**Compound ID:** {row['compound_id']}")
+                st.write(f"**Spectrum Type:** {clean_text(row['spectrum_type'])}")
+                st.write(f"**File Path:** {clean_text(row['file_path'])}")
+                st.markdown('</div>', unsafe_allow_html=True)
+
+                with st.form("delete_spectra_form"):
+                    confirm = st.checkbox("I understand that this will permanently delete this spectra file record.")
+                    submitted_delete = st.form_submit_button("Delete Spectra File Record")
+
+                if submitted_delete:
+                    if not confirm:
+                        st.error("Please confirm deletion first.")
+                    else:
+                        compound_id = int(row["compound_id"])
+                        delete_spectrum_file_record_by_id(file_id)
+                        st.success(f"Spectra file record ID {file_id} was deleted.")
+                        if st.button("Open Record", key=f"open_detail_after_delete_spectra_{file_id}"):
+                            open_compound_detail(compound_id)
+                            st.rerun()
 
 
 # =========================
