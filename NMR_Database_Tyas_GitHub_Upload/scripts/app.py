@@ -3921,47 +3921,53 @@ def show_overview_page(all_compounds_df):
         dashboard_class_filter = st.selectbox(
             "Compound Class",
             build_filter_options(all_compounds_df, "compound_class"),
-            key="dashboard_class"
-        )
-        dashboard_subclass_filter = st.selectbox(
-            "Compound Subclass",
-            build_filter_options(all_compounds_df, "compound_subclass"),
-            key="dashboard_subclass"
-        )
-        dashboard_source_filter = st.selectbox(
-            "Source Material",
-            build_filter_options(all_compounds_df, "source_material"),
-            key="dashboard_source"
-        )
-        dashboard_data_source_filter = st.selectbox(
-            "Data Source",
-            build_filter_options(all_compounds_df, "data_source"),
-            key="dashboard_data_source"
-        )
+         st.markdown(
+    f"""
+    <div class="metric-strip">
+        <div class="metric-cell">
+            <div class="metric-strip-value">{len(filtered_df)}</div>
+            <div class="metric-strip-label">Compounds</div>
+        </div>
+        <div class="metric-cell">
+            <div class="metric-strip-value">{proton_count}</div>
+            <div class="metric-strip-label">1H Peaks</div>
+        </div>
+        <div class="metric-cell">
+            <div class="metric-strip-value">{carbon_count}</div>
+            <div class="metric-strip-label">13C Peaks</div>
+        </div>
+        <div class="metric-cell">
+            <div class="metric-strip-value">{spectra_count}</div>
+            <div class="metric-strip-label">Spectra Files</div>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 
-    filtered_df = apply_dataframe_filters(
-        all_compounds_df,
-        class_filter=dashboard_class_filter,
-        subclass_filter=dashboard_subclass_filter,
-        source_filter=dashboard_source_filter,
-        data_source_filter=dashboard_data_source_filter
-    )
-
-    filtered_ids = filtered_df["id"].tolist()
-    proton_count, carbon_count, spectra_count = count_related_records(filtered_ids)
-    health = calculate_workspace_health(filtered_df)
-
-    c1, c2, c3, c4 = st.columns(4)
-    render_metric_card("Compounds", len(filtered_df), c1)
-    render_metric_card("1H Peaks", proton_count, c2)
-    render_metric_card("13C Peaks", carbon_count, c3)
-    render_metric_card("Spectra Files", spectra_count, c4)
-
-    h1, h2, h3, h4 = st.columns(4)
-    render_metric_card("Structure IDs Ready", health["structure_ready"], h1)
-    render_metric_card("Reference Ready", health["reference_ready"], h2)
-    render_metric_card("Drive-linked Records", health["external_ready"], h3)
-    render_metric_card("Submission-ready Metadata", health["submission_ready"], h4)
+st.markdown(
+    f"""
+    <div class="metric-strip" style="margin-top:-0.1rem;">
+        <div class="metric-cell">
+            <div class="metric-strip-value">{health["structure_ready"]}</div>
+            <div class="metric-strip-label">Structure IDs Ready</div>
+        </div>
+        <div class="metric-cell">
+            <div class="metric-strip-value">{health["reference_ready"]}</div>
+            <div class="metric-strip-label">Reference Ready</div>
+        </div>
+        <div class="metric-cell">
+            <div class="metric-strip-value">{health["external_ready"]}</div>
+            <div class="metric-strip-label">Drive-linked Records</div>
+        </div>
+        <div class="metric-cell">
+            <div class="metric-strip-value">{health["submission_ready"]}</div>
+            <div class="metric-strip-label">Submission-ready Metadata</div>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 
     insight_left, insight_right = st.columns([1.25, 1])
     with insight_left:
