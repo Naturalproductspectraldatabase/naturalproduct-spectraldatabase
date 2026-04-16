@@ -637,48 +637,6 @@ st.markdown("""
     box-shadow: var(--shadow-soft);
 }
 
-.hero-actions-wrap {
-    margin-top: 0.95rem;
-    padding: 1rem 1.05rem;
-    border-radius: 24px;
-    border: 1px solid rgba(255,255,255,0.08);
-    background: linear-gradient(180deg, rgba(255,255,255,0.032), rgba(255,255,255,0.018));
-    box-shadow: var(--shadow-soft);
-}
-
-.hero-actions-note {
-    color: var(--text-soft);
-    font-size: 0.96rem;
-    line-height: 1.55;
-    margin-bottom: 0.9rem;
-}
-
-.hero-button-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-}
-
-.hero-btn-primary button,
-.hero-btn-secondary button {
-    min-height: 48px !important;
-    border-radius: 16px !important;
-    font-size: 0.98rem !important;
-    font-weight: 650 !important;
-}
-
-.hero-btn-primary button {
-    background: linear-gradient(90deg, #42b7ff 0%, #596dff 52%, #7b42ff 100%) !important;
-    color: #ffffff !important;
-    border: 1px solid rgba(255,255,255,0.12) !important;
-}
-
-.hero-btn-secondary button {
-    background: rgba(255,255,255,0.03) !important;
-    color: #F4F7FC !important;
-    border: 1px solid rgba(255,255,255,0.10) !important;
-}
-
 .hero-image-fallback {
     border-radius: 20px;
     padding: 1.2rem;
@@ -687,8 +645,8 @@ st.markdown("""
 }
 
 @media (max-width: 1100px) {
-    .hero-actions-wrap {
-        margin-top: 0.8rem;
+    .hero-shell {
+        margin-bottom: 1rem;
     }
 }
 .section-title {
@@ -714,24 +672,34 @@ st.markdown("""
     background: linear-gradient(180deg, rgba(255,255,255,0.032), rgba(255,255,255,0.018));
     border: 1px solid rgba(255,255,255,0.08);
     margin-bottom: 0.8rem;
+    box-shadow: var(--shadow-soft);
 }
 
-div[data-testid="stMetric"] {
-    background: transparent;
-    border: none;
-    padding: 0;
-}
-
-div[data-testid="stMetricLabel"] {
+.metric-card-label {
     color: var(--text-soft);
-    font-size: 0.92rem;
+    font-size: 0.9rem;
     font-weight: 560;
+    margin-bottom: 0.45rem;
 }
 
-div[data-testid="stMetricValue"] {
-    font-size: 2.15rem;
-    font-weight: 760;
+.metric-card-value {
+    font-size: 2rem;
+    font-weight: 780;
+    line-height: 1;
     letter-spacing: -0.03em;
+    color: var(--text-main);
+}
+
+.dashboard-section {
+    margin-top: 0.5rem;
+    margin-bottom: 1.2rem;
+}
+
+.dashboard-dataframe-note {
+    margin-top: -0.25rem;
+    margin-bottom: 0.8rem;
+    color: var(--text-soft);
+    font-size: 0.9rem;
 }
 
 .panel-card {
@@ -1647,9 +1615,15 @@ def section_header(title, subtitle=""):
 
 def render_metric_card(label, value, col):
     with col:
-        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-        st.metric(label, value)
-        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown(
+            f"""
+            <div class="metric-card">
+                <div class="metric-card-label">{label}</div>
+                <div class="metric-card-value">{value}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 def render_helper_card(title, text):
@@ -1935,33 +1909,6 @@ def show_app_header():
             """,
             unsafe_allow_html=True
         )
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    st.markdown('<div class="hero-actions-wrap">', unsafe_allow_html=True)
-
-    c1, c2, c3 = st.columns([1.25, 1, 1])
-    with c1:
-        st.markdown('<div class="hero-btn-primary">', unsafe_allow_html=True)
-        if st.button("Browse Dashboard", use_container_width=True, key="hero_overview_btn"):
-            set_main_nav("Dashboard")
-            st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    with c2:
-        st.markdown('<div class="hero-btn-secondary">', unsafe_allow_html=True)
-        if st.button("Search Spectra", use_container_width=True, key="hero_search_btn"):
-            set_main_nav("Search & Match")
-            st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    with c3:
-        st.markdown('<div class="hero-btn-secondary">', unsafe_allow_html=True)
-        if st.button("Start Submission", use_container_width=True, key="hero_add_btn"):
-            set_main_nav("Compound Workspace")
-            set_compound_page("New Submission")
-            st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
-
     st.markdown('</div>', unsafe_allow_html=True)
 
 # =========================
@@ -4070,18 +4017,6 @@ def show_overview_page(all_compounds_df):
     render_metric_card("Drive-linked Records", health["external_ready"], h3)
     render_metric_card("Submission-ready Metadata", health["submission_ready"], h4)
 
-    insight_left, insight_right = st.columns([1.25, 1])
-    with insight_left:
-        render_helper_card(
-            "Curation priorities",
-            "Prioritize records that still miss SMILES/InChI/InChIKey, citation metadata, or external raw-data links. Those three areas will have the biggest effect on future structure search, reproducibility, and public usability.",
-        )
-    with insight_right:
-        render_helper_card(
-            "Public access readiness",
-            "For public small-scale access, keep preview images lightweight, keep raw data in Google Drive, and make sure each shared file has viewer permission for approved users.",
-        )
-
     section_header("Metadata Gaps", "This section helps you see which records should be curated next.")
     g1, g2, g3, g4 = st.columns(4)
     render_metric_card("Missing Structure IDs", len(missing_structure_df), g1)
@@ -4153,33 +4088,14 @@ def show_overview_page(all_compounds_df):
                 width="stretch",
                 hide_index=True,
             )
+        else:
+            render_helper_card(
+                "Priority status",
+                "The filtered records already look well curated. Use the sidebar to move into record editing, spectra review, or submission work when needed.",
+            )
 
-    section_header("Curation Shortcuts", "Keep the dashboard focused on review while using these shortcuts for actual database work.")
-    qa1, qa2, qa3, qa4 = st.columns(4)
-
-    with qa1:
-        if st.button("Browse Records", use_container_width=True, key="overview_open_detail"):
-            set_main_nav("Compound Workspace")
-            set_compound_page("Browse Record")
-            st.rerun()
-
-    with qa2:
-        if st.button("Edit Metadata", use_container_width=True, key="overview_edit_metadata"):
-            set_main_nav("Compound Workspace")
-            set_compound_page("Update Metadata")
-            st.rerun()
-
-    with qa3:
-        if st.button("Batch Import CSV", use_container_width=True, key="overview_batch_import"):
-            set_main_nav("Compound Workspace")
-            set_compound_page("Batch Import")
-            st.rerun()
-
-    with qa4:
-        if st.button("Open Guide", use_container_width=True, key="overview_open_guide"):
-            set_main_nav("Guide")
-            st.rerun()
-
+    st.markdown('<div class="dashboard-section"></div>', unsafe_allow_html=True)
+    section_header("Distribution Overview", "These charts help you see how the current filtered dataset is distributed across class and source.")
     left, right = st.columns([1.25, 1])
 
     with left:
@@ -4222,6 +4138,7 @@ def show_overview_page(all_compounds_df):
                 color_hex="#9C63F1",
             )
 
+    st.markdown('<div class="dashboard-section"></div>', unsafe_allow_html=True)
     section_header("Quick Browse")
     if filtered_df.empty:
         st.info("No compounds available for the selected filters.")
@@ -4237,49 +4154,62 @@ def show_overview_page(all_compounds_df):
                     open_compound_detail(int(row["id"]))
                     st.rerun()
 
-    section_header("Compound Table")
-    if filtered_df.empty:
-        st.info("No rows available.")
-    else:
-        display_df = filtered_df[
-            [
-                "id",
-                "trivial_name",
-                "molecular_formula",
-                "compound_class",
-                "compound_subclass",
-                "source_material",
-                "sample_code"
-            ]
-        ].rename(columns={
-            "id": "ID",
-            "trivial_name": "Trivial Name",
-            "molecular_formula": "Molecular Formula",
-            "compound_class": "Compound Class",
-            "compound_subclass": "Compound Subclass",
-            "source_material": "Source Material",
-            "sample_code": "Sample Code"
-        })
+    st.markdown('<div class="dashboard-section"></div>', unsafe_allow_html=True)
+    table_col, utility_col = st.columns([4.2, 1.3])
 
-        st.download_button(
-            label="Download Current Overview as CSV",
-            data=dataframe_to_csv_bytes(display_df),
-            file_name="overview_filtered_compounds.csv",
-            mime="text/csv",
-            key="download_overview_csv"
+    with table_col:
+        section_header("Compound Table")
+        st.markdown(
+            '<div class="dashboard-dataframe-note">Use this table for broad scanning, then open individual records from Quick Browse when you need detailed review.</div>',
+            unsafe_allow_html=True,
         )
+        if filtered_df.empty:
+            st.info("No rows available.")
+        else:
+            display_df = filtered_df[
+                [
+                    "id",
+                    "trivial_name",
+                    "molecular_formula",
+                    "compound_class",
+                    "compound_subclass",
+                    "source_material",
+                    "sample_code"
+                ]
+            ].rename(columns={
+                "id": "ID",
+                "trivial_name": "Trivial Name",
+                "molecular_formula": "Molecular Formula",
+                "compound_class": "Compound Class",
+                "compound_subclass": "Compound Subclass",
+                "source_material": "Source Material",
+                "sample_code": "Sample Code"
+            })
 
-        st.dataframe(display_df, width="stretch", hide_index=True)
+            st.download_button(
+                label="Download Current Overview as CSV",
+                data=dataframe_to_csv_bytes(display_df),
+                file_name="overview_filtered_compounds.csv",
+                mime="text/csv",
+                key="download_overview_csv"
+            )
 
-    section_header("Backup")
-    backup_filename = f"nmr_database_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
-    st.download_button(
-        label="Download SQLite Backup",
-        data=get_backup_bytes(),
-        file_name=backup_filename,
-        mime="application/octet-stream",
-        key="download_db_backup"
-    )
+            st.dataframe(display_df, width="stretch", hide_index=True)
+
+    with utility_col:
+        section_header("Backup")
+        render_helper_card(
+            "Keep a safe copy",
+            "Download a fresh SQLite backup before major imports, metadata revision, or record deletion.",
+        )
+        backup_filename = f"nmr_database_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+        st.download_button(
+            label="Download SQLite Backup",
+            data=get_backup_bytes(),
+            file_name=backup_filename,
+            mime="application/octet-stream",
+            key="download_db_backup"
+        )
 
 
 def show_guide_page():
@@ -5716,11 +5646,6 @@ with st.sidebar:
         main_radio_kwargs["index"] = current_index
     main_section = st.radio(**main_radio_kwargs)
     st.session_state["nav_section"] = main_section
-
-    st.markdown("---")
-    if st.button("Open Guide", use_container_width=True, key="sidebar_open_guide"):
-        set_main_nav("Guide")
-        st.rerun()
 # =========================
 # Main routing
 # =========================
