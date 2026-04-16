@@ -59,6 +59,13 @@ FAVICON_PATH = pick_branding_asset(
     "favicon2.png",
     "favicon.png",
 )
+SIDEBAR_LOGO_PATH = pick_branding_asset(
+    "coral_favicon1.png",
+    "favicon_circle.png",
+    "favicon2.png",
+    "favicon.png",
+    "logo_header_web.png",
+)
 HEADER_LOGO_PATH = pick_branding_asset("logo_header_web.png", "header1_web.png", "logo_header.png", "header1.png", "header.png")
 
 DEFAULT_CLASS_OPTIONS = [
@@ -528,6 +535,15 @@ st.markdown("""
     color: var(--text-soft);
     font-size: 0.93rem;
     line-height: 1.5;
+}
+
+.sidebar-logo-shell {
+    border-radius: 24px;
+    padding: 0.7rem;
+    margin-bottom: 0.9rem;
+    background: linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.015));
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 12px 28px rgba(0,0,0,0.16);
 }
 
 .sidebar-brand {
@@ -1693,6 +1709,11 @@ def render_sidebar_workspace_summary(active_section: str, all_compounds_df: pd.D
     health = calculate_workspace_health(all_compounds_df)
     active_copy = NAV_SECTION_COPY.get(active_section, {"title": active_section, "summary": ""})
 
+    if SIDEBAR_LOGO_PATH.exists():
+        st.markdown('<div class="sidebar-logo-shell">', unsafe_allow_html=True)
+        st.image(str(SIDEBAR_LOGO_PATH), width="stretch")
+        st.markdown('</div>', unsafe_allow_html=True)
+
     st.markdown('<div class="sidebar-brand">', unsafe_allow_html=True)
     st.markdown(
         """
@@ -1744,7 +1765,7 @@ def render_sidebar_workspace_summary(active_section: str, all_compounds_df: pd.D
     st.caption(f"Signed in as {current_user} ({current_role})")
     st.caption(
         f"Structure-ready: {health['structure_ready']} | Reference-ready: {health['reference_ready']} | "
-        f"Drive-linked: {health['external_ready']}"
+        f"Drive-linked: {health['external_ready']} | Submission-ready: {health['submission_ready']}"
     )
 
 
@@ -4133,29 +4154,30 @@ def show_overview_page(all_compounds_df):
                 hide_index=True,
             )
 
-    section_header("Quick Actions")
+    section_header("Curation Shortcuts", "Keep the dashboard focused on review while using these shortcuts for actual database work.")
     qa1, qa2, qa3, qa4 = st.columns(4)
 
     with qa1:
-        if st.button("Keyword Search", use_container_width=True, key="overview_search_name"):
-            set_main_nav("Search & Match")
-            st.rerun()
-
-    with qa2:
-        if st.button("Run Spectral Match", use_container_width=True, key="overview_search_nmr"):
-            set_main_nav("Search & Match")
-            st.rerun()
-
-    with qa3:
-        if st.button("Start Submission", use_container_width=True, key="overview_add_compound"):
-            set_main_nav("Compound Workspace")
-            set_compound_page("New Submission")
-            st.rerun()
-
-    with qa4:
         if st.button("Browse Records", use_container_width=True, key="overview_open_detail"):
             set_main_nav("Compound Workspace")
             set_compound_page("Browse Record")
+            st.rerun()
+
+    with qa2:
+        if st.button("Edit Metadata", use_container_width=True, key="overview_edit_metadata"):
+            set_main_nav("Compound Workspace")
+            set_compound_page("Update Metadata")
+            st.rerun()
+
+    with qa3:
+        if st.button("Batch Import CSV", use_container_width=True, key="overview_batch_import"):
+            set_main_nav("Compound Workspace")
+            set_compound_page("Batch Import")
+            st.rerun()
+
+    with qa4:
+        if st.button("Open Guide", use_container_width=True, key="overview_open_guide"):
+            set_main_nav("Guide")
             st.rerun()
 
     left, right = st.columns([1.25, 1])
@@ -5677,6 +5699,7 @@ with st.sidebar:
     render_sidebar_workspace_summary(active_section, all_compounds_df)
 
     st.markdown("### Workspace")
+    st.caption("Choose the area you want to open next.")
 
     nav_options = NAV_OPTIONS
     current_index = 0
@@ -5687,6 +5710,7 @@ with st.sidebar:
         "label": "Open workspace",
         "options": nav_options,
         "key": "main_section_radio",
+        "label_visibility": "collapsed",
     }
     if "main_section_radio" not in st.session_state:
         main_radio_kwargs["index"] = current_index
