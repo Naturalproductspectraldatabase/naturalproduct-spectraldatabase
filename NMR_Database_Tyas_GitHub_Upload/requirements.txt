@@ -1,5 +1,6 @@
 streamlit>=1.40
 pandas>=2.2
+plotly>=6.0
 rdkit>=2025.3
 streamlit-ketchersa>=0.0.2
 streamlit-ketcher>=0.0.1
