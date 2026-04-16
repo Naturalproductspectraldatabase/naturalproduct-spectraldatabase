@@ -281,10 +281,7 @@ def get_secret_object(*keys: str):
 def load_approved_users() -> list[dict[str, str]]:
     raw_users = get_secret_object("NPDB_APPROVED_USERS", "approved_users")
     if isinstance(raw_users, dict):
-        iterable = [
-            {"username": username, "password": password}
-            for username, password in raw_users.items()
-        ]
+        iterable = [{"username": username, "password": password} for username, password in raw_users.items()]
     elif isinstance(raw_users, list):
         iterable = raw_users
     else:
@@ -298,9 +295,7 @@ def load_approved_users() -> list[dict[str, str]]:
         password = str(item.get("password", "")).strip()
         role = str(item.get("role", "viewer")).strip() or "viewer"
         if username and password:
-            users.append(
-                {"username": username, "password": password, "role": role}
-            )
+            users.append({"username": username, "password": password, "role": role})
     return users
 
 
@@ -308,7 +303,6 @@ def load_approved_names() -> list[str]:
     raw_names = get_secret_object("NPDB_APPROVED_NAMES", "approved_names")
     if not isinstance(raw_names, list):
         return []
-
     names = []
     for item in raw_names:
         text = str(item).strip() if item is not None else ""
@@ -338,15 +332,9 @@ def verify_access_gate():
     if st.session_state.get("npdb_authenticated"):
         return
 
-    expected_username = get_secret_setting(
-        "NPDB_ACCESS_USERNAME", "access_username"
-    )
-    expected_password = get_secret_setting(
-        "NPDB_ACCESS_PASSWORD", "access_password"
-    )
-    approved_password = get_secret_setting(
-        "NPDB_APPROVED_PASSWORD", "approved_password"
-    )
+    expected_username = get_secret_setting("NPDB_ACCESS_USERNAME", "access_username")
+    expected_password = get_secret_setting("NPDB_ACCESS_PASSWORD", "access_password")
+    approved_password = get_secret_setting("NPDB_APPROVED_PASSWORD", "approved_password")
     approved_users = load_approved_users()
     approved_names = load_approved_names()
 
@@ -388,9 +376,7 @@ def verify_access_gate():
     with st.form("npdb_access_gate"):
         username = st.text_input("Username", value="")
         password = st.text_input("Password", value="", type="password")
-        submitted = st.form_submit_button(
-            "Open Database", use_container_width=True
-        )
+        submitted = st.form_submit_button("Open Database", use_container_width=True)
 
     if submitted:
         authenticated = False
@@ -398,36 +384,32 @@ def verify_access_gate():
 
         if approved_users:
             for user in approved_users:
-                username_ok = hmac.compare_digest(
-                    username.strip(), user["username"]
-                )
-                password_ok = hmac.compare_digest(
-                    password, user["password"]
-                )
+                username_ok = hmac.compare_digest(username.strip(), user["username"])
+                password_ok = hmac.compare_digest(password, user["password"])
                 if username_ok and password_ok:
                     authenticated = True
                     matched_role = user.get("role", "viewer")
                     break
-
         elif approved_names and approved_password:
             submitted_username = str(username).strip() if username is not None else ""
             if submitted_username.lower().startswith("npdb_"):
                 submitted_name = submitted_username[5:]
                 submitted_slug = normalize_login_slug(submitted_name)
-                allowed_slugs = {
-                    normalize_login_slug(name) for name in approved_names
-                }
-                if (
-                    submitted_slug in allowed_slugs
-                    and hmac.compare_digest(password, approved_password)
-                ):
+                allowed_slugs = {normalize_login_slug(name) for name in approved_names}
+                if submitted_slug in allowed_slugs and hmac.compare_digest(password, approved_password):
                     authenticated = True
                     matched_role = "approved-viewer"
-
+        elif approved_names and approved_password:
+            submitted_username = str(username).strip() if username is not None else ""
+            if submitted_username.lower().startswith("npdb_"):
+                submitted_name = submitted_username[5:]
+                submitted_slug = normalize_login_slug(submitted_name)
+                allowed_slugs = {normalize_login_slug(name) for name in approved_names}
+                if submitted_slug in allowed_slugs and hmac.compare_digest(password, approved_password):
+                    authenticated = True
+                    matched_role = "approved-viewer"
         else:
-            username_ok = True if not expected_username else hmac.compare_digest(
-                username.strip(), expected_username
-            )
+            username_ok = True if not expected_username else hmac.compare_digest(username.strip(), expected_username)
             password_ok = hmac.compare_digest(password, expected_password)
             authenticated = username_ok and password_ok
 
@@ -436,7 +418,6 @@ def verify_access_gate():
             st.session_state["npdb_username"] = username.strip()
             st.session_state["npdb_role"] = matched_role
             st.rerun()
-
         st.error("Access denied. Please check the approved credentials.")
 
     st.stop()
@@ -514,7 +495,6 @@ st.markdown("""
     --accent-green: #7EF0C2;
     --accent-coral: #FF7F6D;
     --shadow-soft: 0 18px 44px rgba(0,0,0,0.22);
-    --shadow-strong: 0 24px 54px rgba(0,0,0,0.28);
 }
 
 [data-testid="stAppViewContainer"] {
@@ -525,49 +505,34 @@ st.markdown("""
 }
 
 .block-container {
-    padding-top: 1.05rem;
-    padding-bottom: 2.2rem;
-    max-width: 1480px;
-}
-
-header[data-testid="stHeader"] {
-    background: rgba(7, 17, 29, 0.30);
+    padding-top: 1.1rem;
+    padding-bottom: 2rem;
+    max-width: 1500px;
 }
 
 [data-testid="stSidebar"] {
     border-right: 1px solid rgba(255,255,255,0.06);
-    background: linear-gradient(180deg, rgba(8,17,30,0.97), rgba(8,14,24,0.99)) !important;
+    background:
+        linear-gradient(180deg, rgba(8, 17, 30, 0.96), rgba(8, 14, 24, 0.98)) !important;
 }
 
 [data-testid="stSidebar"] .block-container {
-    padding-top: 1.2rem;
+    padding-top: 1.35rem;
 }
 
-hr {
-    border-color: rgba(255,255,255,0.07);
-}
-
-.section-title {
-    margin-top: 0.05rem;
-    margin-bottom: 0.3rem;
-    font-size: 2rem;
-    line-height: 1.1;
-    font-weight: 800;
-    letter-spacing: -0.03em;
-    color: var(--text-main);
-}
-
-.section-subtitle {
+.sidebar-note {
+    border-radius: 18px;
+    padding: 0.95rem 1rem;
+    background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.02));
+    border: 1px solid rgba(255,255,255,0.08);
     color: var(--text-soft);
-    margin-bottom: 1.15rem;
-    line-height: 1.62;
-    max-width: 60rem;
-    font-size: 0.98rem;
+    font-size: 0.93rem;
+    line-height: 1.5;
 }
 
 .sidebar-brand {
-    border-radius: 24px;
-    padding: 1.05rem 1rem;
+    border-radius: 22px;
+    padding: 1rem 1rem 1rem 1rem;
     margin-bottom: 1rem;
     background: linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.018));
     border: 1px solid rgba(255,255,255,0.08);
@@ -577,58 +542,47 @@ hr {
 .sidebar-brand-title {
     color: var(--text-main);
     font-size: 1.05rem;
-    font-weight: 780;
+    font-weight: 760;
     letter-spacing: -0.02em;
     margin-top: 0.15rem;
 }
 
 .sidebar-brand-subtitle {
     color: var(--text-soft);
-    font-size: 0.92rem;
-    line-height: 1.58;
-    margin-top: 0.3rem;
+    font-size: 0.89rem;
+    line-height: 1.5;
+    margin-top: 0.25rem;
 }
 
 .sidebar-stats {
     display: grid;
-    grid-template-columns: 1fr;
-    gap: 0.75rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.6rem;
     margin-bottom: 1rem;
 }
 
 .sidebar-stat {
-    border-radius: 18px;
-    padding: 0.95rem 1rem;
-    background: linear-gradient(180deg, rgba(255,255,255,0.028), rgba(255,255,255,0.018));
+    border-radius: 16px;
+    padding: 0.75rem 0.8rem;
+    background: rgba(255,255,255,0.028);
     border: 1px solid rgba(255,255,255,0.08);
-    box-shadow: 0 10px 24px rgba(0,0,0,0.14);
 }
 
 .sidebar-stat-value {
     color: var(--text-main);
-    font-size: 1.18rem;
-    font-weight: 780;
-    line-height: 1.05;
+    font-size: 1.15rem;
+    font-weight: 760;
+    line-height: 1.1;
 }
 
 .sidebar-stat-label {
     color: var(--text-soft);
-    font-size: 0.84rem;
-    margin-top: 0.22rem;
-}
-
-.sidebar-note {
-    border-radius: 18px;
-    padding: 0.95rem 1rem;
-    background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.02));
-    border: 1px solid rgba(255,255,255,0.08);
-    color: var(--text-soft);
-    font-size: 0.9rem;
-    line-height: 1.55;
+    font-size: 0.8rem;
+    margin-top: 0.18rem;
 }
 
 .selector-card {
-    border-radius: 22px;
+    border-radius: 20px;
     padding: 1rem 1.05rem;
     margin-bottom: 1rem;
     background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.018));
@@ -637,16 +591,22 @@ hr {
 
 .selector-title {
     color: var(--text-main);
-    font-size: 1rem;
-    font-weight: 740;
-    margin-bottom: 0.22rem;
+    font-size: 0.98rem;
+    font-weight: 720;
+    margin-bottom: 0.18rem;
 }
 
 .selector-subtitle {
     color: var(--text-soft);
     font-size: 0.9rem;
-    line-height: 1.52;
-    margin-bottom: 0.7rem;
+    line-height: 1.5;
+    margin-bottom: 0.75rem;
+}
+
+.inline-note {
+    color: var(--text-soft);
+    font-size: 0.92rem;
+    line-height: 1.5;
 }
 
 .hero-shell {
@@ -658,7 +618,7 @@ hr {
     border-radius: 28px;
     overflow: hidden;
     border: 1px solid rgba(255,255,255,0.06);
-    box-shadow: var(--shadow-strong);
+    box-shadow: var(--shadow-soft);
 }
 
 .hero-actions-wrap {
@@ -677,107 +637,152 @@ hr {
     margin-bottom: 0.9rem;
 }
 
-.metric-strip {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 0;
-    border-radius: 24px;
-    overflow: hidden;
+.hero-button-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.hero-btn-primary button,
+.hero-btn-secondary button {
+    min-height: 48px !important;
+    border-radius: 16px !important;
+    font-size: 0.98rem !important;
+    font-weight: 650 !important;
+}
+
+.hero-btn-primary button {
+    background: linear-gradient(90deg, #42b7ff 0%, #596dff 52%, #7b42ff 100%) !important;
+    color: #ffffff !important;
+    border: 1px solid rgba(255,255,255,0.12) !important;
+}
+
+.hero-btn-secondary button {
+    background: rgba(255,255,255,0.03) !important;
+    color: #F4F7FC !important;
+    border: 1px solid rgba(255,255,255,0.10) !important;
+}
+
+.hero-image-fallback {
+    border-radius: 20px;
+    padding: 1.2rem;
+    background: rgba(255,255,255,0.022);
     border: 1px solid rgba(255,255,255,0.08);
-    background: linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.02));
-    box-shadow: var(--shadow-soft);
-    margin-bottom: 1rem;
 }
 
-.metric-cell {
-    padding: 1.15rem 1.2rem;
-    border-right: 1px solid rgba(255,255,255,0.06);
+@media (max-width: 1100px) {
+    .hero-actions-wrap {
+        margin-top: 0.8rem;
+    }
 }
-
-.metric-cell:last-child {
-    border-right: none;
-}
-
-.metric-strip-value {
-    font-size: 2.15rem;
-    font-weight: 800;
-    letter-spacing: -0.03em;
-    line-height: 1;
+.section-title {
+    margin-top: 0.15rem;
+    margin-bottom: 0.28rem;
+    font-size: 1.7rem;
+    line-height: 1.15;
+    font-weight: 780;
+    letter-spacing: -0.02em;
     color: var(--text-main);
 }
 
-.metric-strip-label {
-    margin-top: 0.45rem;
+.section-subtitle {
+    color: var(--text-soft);
+    margin-bottom: 1.05rem;
+    line-height: 1.55;
+    max-width: 62rem;
+}
+
+.metric-card {
+    border-radius: 20px;
+    padding: 1rem 1.05rem;
+    background: linear-gradient(180deg, rgba(255,255,255,0.032), rgba(255,255,255,0.018));
+    border: 1px solid rgba(255,255,255,0.08);
+    margin-bottom: 0.8rem;
+}
+
+div[data-testid="stMetric"] {
+    background: transparent;
+    border: none;
+    padding: 0;
+}
+
+div[data-testid="stMetricLabel"] {
     color: var(--text-soft);
     font-size: 0.92rem;
+    font-weight: 560;
 }
 
-.insight-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 1rem;
-    margin-bottom: 1rem;
-}
-
-.insight-card {
-    padding: 1.1rem 1.15rem;
-    border-radius: 24px;
-    background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.018));
-    border: 1px solid rgba(255,255,255,0.08);
-    box-shadow: var(--shadow-soft);
-}
-
-.insight-title {
-    color: var(--text-main);
-    font-size: 1rem;
+div[data-testid="stMetricValue"] {
+    font-size: 2.15rem;
     font-weight: 760;
-    margin-bottom: 0.45rem;
+    letter-spacing: -0.03em;
 }
 
-.insight-text {
-    color: var(--text-soft);
-    font-size: 0.96rem;
-    line-height: 1.7;
-}
-
-.quick-actions-card {
-    padding: 1rem 1.05rem 1.15rem 1.05rem;
-    border-radius: 24px;
+.panel-card {
+    padding: 1rem 1.05rem;
+    border-radius: 22px;
     background: linear-gradient(180deg, rgba(255,255,255,0.032), rgba(255,255,255,0.018));
     border: 1px solid rgba(255,255,255,0.08);
     box-shadow: var(--shadow-soft);
     margin-bottom: 1rem;
 }
 
-.chart-card {
+.quick-card {
     padding: 1rem 1.05rem;
-    border-radius: 24px;
-    background: linear-gradient(180deg, rgba(255,255,255,0.025), rgba(255,255,255,0.015));
+    border-radius: 18px;
     border: 1px solid rgba(255,255,255,0.08);
-    box-shadow: var(--shadow-soft);
-    margin-bottom: 1rem;
-}
-
-.quick-browse-card {
-    padding: 1rem 1.05rem;
-    border-radius: 24px;
-    background: linear-gradient(180deg, rgba(255,255,255,0.025), rgba(255,255,255,0.015));
-    border: 1px solid rgba(255,255,255,0.08);
-    box-shadow: var(--shadow-soft);
-    margin-bottom: 1rem;
+    background: rgba(255,255,255,0.022);
+    margin-bottom: 0.8rem;
 }
 
 .compound-card {
     padding: 1rem 1.05rem;
-    border-radius: 22px;
+    border-radius: 20px;
     border: 1px solid rgba(255,255,255,0.08);
     background: linear-gradient(180deg, rgba(255,255,255,0.028), rgba(255,255,255,0.016));
-    margin-bottom: 0.9rem;
+    margin-bottom: 0.85rem;
     box-shadow: var(--shadow-soft);
 }
 
 .compound-card:hover {
     border-color: rgba(115,231,255,0.22);
+}
+
+.result-card {
+    padding: 1rem 1.05rem;
+    border-radius: 20px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: linear-gradient(180deg, rgba(255,255,255,0.026), rgba(255,255,255,0.018));
+    margin-bottom: 0.8rem;
+    box-shadow: var(--shadow-soft);
+}
+
+.best-match-card {
+    padding: 1.15rem 1.2rem;
+    border-radius: 20px;
+    border: 1px solid rgba(126, 240, 194, 0.30);
+    background: linear-gradient(135deg, rgba(11, 103, 83, 0.18), rgba(53, 81, 152, 0.14));
+    margin-bottom: 1rem;
+}
+
+.result-title {
+    font-size: 1.12rem;
+    font-weight: 760;
+    margin-bottom: 0.18rem;
+    color: var(--text-main);
+}
+
+.result-subtitle {
+    color: var(--text-soft);
+    font-size: 0.95rem;
+    margin-bottom: 0.55rem;
+}
+
+.badge-row {
+    margin-top: 0.28rem;
+    margin-bottom: 0.28rem;
+    color: #D9DDE5;
+    font-size: 0.95rem;
 }
 
 .info-chip-row {
@@ -797,25 +802,39 @@ hr {
     border: 1px solid rgba(255,255,255,0.07);
 }
 
-.helper-card {
-    border-radius: 22px;
-    padding: 1rem 1.05rem;
+.kv-card {
+    height: 100%;
+    border-radius: 18px;
+    padding: 0.95rem 1rem;
+    background: rgba(255,255,255,0.022);
     border: 1px solid rgba(255,255,255,0.08);
-    background: rgba(255,255,255,0.024);
-    margin-bottom: 0.95rem;
+    margin-bottom: 0.75rem;
 }
 
-.helper-title {
-    color: var(--text-main);
-    font-size: 1rem;
-    font-weight: 740;
-    margin-bottom: 0.28rem;
-}
-
-.helper-text {
+.kv-title {
     color: var(--text-soft);
-    font-size: 0.93rem;
-    line-height: 1.58;
+    font-size: 0.87rem;
+    margin-bottom: 0.18rem;
+}
+
+.kv-value {
+    font-size: 1rem;
+    font-weight: 650;
+    color: var(--text-main);
+    word-break: break-word;
+}
+
+.structure-card {
+    border-radius: 24px;
+    padding: 1rem;
+    background: rgba(255,255,255,0.022);
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: var(--shadow-soft);
+}
+
+.small-note {
+    color: var(--text-soft);
+    font-size: 0.92rem;
 }
 
 div[data-baseweb="select"] > div {
@@ -828,30 +847,21 @@ div[data-testid="stNumberInput"] input {
     border-radius: 14px !important;
 }
 
+button[kind="primary"] {
+    border-radius: 15px !important;
+    min-height: 44px !important;
+}
+
 div[data-testid="stButton"] button,
 div[data-testid="stDownloadButton"] button {
-    border-radius: 16px !important;
-    min-height: 46px !important;
-    font-weight: 680 !important;
-    transition: all 0.18s ease !important;
+    border-radius: 15px !important;
+    min-height: 44px !important;
+    font-weight: 640 !important;
 }
 
 div[data-testid="stButton"] button:hover,
 div[data-testid="stDownloadButton"] button:hover {
-    border-color: rgba(97, 216, 237, 0.34) !important;
-    box-shadow: 0 0 0 1px rgba(97,216,237,0.05) !important;
-}
-
-.quick-action-primary button {
-    background: linear-gradient(90deg, rgba(66,183,255,0.22), rgba(123,66,255,0.22)) !important;
-    border: 1px solid rgba(97,216,237,0.35) !important;
-    color: #F7FAFF !important;
-}
-
-.quick-action-secondary button {
-    background: rgba(255,255,255,0.02) !important;
-    border: 1px solid rgba(255,255,255,0.10) !important;
-    color: #F5F8FD !important;
+    border-color: rgba(97, 216, 237, 0.36) !important;
 }
 
 div[data-testid="stRadio"] > div {
@@ -877,32 +887,78 @@ div[data-testid="stRadio"] label:has(input:checked) {
     box-shadow: 0 0 0 1px rgba(97,216,237,0.06);
 }
 
+.action-strip {
+    border-radius: 20px;
+    padding: 1rem 1.05rem;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: linear-gradient(180deg, rgba(255,255,255,0.028), rgba(255,255,255,0.018));
+    margin-bottom: 1rem;
+}
+
+.helper-card {
+    border-radius: 20px;
+    padding: 1rem 1.05rem;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.024);
+    margin-bottom: 0.9rem;
+}
+
+.helper-title {
+    color: var(--text-main);
+    font-size: 1rem;
+    font-weight: 720;
+    margin-bottom: 0.24rem;
+}
+
+.helper-text {
+    color: var(--text-soft);
+    font-size: 0.93rem;
+    line-height: 1.5;
+}
+
+.section-banner {
+    margin-bottom: 1rem;
+    border-radius: 22px;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.02);
+    box-shadow: var(--shadow-soft);
+}
+
+.accent-logo-wrap {
+    margin-top: 1rem;
+    padding-top: 0.2rem;
+    text-align: center;
+}
+
 [data-testid="stDataFrame"] {
     border-radius: 16px;
     overflow: hidden;
     border: 1px solid rgba(255,255,255,0.06);
 }
 
-@media (max-width: 1100px) {
-    .metric-strip {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-    .metric-cell:nth-child(2) {
-        border-right: none;
-    }
-    .insight-grid {
-        grid-template-columns: 1fr;
-    }
+hr {
+    border-color: rgba(255,255,255,0.07);
+}
+
+header[data-testid="stHeader"] {
+    background: rgba(7, 17, 29, 0.32);
 }
 
 @media (max-width: 900px) {
     .section-title {
-        font-size: 1.55rem;
+        font-size: 1.45rem;
     }
+
     .section-subtitle {
         font-size: 0.95rem;
     }
+
+    .sidebar-stats {
+        grid-template-columns: 1fr;
+    }
 }
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -1615,6 +1671,20 @@ def render_external_link_card(label: str, url: str, note: str | None = None):
     if note:
         st.caption(note)
     st.markdown('</div>', unsafe_allow_html=True)
+
+
+def render_dashboard_bar_chart(df: pd.DataFrame, x_col: str, y_col: str, color_hex: str = "#61D8ED"):
+    if df.empty:
+        st.info("No data available.")
+        return
+
+    chart_df = df[[x_col, y_col]].copy()
+    chart_df[x_col] = chart_df[x_col].fillna("Uncategorized").astype(str).str.strip()
+    chart_df[x_col] = chart_df[x_col].replace("", "Uncategorized")
+    chart_df[y_col] = pd.to_numeric(chart_df[y_col], errors="coerce").fillna(0)
+    chart_df = chart_df.sort_values(by=y_col, ascending=False).set_index(x_col)
+
+    st.bar_chart(chart_df[[y_col]], color=color_hex)
 
 
 def render_sidebar_workspace_summary(active_section: str, all_compounds_df: pd.DataFrame):
@@ -3950,117 +4020,148 @@ def show_overview_page(all_compounds_df):
     filtered_ids = filtered_df["id"].tolist()
     proton_count, carbon_count, spectra_count = count_related_records(filtered_ids)
     health = calculate_workspace_health(filtered_df)
+    spectra_df = load_all_spectra_files()
+    linked_spectra_ids = set(spectra_df["compound_id"].tolist()) if not spectra_df.empty else set()
 
-    st.markdown(
-        f"""
-        <div class="metric-strip">
-            <div class="metric-cell">
-                <div class="metric-strip-value">{len(filtered_df)}</div>
-                <div class="metric-strip-label">Compounds</div>
-            </div>
-            <div class="metric-cell">
-                <div class="metric-strip-value">{proton_count}</div>
-                <div class="metric-strip-label">1H Peaks</div>
-            </div>
-            <div class="metric-cell">
-                <div class="metric-strip-value">{carbon_count}</div>
-                <div class="metric-strip-label">13C Peaks</div>
-            </div>
-            <div class="metric-cell">
-                <div class="metric-strip-value">{spectra_count}</div>
-                <div class="metric-strip-label">Spectra Files</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+    missing_structure_df = filtered_df[
+        filtered_df["smiles"].fillna("").astype(str).str.strip().eq("")
+        & filtered_df["inchi"].fillna("").astype(str).str.strip().eq("")
+        & filtered_df["inchikey"].fillna("").astype(str).str.strip().eq("")
+    ]
+    missing_reference_df = filtered_df[
+        filtered_df["doi"].fillna("").astype(str).str.strip().eq("")
+        & filtered_df["journal_name"].fillna("").astype(str).str.strip().eq("")
+    ]
+    missing_source_df = filtered_df[
+        filtered_df["source_material"].fillna("").astype(str).str.strip().eq("")
+    ]
+    missing_spectra_df = filtered_df[~filtered_df["id"].isin(linked_spectra_ids)]
 
-    st.markdown(
-        f"""
-        <div class="metric-strip" style="margin-top:-0.1rem;">
-            <div class="metric-cell">
-                <div class="metric-strip-value">{health["structure_ready"]}</div>
-                <div class="metric-strip-label">Structure IDs Ready</div>
-            </div>
-            <div class="metric-cell">
-                <div class="metric-strip-value">{health["reference_ready"]}</div>
-                <div class="metric-strip-label">Reference Ready</div>
-            </div>
-            <div class="metric-cell">
-                <div class="metric-strip-value">{health["external_ready"]}</div>
-                <div class="metric-strip-label">Drive-linked Records</div>
-            </div>
-            <div class="metric-cell">
-                <div class="metric-strip-value">{health["submission_ready"]}</div>
-                <div class="metric-strip-label">Submission-ready Metadata</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+    c1, c2, c3, c4 = st.columns(4)
+    render_metric_card("Compounds", len(filtered_df), c1)
+    render_metric_card("1H Peaks", proton_count, c2)
+    render_metric_card("13C Peaks", carbon_count, c3)
+    render_metric_card("Spectra Files", spectra_count, c4)
 
-    st.markdown(
-        """
-        <div class="insight-grid">
-            <div class="insight-card">
-                <div class="insight-title">Curation priorities</div>
-                <div class="insight-text">
-                    Prioritize records that still miss SMILES, InChI, InChIKey, citation metadata,
-                    and external raw-data links. These areas will have the biggest effect on future
-                    search, reproducibility, and public usability.
-                </div>
-            </div>
-            <div class="insight-card">
-                <div class="insight-title">Public access readiness</div>
-                <div class="insight-text">
-                    For public small-scale access, keep preview images lightweight, keep raw data in
-                    Google Drive, and make sure each shared file has viewer permission for approved users.
-                </div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+    h1, h2, h3, h4 = st.columns(4)
+    render_metric_card("Structure IDs Ready", health["structure_ready"], h1)
+    render_metric_card("Reference Ready", health["reference_ready"], h2)
+    render_metric_card("Drive-linked Records", health["external_ready"], h3)
+    render_metric_card("Submission-ready Metadata", health["submission_ready"], h4)
 
-    st.markdown('<div class="quick-actions-card">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title" style="font-size:1.55rem;">Quick Actions</div>', unsafe_allow_html=True)
+    insight_left, insight_right = st.columns([1.25, 1])
+    with insight_left:
+        render_helper_card(
+            "Curation priorities",
+            "Prioritize records that still miss SMILES/InChI/InChIKey, citation metadata, or external raw-data links. Those three areas will have the biggest effect on future structure search, reproducibility, and public usability.",
+        )
+    with insight_right:
+        render_helper_card(
+            "Public access readiness",
+            "For public small-scale access, keep preview images lightweight, keep raw data in Google Drive, and make sure each shared file has viewer permission for approved users.",
+        )
 
+    section_header("Metadata Gaps", "This section helps you see which records should be curated next.")
+    g1, g2, g3, g4 = st.columns(4)
+    render_metric_card("Missing Structure IDs", len(missing_structure_df), g1)
+    render_metric_card("Missing Reference Info", len(missing_reference_df), g2)
+    render_metric_card("Missing Source Material", len(missing_source_df), g3)
+    render_metric_card("Without Spectra Links", len(missing_spectra_df), g4)
+
+    priority_df = filtered_df.copy()
+    if not priority_df.empty:
+        priority_df["missing_structure"] = (
+            priority_df["smiles"].fillna("").astype(str).str.strip().eq("")
+            & priority_df["inchi"].fillna("").astype(str).str.strip().eq("")
+            & priority_df["inchikey"].fillna("").astype(str).str.strip().eq("")
+        )
+        priority_df["missing_reference"] = (
+            priority_df["doi"].fillna("").astype(str).str.strip().eq("")
+            & priority_df["journal_name"].fillna("").astype(str).str.strip().eq("")
+        )
+        priority_df["missing_source"] = priority_df["source_material"].fillna("").astype(str).str.strip().eq("")
+        priority_df["missing_spectra"] = ~priority_df["id"].isin(linked_spectra_ids)
+        priority_df["curation_priority"] = (
+            priority_df["missing_structure"].astype(int)
+            + priority_df["missing_reference"].astype(int)
+            + priority_df["missing_source"].astype(int)
+            + priority_df["missing_spectra"].astype(int)
+        )
+
+        priority_view = priority_df[priority_df["curation_priority"] > 0].copy()
+        if not priority_view.empty:
+            section_header("Priority Records", "Records at the top of this list are the best candidates for metadata improvement.")
+            priority_view = priority_view.sort_values(
+                by=["curation_priority", "id"],
+                ascending=[False, True],
+            )
+            priority_view["Missing Fields"] = priority_view.apply(
+                lambda row: ", ".join(
+                    [
+                        label
+                        for label, missing in [
+                            ("structure IDs", row["missing_structure"]),
+                            ("reference", row["missing_reference"]),
+                            ("source", row["missing_source"]),
+                            ("spectra link", row["missing_spectra"]),
+                        ]
+                        if missing
+                    ]
+                ),
+                axis=1,
+            )
+            st.dataframe(
+                priority_view[
+                    [
+                        "id",
+                        "trivial_name",
+                        "compound_class",
+                        "source_material",
+                        "curation_priority",
+                        "Missing Fields",
+                    ]
+                ].rename(
+                    columns={
+                        "id": "ID",
+                        "trivial_name": "Trivial Name",
+                        "compound_class": "Compound Class",
+                        "source_material": "Source Material",
+                        "curation_priority": "Priority Score",
+                    }
+                ),
+                width="stretch",
+                hide_index=True,
+            )
+
+    section_header("Quick Actions")
     qa1, qa2, qa3, qa4 = st.columns(4)
 
     with qa1:
-        st.markdown('<div class="quick-action-primary">', unsafe_allow_html=True)
-        if st.button("Keyword Search", use_container_width=True, key="overview_keyword_search"):
+        if st.button("Keyword Search", use_container_width=True, key="overview_search_name"):
             set_main_nav("Search & Match")
-        st.markdown('</div>', unsafe_allow_html=True)
+            st.rerun()
 
     with qa2:
-        st.markdown('<div class="quick-action-secondary">', unsafe_allow_html=True)
-        if st.button("Run Spectral Match", use_container_width=True, key="overview_spectral_match"):
+        if st.button("Run Spectral Match", use_container_width=True, key="overview_search_nmr"):
             set_main_nav("Search & Match")
-        st.markdown('</div>', unsafe_allow_html=True)
+            st.rerun()
 
     with qa3:
-        st.markdown('<div class="quick-action-secondary">', unsafe_allow_html=True)
-        if st.button("Start Submission", use_container_width=True, key="overview_start_submission"):
+        if st.button("Start Submission", use_container_width=True, key="overview_add_compound"):
             set_main_nav("Compound Workspace")
             set_compound_page("New Submission")
-        st.markdown('</div>', unsafe_allow_html=True)
+            st.rerun()
 
     with qa4:
-        st.markdown('<div class="quick-action-secondary">', unsafe_allow_html=True)
-        if st.button("Browse Records", use_container_width=True, key="overview_browse_records"):
+        if st.button("Browse Records", use_container_width=True, key="overview_open_detail"):
             set_main_nav("Compound Workspace")
             set_compound_page("Browse Record")
-        st.markdown('</div>', unsafe_allow_html=True)
+            st.rerun()
 
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    left, right = st.columns(2)
+    left, right = st.columns([1.25, 1])
 
     with left:
-        st.markdown('<div class="chart-card">', unsafe_allow_html=True)
         section_header("Compound Distribution")
-
         if filtered_df.empty:
             st.info("No compounds available for the selected filters.")
         else:
@@ -4072,7 +4173,6 @@ def show_overview_page(all_compounds_df):
                 .reset_index()
             )
             class_counts.columns = ["Compound Class", "Count"]
-
             render_dashboard_bar_chart(
                 class_counts,
                 x_col="Compound Class",
@@ -4080,12 +4180,8 @@ def show_overview_page(all_compounds_df):
                 color_hex="#61D8ED",
             )
 
-        st.markdown('</div>', unsafe_allow_html=True)
-
     with right:
-        st.markdown('<div class="chart-card">', unsafe_allow_html=True)
         section_header("Source Material Distribution")
-
         if filtered_df.empty:
             st.info("No compounds available for the selected filters.")
         else:
@@ -4097,7 +4193,6 @@ def show_overview_page(all_compounds_df):
                 .reset_index()
             )
             source_counts.columns = ["Source Material", "Count"]
-
             render_dashboard_bar_chart(
                 source_counts,
                 x_col="Source Material",
@@ -4105,77 +4200,66 @@ def show_overview_page(all_compounds_df):
                 color_hex="#9C63F1",
             )
 
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    st.markdown('<div class="quick-browse-card">', unsafe_allow_html=True)
-    section_header("Quick Browse", "Card-based browsing for faster scanning than a dense table.")
-    preview_count = st.slider(
-        "Number of compounds to preview",
-        min_value=1,
-        max_value=max(1, min(12, len(filtered_df) if not filtered_df.empty else 1)),
-        value=min(8, max(1, len(filtered_df) if not filtered_df.empty else 1)),
-        key="overview_preview_count"
-    )
-
+    section_header("Quick Browse")
     if filtered_df.empty:
-        st.info("No compounds match the current dashboard filters.")
+        st.info("No compounds available for the selected filters.")
     else:
-        preview_df = filtered_df.head(preview_count)
-        for _, row in preview_df.iterrows():
-            st.markdown('<div class="compound-card">', unsafe_allow_html=True)
-            st.markdown(f"### {clean_text(row.get('trivial_name'))}")
-            st.caption(clean_text(row.get("molecular_formula")))
-            st.markdown(
-                f"""
-                <div class="info-chip-row">
-                    <span class="info-chip">Class: {clean_text(row.get('compound_class'))}</span>
-                    <span class="info-chip">Subclass: {clean_text(row.get('compound_subclass'))}</span>
-                    <span class="info-chip">Source: {clean_text(row.get('source_material'))}</span>
-                    <span class="info-chip">Sample: {clean_text(row.get('sample_code'))}</span>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-            if st.button("Open", key=f"overview_open_{int(row['id'])}"):
-                open_compound_detail(int(row["id"]))
-            st.markdown('</div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+        browse_limit = st.slider("Number of compounds to preview", min_value=3, max_value=20, value=8)
+        for _, row in filtered_df.head(browse_limit).iterrows():
+            c1, c2 = st.columns([5, 1])
+            with c1:
+                render_compound_card(row)
+            with c2:
+                st.write("")
+                if st.button("Open", key=f"overview_open_{row['id']}"):
+                    open_compound_detail(int(row["id"]))
+                    st.rerun()
 
-    section_header("Compound Table", "Full filtered table view for exact inspection and export.")
+    section_header("Compound Table")
     if filtered_df.empty:
-        st.info("No compounds to display.")
+        st.info("No rows available.")
     else:
-        export_columns = [
-            "id",
-            "trivial_name",
-            "molecular_formula",
-            "compound_class",
-            "compound_subclass",
-            "source_material",
-            "sample_code",
-        ]
-        export_df = filtered_df[[col for col in export_columns if col in filtered_df.columns]].copy()
+        display_df = filtered_df[
+            [
+                "id",
+                "trivial_name",
+                "molecular_formula",
+                "compound_class",
+                "compound_subclass",
+                "source_material",
+                "sample_code"
+            ]
+        ].rename(columns={
+            "id": "ID",
+            "trivial_name": "Trivial Name",
+            "molecular_formula": "Molecular Formula",
+            "compound_class": "Compound Class",
+            "compound_subclass": "Compound Subclass",
+            "source_material": "Source Material",
+            "sample_code": "Sample Code"
+        })
+
         st.download_button(
-            "Download Current Overview as CSV",
-            data=dataframe_to_csv_bytes(export_df),
-            file_name="dashboard_overview.csv",
+            label="Download Current Overview as CSV",
+            data=dataframe_to_csv_bytes(display_df),
+            file_name="overview_filtered_compounds.csv",
             mime="text/csv",
-            key="dashboard_export_csv"
+            key="download_overview_csv"
         )
-        st.dataframe(export_df, use_container_width=True)
+
+        st.dataframe(display_df, width="stretch", hide_index=True)
 
     section_header("Backup")
-    if DB_PATH.exists():
-        st.download_button(
-            "Download SQLite Backup",
-            data=DB_PATH.read_bytes(),
-            file_name="nmr_backup.db",
-            mime="application/octet-stream",
-            key="dashboard_backup_db"
-        )
-    else:
-        st.warning("Database file not found.")
-        
+    backup_filename = f"nmr_database_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+    st.download_button(
+        label="Download SQLite Backup",
+        data=get_backup_bytes(),
+        file_name=backup_filename,
+        mime="application/octet-stream",
+        key="download_db_backup"
+    )
+
+
 def show_guide_page():
     section_header("Guide", "Complete usage, submission, storage, and access guidance for this database.")
 
