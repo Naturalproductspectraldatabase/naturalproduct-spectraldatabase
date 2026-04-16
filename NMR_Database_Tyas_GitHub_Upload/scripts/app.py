@@ -4002,46 +4002,51 @@ def show_search_page(all_compounds_df):
             key="structure_search_type",
         )
 
-        left, right = st.columns([1.5, 1])
-        with left:
-            st.markdown('<div class="panel-card">', unsafe_allow_html=True)
-            st.markdown("**Structure Editor**")
-            seed_smiles = st.text_input(
-                "Starting SMILES (optional)",
-                key="structure_seed_smiles",
-                placeholder="Paste a known SMILES string if you want to start from an existing scaffold.",
-            )
-            if streamlit_ketchersa is not None:
-                drawn_structure = streamlit_ketchersa()
-                drawn_structure_text = maybe_blank(drawn_structure)
-                if drawn_structure_text and drawn_structure_text != maybe_blank(st.session_state.get("structure_query_smiles")):
-                    st.session_state["structure_query_smiles"] = drawn_structure_text
-                st.caption("Full Ketcher standalone editor is active. Draw the structure directly, then review the generated query text on the right.")
-            elif st_ketcher is not None:
-                drawn_smiles = st_ketcher(seed_smiles)
-                drawn_smiles_text = maybe_blank(drawn_smiles)
-                if drawn_smiles_text and drawn_smiles_text != maybe_blank(st.session_state.get("structure_query_smiles")):
-                    st.session_state["structure_query_smiles"] = drawn_smiles_text
-                st.caption("Draw the query structure directly in the editor, then review or refine the SMILES on the right.")
-            else:
-                st.info("The embedded structure editor will appear after the Ketcher package is installed during deployment.")
-                st.caption("You can still use structure search right now by pasting a valid SMILES string.")
-            st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('<div class="panel-card">', unsafe_allow_html=True)
+        st.markdown("**Structure Editor**")
+        if streamlit_ketchersa is not None:
+            drawn_structure = streamlit_ketchersa()
+            drawn_structure_text = maybe_blank(drawn_structure)
+            if drawn_structure_text and drawn_structure_text != maybe_blank(st.session_state.get("structure_query_smiles")):
+                st.session_state["structure_query_smiles"] = drawn_structure_text
+            st.caption("Full Ketcher editor is active. Draw the structure directly, then run identity, substructure, or similarity search.")
+        elif st_ketcher is not None:
+            drawn_smiles = st_ketcher(maybe_blank(st.session_state.get("structure_seed_smiles")))
+            drawn_smiles_text = maybe_blank(drawn_smiles)
+            if drawn_smiles_text and drawn_smiles_text != maybe_blank(st.session_state.get("structure_query_smiles")):
+                st.session_state["structure_query_smiles"] = drawn_smiles_text
+            st.caption("Simplified editor is active. For the full nmrshiftdb-style toolbar, deploy with `streamlit-ketchersa` available.")
+        else:
+            st.info("The embedded structure editor will appear after the Ketcher package is installed during deployment.")
+            st.caption("You can still use structure search right now by pasting a valid SMILES string below.")
+        st.markdown('</div>', unsafe_allow_html=True)
 
-        with right:
+        query_left, query_right = st.columns([1.35, 1])
+
+        with query_left:
             st.markdown('<div class="panel-card">', unsafe_allow_html=True)
             query_smiles = st.text_area(
                 "Query Structure (SMILES)",
                 key="structure_query_smiles",
-                height=210,
+                height=180,
                 placeholder="Example: C1=CC=CC=C1",
             )
+            st.text_input(
+                "Starting SMILES (optional)",
+                key="structure_seed_smiles",
+                placeholder="Paste a known scaffold here if you want to seed the editor in a future run.",
+            )
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        with query_right:
+            st.markdown('<div class="panel-card">', unsafe_allow_html=True)
             if structure_search_type == "Similarity Search":
-                st.caption(f"Current minimum similarity score: {min_similarity_score}%")
+                st.caption(f"Minimum similarity score: {min_similarity_score}%")
+                st.caption("Similarity mode compares molecular fingerprints and returns the closest structures first.")
             elif structure_search_type == "Substructure Search":
-                st.caption("Substructure search checks whether the query pattern is contained inside each stored compound structure.")
+                st.caption("Substructure mode checks whether the query fragment is contained inside each stored compound.")
             else:
-                st.caption("Identity search compares the canonicalized structure of your query against the structures stored in the database.")
+                st.caption("Identity mode compares the canonicalized structure of your query against the structures stored in the database.")
 
             run_structure_search = st.button("Run Structure Search", use_container_width=True, key="run_structure_search")
             st.markdown('</div>', unsafe_allow_html=True)
