@@ -11,6 +11,11 @@ import pandas as pd
 import streamlit as st
 
 try:
+    from streamlit_ketchersa import streamlit_ketchersa
+except Exception:
+    streamlit_ketchersa = None
+
+try:
     from streamlit_ketcher import st_ketcher
 except Exception:
     st_ketcher = None
@@ -4006,14 +4011,20 @@ def show_search_page(all_compounds_df):
                 key="structure_seed_smiles",
                 placeholder="Paste a known SMILES string if you want to start from an existing scaffold.",
             )
-            if st_ketcher is not None:
+            if streamlit_ketchersa is not None:
+                drawn_structure = streamlit_ketchersa()
+                drawn_structure_text = maybe_blank(drawn_structure)
+                if drawn_structure_text and drawn_structure_text != maybe_blank(st.session_state.get("structure_query_smiles")):
+                    st.session_state["structure_query_smiles"] = drawn_structure_text
+                st.caption("Full Ketcher standalone editor is active. Draw the structure directly, then review the generated query text on the right.")
+            elif st_ketcher is not None:
                 drawn_smiles = st_ketcher(seed_smiles)
                 drawn_smiles_text = maybe_blank(drawn_smiles)
                 if drawn_smiles_text and drawn_smiles_text != maybe_blank(st.session_state.get("structure_query_smiles")):
                     st.session_state["structure_query_smiles"] = drawn_smiles_text
                 st.caption("Draw the query structure directly in the editor, then review or refine the SMILES on the right.")
             else:
-                st.info("The embedded structure editor will appear after `streamlit-ketcher` is added to requirements.txt and deployed.")
+                st.info("The embedded structure editor will appear after the Ketcher package is installed during deployment.")
                 st.caption("You can still use structure search right now by pasting a valid SMILES string.")
             st.markdown('</div>', unsafe_allow_html=True)
 
