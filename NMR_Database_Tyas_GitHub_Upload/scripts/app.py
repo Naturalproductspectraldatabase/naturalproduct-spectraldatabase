@@ -60,7 +60,7 @@ FAVICON_PATH = pick_branding_asset(
     "favicon.png",
 )
 SIDEBAR_LOGO_PATH = pick_branding_asset(
-    "favicon_circle.png",
+    "coral_favicon1.png",
     "favicon_circle.png",
     "favicon2.png",
     "favicon.png",
