@@ -10,6 +10,19 @@ from urllib.parse import urlparse
 import pandas as pd
 import streamlit as st
 
+try:
+    from streamlit_ketcher import st_ketcher
+except Exception:
+    st_ketcher = None
+
+try:
+    from rdkit import Chem, DataStructs
+    from rdkit.Chem import AllChem
+except Exception:
+    Chem = None
+    DataStructs = None
+    AllChem = None
+
 # =========================
 # Basic configuration
 # =========================
@@ -702,6 +715,27 @@ st.markdown("""
     font-size: 0.9rem;
 }
 
+.clean-stat {
+    padding-top: 0.15rem;
+    padding-bottom: 0.15rem;
+}
+
+.clean-stat-label {
+    color: var(--text-soft);
+    font-size: 1rem;
+    font-weight: 560;
+    margin-bottom: 0.3rem;
+    line-height: 1.5;
+}
+
+.clean-stat-value {
+    color: var(--text-main);
+    font-size: 2rem;
+    font-weight: 780;
+    letter-spacing: -0.03em;
+    line-height: 1;
+}
+
 .panel-card {
     padding: 1rem 1.05rem;
     border-radius: 22px;
@@ -1354,6 +1388,179 @@ def keyword_search_mask(df: pd.DataFrame, keyword: str) -> pd.Series:
         mask &= combined.str.contains(re.escape(token), regex=True)
     return mask
 
+
+def is_structure_backend_available() -> bool:
+    return Chem is not None and DataStructs is not None and AllChem is not None
+
+
+def smiles_to_mol(smiles_value: str):
+    if not is_structure_backend_available():
+        return None
+    smiles_text = maybe_blank(smiles_value)
+    if not smiles_text:
+        return None
+    try:
+        return Chem.MolFromSmiles(smiles_text)
+    except Exception:
+        return None
+
+
+def canonicalize_smiles(smiles_value: str) -> str:
+    mol = smiles_to_mol(smiles_value)
+    if mol is None:
+        return ""
+    try:
+        return Chem.MolToSmiles(mol, canonical=True)
+    except Exception:
+        return ""
+
+
+def molecule_similarity_score(query_mol, candidate_mol) -> float:
+    if not is_structure_backend_available() or query_mol is None or candidate_mol is None:
+        return 0.0
+    query_fp = AllChem.GetMorganFingerprintAsBitVect(query_mol, radius=2, nBits=2048)
+    candidate_fp = AllChem.GetMorganFingerprintAsBitVect(candidate_mol, radius=2, nBits=2048)
+    return float(DataStructs.TanimotoSimilarity(query_fp, candidate_fp))
+
+
+def search_by_structure(
+    compounds_df: pd.DataFrame,
+    query_smiles: str,
+    search_type: str,
+    similarity_threshold: float = 0.35,
+):
+    query_text = maybe_blank(query_smiles)
+    if not query_text:
+        return [], "Please draw or paste a query structure first."
+
+    if not is_structure_backend_available():
+        return [], "Structure search requires RDKit. Add `rdkit` to requirements.txt before using this feature."
+
+    query_mol = smiles_to_mol(query_text)
+    if query_mol is None:
+        return [], "The structure could not be parsed. Please use a valid SMILES string or redraw the query."
+
+    query_canonical = canonicalize_smiles(query_text)
+    results = []
+
+    for _, row in compounds_df.iterrows():
+        candidate_smiles = maybe_blank(row.get("smiles"))
+        if not candidate_smiles:
+            continue
+
+        candidate_mol = smiles_to_mol(candidate_smiles)
+        if candidate_mol is None:
+            continue
+
+        matched = False
+        score = 0.0
+        match_label = ""
+
+        if search_type == "Identity Search":
+            candidate_canonical = canonicalize_smiles(candidate_smiles)
+            matched = bool(query_canonical and candidate_canonical and query_canonical == candidate_canonical)
+            score = 1.0 if matched else 0.0
+            match_label = "Identity"
+        elif search_type == "Substructure Search":
+            try:
+                matched = candidate_mol.HasSubstructMatch(query_mol)
+            except Exception:
+                matched = False
+            score = 1.0 if matched else 0.0
+            match_label = "Substructure"
+        else:
+            score = molecule_similarity_score(query_mol, candidate_mol)
+            matched = score >= similarity_threshold
+            match_label = "Similarity"
+
+        if matched:
+            item = row.to_dict()
+            item["structure_score"] = score * 100
+            item["structure_match_type"] = match_label
+            item["query_smiles"] = query_text
+            item["matched_smiles"] = candidate_smiles
+            results.append(item)
+
+    if search_type == "Similarity Search":
+        results.sort(
+            key=lambda item: (
+                item.get("structure_score", 0.0),
+                maybe_blank(item.get("trivial_name")).lower(),
+            ),
+            reverse=True,
+        )
+    else:
+        results.sort(
+            key=lambda item: (
+                maybe_blank(item.get("trivial_name")).lower(),
+                int(item.get("id", 0)),
+            )
+        )
+
+    return results, ""
+
+
+def export_structure_search_results(results: list[dict]) -> pd.DataFrame:
+    rows = []
+    for i, item in enumerate(results, start=1):
+        rows.append(
+            {
+                "Rank": i,
+                "Compound ID": item.get("id"),
+                "Trivial Name": clean_text(item.get("trivial_name")),
+                "Molecular Formula": clean_text(item.get("molecular_formula")),
+                "Compound Class": clean_text(item.get("compound_class")),
+                "Source Material": clean_text(item.get("source_material")),
+                "Match Type": clean_text(item.get("structure_match_type")),
+                "Score (%)": round(float(item.get("structure_score", 0.0)), 2),
+                "SMILES": clean_text(item.get("matched_smiles")),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def render_structure_search_results(results: list[dict], search_type: str, limit: int = 10):
+    if not results:
+        st.info("No compounds matched the current structure query.")
+        return
+
+    section_header("Structure Search Results", f"Showing the top {min(limit, len(results))} candidate(s) for {search_type.lower()}.")
+
+    for i, item in enumerate(results[:limit], start=1):
+        title = clean_text(item.get("trivial_name"))
+        formula = clean_text(item.get("molecular_formula"))
+        compound_class = clean_text(item.get("compound_class"))
+        source_material = clean_text(item.get("source_material"))
+        score = float(item.get("structure_score", 0.0))
+        subtitle = f"{item.get('structure_match_type', search_type)} match | Score: {score:.1f}%"
+
+        with st.expander(f"#{i} · {title}", expanded=(i == 1)):
+            st.markdown(
+                f"""
+                <div class="result-card">
+                    <div class="result-title">{title}</div>
+                    <div class="result-subtitle">{subtitle}</div>
+                    <div class="badge-row"><strong>Compound ID:</strong> {item.get('id')}</div>
+                    <div class="badge-row"><strong>Molecular Formula:</strong> {formula}</div>
+                    <div class="badge-row"><strong>Compound Class:</strong> {compound_class}</div>
+                    <div class="badge-row"><strong>Source Material:</strong> {source_material}</div>
+                    <div class="badge-row"><strong>SMILES:</strong> {clean_text(item.get('matched_smiles'))}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.progress(min(max(score / 100.0, 0.0), 1.0))
+
+            action_left, action_right = st.columns([1, 1])
+            with action_left:
+                if st.button(f"Open Record #{i}", key=f"open_structure_result_{item.get('id')}_{i}"):
+                    open_compound_detail(int(item["id"]))
+                    st.rerun()
+            with action_right:
+                if st.button(f"Update Metadata #{i}", key=f"edit_structure_result_{item.get('id')}_{i}"):
+                    open_compound_editor(int(item["id"]))
+                    st.rerun()
+
 def calculate_completeness_score(compound_row, proton_df, carbon_df, spectra_df):
     row = compound_row.iloc[0] if isinstance(compound_row, pd.DataFrame) else compound_row
     checks = [
@@ -1620,6 +1827,19 @@ def render_metric_card(label, value, col):
             <div class="metric-card">
                 <div class="metric-card-label">{label}</div>
                 <div class="metric-card-value">{value}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+def render_clean_stat(label, value, col):
+    with col:
+        st.markdown(
+            f"""
+            <div class="clean-stat">
+                <div class="clean-stat-label">{label}</div>
+                <div class="clean-stat-value">{value}</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -1910,6 +2130,21 @@ def show_app_header():
             unsafe_allow_html=True
         )
     st.markdown('</div>', unsafe_allow_html=True)
+
+    hero_col1, hero_col2, hero_col3 = st.columns([1.1, 0.9, 0.9])
+    with hero_col1:
+        if st.button("Browse Dashboard", use_container_width=True, key="hero_overview_btn"):
+            set_main_nav("Dashboard")
+            st.rerun()
+    with hero_col2:
+        if st.button("Search Spectra", use_container_width=True, key="hero_search_btn"):
+            set_main_nav("Search & Match")
+            st.rerun()
+    with hero_col3:
+        if st.button("Start Submission", use_container_width=True, key="hero_add_btn"):
+            set_main_nav("Compound Workspace")
+            set_compound_page("New Submission")
+            st.rerun()
 
 # =========================
 # Data loading
@@ -3711,7 +3946,7 @@ def show_search_page(all_compounds_df):
 
     search_mode = st.radio(
         "Search Mode",
-        ["Keyword Search", "13C Match", "1H Match", "Combined Match"],
+        ["Keyword Search", "Structure Search", "13C Match", "1H Match", "Combined Match"],
         horizontal=True
     )
 
@@ -3747,7 +3982,94 @@ def show_search_page(all_compounds_df):
             key="search_candidate_limit",
         )
 
-    if search_mode == "Keyword Search":
+    if search_mode == "Structure Search":
+        filtered_df = apply_dataframe_filters(
+            all_compounds_df,
+            class_filter=search_class_filter,
+            source_filter=search_source_filter,
+            data_source_filter=search_data_source_filter
+        )
+
+        structure_search_type = st.radio(
+            "Structure Search Type",
+            ["Identity Search", "Substructure Search", "Similarity Search"],
+            horizontal=True,
+            key="structure_search_type",
+        )
+
+        left, right = st.columns([1.5, 1])
+        with left:
+            st.markdown('<div class="panel-card">', unsafe_allow_html=True)
+            st.markdown("**Structure Editor**")
+            seed_smiles = st.text_input(
+                "Starting SMILES (optional)",
+                key="structure_seed_smiles",
+                placeholder="Paste a known SMILES string if you want to start from an existing scaffold.",
+            )
+            if st_ketcher is not None:
+                drawn_smiles = st_ketcher(seed_smiles)
+                drawn_smiles_text = maybe_blank(drawn_smiles)
+                if drawn_smiles_text and drawn_smiles_text != maybe_blank(st.session_state.get("structure_query_smiles")):
+                    st.session_state["structure_query_smiles"] = drawn_smiles_text
+                st.caption("Draw the query structure directly in the editor, then review or refine the SMILES on the right.")
+            else:
+                st.info("The embedded structure editor will appear after `streamlit-ketcher` is added to requirements.txt and deployed.")
+                st.caption("You can still use structure search right now by pasting a valid SMILES string.")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        with right:
+            st.markdown('<div class="panel-card">', unsafe_allow_html=True)
+            query_smiles = st.text_area(
+                "Query Structure (SMILES)",
+                key="structure_query_smiles",
+                height=210,
+                placeholder="Example: C1=CC=CC=C1",
+            )
+            if structure_search_type == "Similarity Search":
+                st.caption(f"Current minimum similarity score: {min_similarity_score}%")
+            elif structure_search_type == "Substructure Search":
+                st.caption("Substructure search checks whether the query pattern is contained inside each stored compound structure.")
+            else:
+                st.caption("Identity search compares the canonicalized structure of your query against the structures stored in the database.")
+
+            run_structure_search = st.button("Run Structure Search", use_container_width=True, key="run_structure_search")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        if run_structure_search:
+            results, error_message = search_by_structure(
+                filtered_df,
+                query_smiles=query_smiles,
+                search_type=structure_search_type,
+                similarity_threshold=float(min_similarity_score) / 100.0,
+            )
+            st.session_state["structure_search_results"] = results
+            st.session_state["structure_search_error"] = error_message
+            st.session_state["structure_search_mode_label"] = structure_search_type
+
+        structure_error = maybe_blank(st.session_state.get("structure_search_error"))
+        structure_results = st.session_state.get("structure_search_results", [])
+        structure_mode_label = maybe_blank(st.session_state.get("structure_search_mode_label")) or structure_search_type
+
+        if structure_error:
+            st.error(structure_error)
+        elif structure_results:
+            st.write(f"Found {len(structure_results)} compound(s) for the current structure query.")
+            export_df = export_structure_search_results(structure_results)
+            st.download_button(
+                label="Download Structure Search Results as CSV",
+                data=dataframe_to_csv_bytes(export_df),
+                file_name="search_by_structure_results.csv",
+                mime="text/csv",
+                key="download_structure_search_csv"
+            )
+            render_structure_search_results(structure_results, structure_mode_label, limit=candidate_limit)
+        else:
+            render_helper_card(
+                "Structure search workflow",
+                "Draw a structure with the embedded editor or paste a SMILES string, choose identity, substructure, or similarity mode, then run the search against the currently filtered dataset.",
+            )
+
+    elif search_mode == "Keyword Search":
         filtered_df = apply_dataframe_filters(
             all_compounds_df,
             class_filter=search_class_filter,
@@ -4019,10 +4341,10 @@ def show_overview_page(all_compounds_df):
 
     section_header("Metadata Gaps", "This section helps you see which records should be curated next.")
     g1, g2, g3, g4 = st.columns(4)
-    render_metric_card("Missing Structure IDs", len(missing_structure_df), g1)
-    render_metric_card("Missing Reference Info", len(missing_reference_df), g2)
-    render_metric_card("Missing Source Material", len(missing_source_df), g3)
-    render_metric_card("Without Spectra Links", len(missing_spectra_df), g4)
+    render_clean_stat("Missing Structure IDs", len(missing_structure_df), g1)
+    render_clean_stat("Missing Reference Info", len(missing_reference_df), g2)
+    render_clean_stat("Missing Source Material", len(missing_source_df), g3)
+    render_clean_stat("Without Spectra Links", len(missing_spectra_df), g4)
 
     priority_df = filtered_df.copy()
     if not priority_df.empty:
