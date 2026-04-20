@@ -1,0 +1,2 @@
+compound_id,compound_name,delta_ppm,carbon_type,assignment,solvent,instrument_mhz,note
+,TEMPLATE_Existing_Compound_Name,28.4,CH2,C-1,CDCl3,125,Delete or replace this template row before import.

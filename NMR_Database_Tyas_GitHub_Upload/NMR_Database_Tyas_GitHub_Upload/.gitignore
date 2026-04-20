@@ -1,0 +1,13 @@
+.streamlit/secrets.toml
+__pycache__/
+*.pyc
+.DS_Store
+database/backups/*.db
+data/exports/*.csv
+data/branding/header.png
+data/branding/header1.png
+data/branding/header_main.png
+data/structures/Luquilloamide A.1.png
+scripts/app.py.codex_backup_20260411.py
+scripts/app_backup_before_patch.py.py
+database/nmr_backup_1.db
