@@ -5,7 +5,6 @@ import os
 import re
 import sqlite3
 import sys
-import importlib.util
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -17,18 +16,6 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-
-def load_local_module(module_name: str, module_file: Path):
-    try:
-        spec = importlib.util.spec_from_file_location(module_name, module_file)
-        if spec is None or spec.loader is None:
-            return None
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
-    except Exception:
-        return None
-
 try:
     from PIL import Image, ImageOps
 except Exception:
@@ -39,22 +26,22 @@ streamlit_ketchersa = None
 st_ketcher = None
 KETCHER_STATUS = "local Ketcher unavailable"
 
-local_ketchersa_module = load_local_module(
-    "npdb_local_streamlit_ketchersa",
-    SCRIPT_DIR / "streamlit_ketchersa" / "__init__.py",
-)
-if local_ketchersa_module is not None and hasattr(local_ketchersa_module, "streamlit_ketchersa"):
-    streamlit_ketchersa = local_ketchersa_module.streamlit_ketchersa
-    KETCHER_STATUS = "local streamlit_ketchersa loaded"
+try:
+    from streamlit_ketchersa import streamlit_ketchersa as _local_streamlit_ketchersa
 
-local_ketcher_module = load_local_module(
-    "npdb_local_streamlit_ketcher",
-    SCRIPT_DIR / "streamlit_ketcher" / "__init__.py",
-)
-if local_ketcher_module is not None and hasattr(local_ketcher_module, "st_ketcher"):
-    st_ketcher = local_ketcher_module.st_ketcher
+    streamlit_ketchersa = _local_streamlit_ketchersa
+    KETCHER_STATUS = "local streamlit_ketchersa loaded"
+except Exception:
+    streamlit_ketchersa = None
+
+try:
+    from streamlit_ketcher import st_ketcher as _local_st_ketcher
+
+    st_ketcher = _local_st_ketcher
     if streamlit_ketchersa is None:
         KETCHER_STATUS = "local streamlit_ketcher fallback loaded"
+except Exception:
+    st_ketcher = None
 
 try:
     from rdkit import Chem, DataStructs
