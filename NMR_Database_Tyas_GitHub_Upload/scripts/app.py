@@ -2536,6 +2536,28 @@ def load_standardized_structure_image(image_path: Path, size=(520, 360)):
         return None
 
 
+def load_standardized_structure_source(source_value, size=(520, 360)):
+    if Image is None or source_value is None:
+        return None
+    source_text = str(source_value).strip()
+    if not source_text:
+        return None
+
+    if is_external_url(source_text):
+        try:
+            with urllib.request.urlopen(source_text, timeout=30, context=_supabase_ssl_context()) as response:
+                raw = response.read()
+            with Image.open(io.BytesIO(raw)) as image:
+                return normalize_structure_image(image, size=size)
+        except Exception:
+            return None
+
+    full_path = get_full_file_path(source_text)
+    if full_path is None or not full_path.exists():
+        return None
+    return load_standardized_structure_image(full_path, size=size)
+
+
 def render_structure_preview(smiles_text: str, caption: str | None = None, empty_message: bool = True, size=(520, 360)):
     if Chem is None or Draw is None:
         if empty_message:
@@ -2933,13 +2955,9 @@ def render_compound_card(row):
     st.markdown('<div class="compound-card">', unsafe_allow_html=True)
     preview_col, info_col = st.columns([1, 3.7])
     with preview_col:
-        structure_path = get_full_file_path(row.get("structure_image_path"))
-        if structure_path and structure_path.exists() and is_image_file(structure_path):
-            standardized_image = load_standardized_structure_image(structure_path, size=(360, 260))
-            if standardized_image is not None:
-                st.image(standardized_image, width="stretch")
-            else:
-                st.image(str(structure_path), width="stretch")
+        standardized_image = load_standardized_structure_source(row.get("structure_image_path"), size=(360, 260))
+        if standardized_image is not None:
+            st.image(standardized_image, width="stretch")
         else:
             render_structure_preview(row.get("smiles"), caption=None, empty_message=False, size=(360, 260))
     with info_col:
@@ -4952,18 +4970,23 @@ def show_compound_detail(compound_id):
         st.markdown('<div class="structure-card">', unsafe_allow_html=True)
         structure_path = row_data["structure_image_path"]
         if pd.notna(structure_path) and str(structure_path).strip():
-            full_path = get_full_file_path(structure_path)
-            if full_path and full_path.exists():
-                standardized_image = load_standardized_structure_image(full_path, size=(520, 360))
-                if standardized_image is not None:
-                    st.image(standardized_image, width="stretch")
+            standardized_image = load_standardized_structure_source(structure_path, size=(520, 360))
+            if standardized_image is not None:
+                st.image(standardized_image, width="stretch")
+                if is_external_url(str(structure_path).strip()):
+                    st.caption("Stored in cloud structure library")
                 else:
-                    st.image(str(full_path), width="stretch")
-                st.caption(full_path.name)
+                    full_path = get_full_file_path(structure_path)
+                    if full_path:
+                        st.caption(full_path.name)
             else:
                 st.warning("Structure image file not found.")
-                if full_path:
-                    st.code(str(full_path))
+                if is_external_url(str(structure_path).strip()):
+                    st.code(str(structure_path).strip())
+                else:
+                    full_path = get_full_file_path(structure_path)
+                    if full_path:
+                        st.code(str(full_path))
         else:
             render_structure_preview(row_data.get("smiles"), caption="Rendered from SMILES", size=(520, 360))
         st.markdown('</div>', unsafe_allow_html=True)
