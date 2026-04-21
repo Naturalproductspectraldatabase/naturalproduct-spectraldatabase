@@ -798,11 +798,10 @@ st.markdown("""
 }
 
 .app-credit-footer {
-    position: fixed;
-    left: 50%;
-    transform: translateX(-50%);
-    bottom: 58px;
-    z-index: 9999;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin: 2rem auto 0.35rem auto;
     padding: 0.42rem 0.95rem;
     border-radius: 999px;
     background: linear-gradient(180deg, rgba(11, 21, 34, 0.9), rgba(7, 15, 27, 0.88));
@@ -812,7 +811,6 @@ st.markdown("""
     font-size: 0.76rem;
     letter-spacing: 0.01em;
     backdrop-filter: blur(8px);
-    pointer-events: none;
     white-space: nowrap;
 }
 
@@ -925,6 +923,26 @@ st.markdown("""
     background: linear-gradient(180deg, rgba(255,255,255,0.034), rgba(255,255,255,0.016));
     margin-bottom: 0.85rem;
     box-shadow: var(--glow-soft), var(--shadow-soft);
+}
+
+.compound-thumb-shell {
+    width: 100%;
+    height: 184px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    border-radius: 18px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.065), rgba(255,255,255,0.018));
+    border: 1px solid rgba(255,255,255,0.08);
+}
+
+.compound-thumb-shell img {
+    width: 100%;
+    height: 184px;
+    object-fit: contain;
+    display: block;
+    background: rgba(255,255,255,0.96);
 }
 
 .compound-card:hover {
@@ -1307,10 +1325,7 @@ header[data-testid="stHeader"] {
     }
 
     .app-credit-footer {
-        left: 14px;
-        right: 14px;
-        bottom: 82px;
-        transform: none;
+        display: flex;
         text-align: center;
         white-space: normal;
     }
@@ -2506,7 +2521,7 @@ def add_credit_to_text_bytes(payload: bytes) -> bytes:
 
 def render_app_credit_footer():
     st.markdown(
-        f'<div class="app-credit-footer">{OWNER_CREDIT}</div>',
+        f'<div style="text-align:center;"><div class="app-credit-footer">{OWNER_CREDIT}</div></div>',
         unsafe_allow_html=True,
     )
 
@@ -2955,9 +2970,16 @@ def render_compound_card(row):
     st.markdown('<div class="compound-card">', unsafe_allow_html=True)
     preview_col, info_col = st.columns([1, 3.7])
     with preview_col:
-        standardized_image = load_standardized_structure_source(row.get("structure_image_path"), size=(360, 260))
+        source_value = row.get("structure_image_path")
+        standardized_image = load_standardized_structure_source(source_value, size=(360, 260))
         if standardized_image is not None:
             st.image(standardized_image, width="stretch")
+        elif source_value and is_external_url(str(source_value).strip()):
+            safe_url = str(source_value).strip().replace('"', "&quot;")
+            st.markdown(
+                f'<div class="compound-thumb-shell"><img src="{safe_url}" alt="{title} structure"/></div>',
+                unsafe_allow_html=True,
+            )
         else:
             render_structure_preview(row.get("smiles"), caption=None, empty_message=False, size=(360, 260))
     with info_col:
