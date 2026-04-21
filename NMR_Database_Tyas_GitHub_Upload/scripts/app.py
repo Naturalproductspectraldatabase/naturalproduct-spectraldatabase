@@ -8682,3 +8682,4 @@ elif main_section == "Spectra Library":
 
 elif main_section == "Guide":
     show_guide_page()
+    
