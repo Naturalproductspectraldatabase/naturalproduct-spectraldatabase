@@ -45,11 +45,15 @@ except Exception:
 
 try:
     from rdkit import Chem, DataStructs
-    from rdkit.Chem import AllChem, Draw
+    from rdkit.Chem import AllChem
 except Exception:
     Chem = None
     DataStructs = None
     AllChem = None
+
+try:
+    from rdkit.Chem import Draw
+except Exception:
     Draw = None
 
 try:
@@ -2379,6 +2383,9 @@ def dataframe_to_csv_bytes(df: pd.DataFrame) -> bytes:
 
 
 def dataframe_to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Data") -> bytes:
+    if Alignment is None and Font is None and PatternFill is None:
+        raise ModuleNotFoundError("openpyxl is not available")
+
     output = io.BytesIO()
     export_df = df.copy()
 
@@ -2421,11 +2428,20 @@ def dataframe_to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Data") -> byte
 
 
 def download_dataframe_button(label: str, df: pd.DataFrame, file_name: str, key: str, sheet_name: str = "Data"):
+    try:
+        payload = dataframe_to_excel_bytes(df, sheet_name=sheet_name)
+        resolved_name = file_name if file_name.lower().endswith(".xlsx") else f"{Path(file_name).stem}.xlsx"
+        mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    except Exception:
+        payload = add_credit_to_text_bytes(dataframe_to_csv_bytes(df))
+        resolved_name = f"{Path(file_name).stem}.csv"
+        mime = "text/csv"
+
     st.download_button(
         label=label,
-        data=dataframe_to_excel_bytes(df, sheet_name=sheet_name),
-        file_name=file_name,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        data=payload,
+        file_name=resolved_name,
+        mime=mime,
         key=key,
     )
 
