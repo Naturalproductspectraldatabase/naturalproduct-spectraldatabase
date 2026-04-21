@@ -12,6 +12,12 @@ import pandas as pd
 import streamlit as st
 
 try:
+    from PIL import Image, ImageOps
+except Exception:
+    Image = None
+    ImageOps = None
+
+try:
     from streamlit_ketchersa import streamlit_ketchersa
     KETCHER_STATUS = "streamlit-ketchersa loaded"
 except Exception:
@@ -576,30 +582,39 @@ def open_compound_editor(compound_id: int):
 st.markdown("""
 <style>
 :root {
-    --bg-soft: rgba(255,255,255,0.026);
-    --bg-soft-2: rgba(255,255,255,0.038);
-    --border-soft: rgba(255,255,255,0.09);
+    --bg-soft: rgba(255,255,255,0.028);
+    --bg-soft-2: rgba(255,255,255,0.05);
+    --bg-panel: rgba(12, 24, 40, 0.74);
+    --bg-panel-strong: rgba(14, 27, 45, 0.9);
+    --border-soft: rgba(255,255,255,0.10);
     --text-soft: #AEB8C6;
     --text-main: #F5F8FD;
+    --text-strong: #FFFFFF;
     --accent-cyan: #61D8ED;
     --accent-blue: #4C8EFF;
     --accent-purple: #9C63F1;
     --accent-green: #7EF0C2;
     --accent-coral: #FF7F6D;
+    --accent-gold: #F2C66D;
     --shadow-soft: 0 18px 44px rgba(0,0,0,0.22);
+    --shadow-deep: 0 24px 60px rgba(0,0,0,0.34);
+    --glow-soft: 0 0 0 1px rgba(255,255,255,0.04), 0 10px 30px rgba(97,216,237,0.05);
+    --radius-card: 22px;
+    --radius-pill: 999px;
 }
 
 [data-testid="stAppViewContainer"] {
     background:
-        radial-gradient(circle at 16% 16%, rgba(97, 216, 237, 0.08), transparent 28%),
-        radial-gradient(circle at 84% 12%, rgba(156, 99, 241, 0.10), transparent 30%),
-        linear-gradient(180deg, #07111d 0%, #091321 42%, #07111b 100%);
+        radial-gradient(circle at 14% 16%, rgba(97, 216, 237, 0.11), transparent 28%),
+        radial-gradient(circle at 84% 12%, rgba(156, 99, 241, 0.14), transparent 30%),
+        radial-gradient(circle at 62% 82%, rgba(255, 127, 109, 0.07), transparent 24%),
+        linear-gradient(180deg, #06101c 0%, #081321 40%, #07111b 100%);
 }
 
 .block-container {
-    padding-top: 1.1rem;
+    padding-top: 1.2rem;
     padding-bottom: 6.75rem;
-    max-width: 1500px;
+    max-width: 1520px;
 }
 
 [data-testid="stSidebar"] {
@@ -613,31 +628,32 @@ st.markdown("""
 }
 
 .sidebar-note {
-    border-radius: 18px;
+    border-radius: 20px;
     padding: 0.95rem 1rem;
-    background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.02));
-    border: 1px solid rgba(255,255,255,0.08);
+    background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.018));
+    border: 1px solid rgba(255,255,255,0.09);
     color: var(--text-soft);
     font-size: 0.93rem;
     line-height: 1.5;
+    box-shadow: var(--glow-soft);
 }
 
 .sidebar-logo-shell {
     border-radius: 24px;
     padding: 0.7rem;
     margin-bottom: 0.9rem;
-    background: linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.015));
+    background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.018));
     border: 1px solid rgba(255,255,255,0.08);
-    box-shadow: 0 12px 28px rgba(0,0,0,0.16);
+    box-shadow: var(--shadow-soft);
 }
 
 .sidebar-brand {
     border-radius: 22px;
     padding: 1rem 1rem 1rem 1rem;
     margin-bottom: 1rem;
-    background: linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.018));
+    background: linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.02));
     border: 1px solid rgba(255,255,255,0.08);
-    box-shadow: 0 12px 28px rgba(0,0,0,0.18);
+    box-shadow: var(--shadow-soft);
 }
 
 .sidebar-brand-title {
@@ -665,8 +681,9 @@ st.markdown("""
 .sidebar-stat {
     border-radius: 16px;
     padding: 0.75rem 0.8rem;
-    background: rgba(255,255,255,0.028);
+    background: linear-gradient(180deg, rgba(255,255,255,0.036), rgba(255,255,255,0.018));
     border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
 }
 
 .sidebar-stat-value {
@@ -686,8 +703,9 @@ st.markdown("""
     border-radius: 20px;
     padding: 1rem 1.05rem;
     margin-bottom: 1rem;
-    background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.018));
+    background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.018));
     border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: var(--glow-soft);
 }
 
 .selector-title {
@@ -719,13 +737,13 @@ st.markdown("""
     border-radius: 28px;
     overflow: hidden;
     border: 1px solid rgba(255,255,255,0.06);
-    box-shadow: var(--shadow-soft);
+    box-shadow: var(--shadow-deep);
 }
 
 .hero-image-fallback {
     border-radius: 20px;
     padding: 1.2rem;
-    background: rgba(255,255,255,0.022);
+    background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.014));
     border: 1px solid rgba(255,255,255,0.08);
 }
 
@@ -735,13 +753,14 @@ st.markdown("""
     }
 }
 .section-title {
-    margin-top: 0.15rem;
-    margin-bottom: 0.28rem;
-    font-size: 1.7rem;
+    margin-top: 0.2rem;
+    margin-bottom: 0.34rem;
+    font-size: 1.88rem;
     line-height: 1.15;
-    font-weight: 780;
-    letter-spacing: -0.02em;
-    color: var(--text-main);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    color: var(--text-strong);
+    text-wrap: balance;
 }
 
 .app-credit-footer {
@@ -752,7 +771,7 @@ st.markdown("""
     z-index: 9999;
     padding: 0.42rem 0.95rem;
     border-radius: 999px;
-    background: rgba(8, 17, 30, 0.82);
+    background: linear-gradient(180deg, rgba(11, 21, 34, 0.9), rgba(7, 15, 27, 0.88));
     border: 1px solid rgba(255,255,255,0.08);
     box-shadow: 0 10px 28px rgba(0,0,0,0.22);
     color: rgba(245, 248, 253, 0.92);
@@ -765,33 +784,49 @@ st.markdown("""
 
 .section-subtitle {
     color: var(--text-soft);
-    margin-bottom: 1.05rem;
-    line-height: 1.55;
+    margin-bottom: 1.1rem;
+    line-height: 1.65;
     max-width: 62rem;
+    font-size: 1rem;
 }
 
 .metric-card {
-    border-radius: 20px;
-    padding: 1rem 1.05rem;
-    background: linear-gradient(180deg, rgba(255,255,255,0.032), rgba(255,255,255,0.018));
+    border-radius: var(--radius-card);
+    padding: 1.08rem 1.12rem;
+    background: linear-gradient(180deg, rgba(255,255,255,0.042), rgba(255,255,255,0.02));
     border: 1px solid rgba(255,255,255,0.08);
-    margin-bottom: 0.8rem;
-    box-shadow: var(--shadow-soft);
+    margin-bottom: 0.9rem;
+    box-shadow: var(--glow-soft), var(--shadow-soft);
+    min-height: 118px;
+    transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.metric-card:hover,
+.panel-card:hover,
+.compound-card:hover,
+.result-card:hover,
+.helper-card:hover,
+.kv-card:hover,
+.structure-card:hover {
+    transform: translateY(-1px);
+    border-color: rgba(97,216,237,0.2);
+    box-shadow: 0 18px 42px rgba(0,0,0,0.26), 0 0 0 1px rgba(97,216,237,0.05);
 }
 
 .metric-card-label {
     color: var(--text-soft);
     font-size: 0.9rem;
-    font-weight: 560;
-    margin-bottom: 0.45rem;
+    font-weight: 580;
+    margin-bottom: 0.5rem;
+    line-height: 1.35;
 }
 
 .metric-card-value {
-    font-size: 2rem;
+    font-size: 2.18rem;
     font-weight: 780;
     line-height: 1;
     letter-spacing: -0.03em;
-    color: var(--text-main);
+    color: var(--text-strong);
 }
 
 .dashboard-section {
@@ -801,14 +836,18 @@ st.markdown("""
 
 .dashboard-dataframe-note {
     margin-top: -0.25rem;
-    margin-bottom: 0.8rem;
+    margin-bottom: 0.9rem;
     color: var(--text-soft);
     font-size: 0.9rem;
 }
 
 .clean-stat {
-    padding-top: 0.15rem;
-    padding-bottom: 0.15rem;
+    padding: 0.95rem 1rem;
+    border-radius: 18px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.016));
+    border: 1px solid rgba(255,255,255,0.07);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.035);
+    min-height: 116px;
 }
 
 .clean-stat-label {
@@ -821,19 +860,20 @@ st.markdown("""
 
 .clean-stat-value {
     color: var(--text-main);
-    font-size: 2rem;
+    font-size: 2.08rem;
     font-weight: 780;
     letter-spacing: -0.03em;
     line-height: 1;
 }
 
 .panel-card {
-    padding: 1rem 1.05rem;
-    border-radius: 22px;
-    background: linear-gradient(180deg, rgba(255,255,255,0.032), rgba(255,255,255,0.018));
+    padding: 1.1rem 1.12rem;
+    border-radius: 24px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.018));
     border: 1px solid rgba(255,255,255,0.08);
-    box-shadow: var(--shadow-soft);
+    box-shadow: var(--glow-soft), var(--shadow-soft);
     margin-bottom: 1rem;
+    backdrop-filter: blur(10px);
 }
 
 .quick-card {
@@ -845,12 +885,12 @@ st.markdown("""
 }
 
 .compound-card {
-    padding: 1rem 1.05rem;
-    border-radius: 20px;
+    padding: 1.02rem 1.08rem;
+    border-radius: 22px;
     border: 1px solid rgba(255,255,255,0.08);
-    background: linear-gradient(180deg, rgba(255,255,255,0.028), rgba(255,255,255,0.016));
+    background: linear-gradient(180deg, rgba(255,255,255,0.034), rgba(255,255,255,0.016));
     margin-bottom: 0.85rem;
-    box-shadow: var(--shadow-soft);
+    box-shadow: var(--glow-soft), var(--shadow-soft);
 }
 
 .compound-card:hover {
@@ -858,12 +898,12 @@ st.markdown("""
 }
 
 .result-card {
-    padding: 1rem 1.05rem;
-    border-radius: 20px;
+    padding: 1.05rem 1.1rem;
+    border-radius: 22px;
     border: 1px solid rgba(255,255,255,0.08);
-    background: linear-gradient(180deg, rgba(255,255,255,0.026), rgba(255,255,255,0.018));
+    background: linear-gradient(180deg, rgba(255,255,255,0.034), rgba(255,255,255,0.018));
     margin-bottom: 0.8rem;
-    box-shadow: var(--shadow-soft);
+    box-shadow: var(--glow-soft), var(--shadow-soft);
 }
 
 .best-match-card {
@@ -875,10 +915,10 @@ st.markdown("""
 }
 
 .result-title {
-    font-size: 1.12rem;
-    font-weight: 760;
-    margin-bottom: 0.18rem;
-    color: var(--text-main);
+    font-size: 1.16rem;
+    font-weight: 780;
+    margin-bottom: 0.22rem;
+    color: var(--text-strong);
 }
 
 .result-subtitle {
@@ -904,20 +944,22 @@ st.markdown("""
 .info-chip {
     display: inline-block;
     border-radius: 999px;
-    padding: 0.34rem 0.65rem;
-    font-size: 0.83rem;
+    padding: 0.38rem 0.72rem;
+    font-size: 0.82rem;
     color: #E8EEF8;
-    background: rgba(255,255,255,0.045);
+    background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.025));
     border: 1px solid rgba(255,255,255,0.07);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
 }
 
 .kv-card {
     height: 100%;
     border-radius: 18px;
-    padding: 0.95rem 1rem;
-    background: rgba(255,255,255,0.022);
+    padding: 1rem 1.05rem;
+    background: linear-gradient(180deg, rgba(255,255,255,0.028), rgba(255,255,255,0.014));
     border: 1px solid rgba(255,255,255,0.08);
     margin-bottom: 0.75rem;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
 }
 
 .kv-title {
@@ -928,17 +970,18 @@ st.markdown("""
 
 .kv-value {
     font-size: 1rem;
-    font-weight: 650;
+    font-weight: 660;
     color: var(--text-main);
     word-break: break-word;
+    line-height: 1.55;
 }
 
 .structure-card {
     border-radius: 24px;
-    padding: 1rem;
-    background: rgba(255,255,255,0.022);
+    padding: 1.05rem;
+    background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.015));
     border: 1px solid rgba(255,255,255,0.08);
-    box-shadow: var(--shadow-soft);
+    box-shadow: var(--glow-soft), var(--shadow-soft);
 }
 
 .record-badge-strip {
@@ -951,12 +994,13 @@ st.markdown("""
 .record-badge {
     display: inline-flex;
     align-items: center;
-    padding: 0.45rem 0.8rem;
+    padding: 0.48rem 0.82rem;
     border-radius: 999px;
-    background: rgba(255,255,255,0.04);
+    background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.026));
     border: 1px solid rgba(255,255,255,0.08);
     color: #E8EEF8;
     font-size: 0.88rem;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
 }
 
 .structure-result-grid {
@@ -989,42 +1033,64 @@ st.markdown("""
 }
 
 div[data-baseweb="select"] > div {
-    border-radius: 14px !important;
+    border-radius: 16px !important;
+    background: rgba(255,255,255,0.028) !important;
+    border-color: rgba(255,255,255,0.09) !important;
+    min-height: 50px !important;
 }
 
 div[data-testid="stTextInput"] input,
 div[data-testid="stTextArea"] textarea,
 div[data-testid="stNumberInput"] input {
-    border-radius: 14px !important;
+    border-radius: 16px !important;
+    background: rgba(255,255,255,0.026) !important;
+    border: 1px solid rgba(255,255,255,0.08) !important;
+    color: var(--text-main) !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.025);
+}
+
+div[data-testid="stTextInput"] input:focus,
+div[data-testid="stTextArea"] textarea:focus,
+div[data-testid="stNumberInput"] input:focus {
+    border-color: rgba(97,216,237,0.34) !important;
+    box-shadow: 0 0 0 1px rgba(97,216,237,0.18), 0 0 0 6px rgba(97,216,237,0.05) !important;
 }
 
 button[kind="primary"] {
-    border-radius: 15px !important;
-    min-height: 44px !important;
+    border-radius: 16px !important;
+    min-height: 46px !important;
 }
 
 div[data-testid="stButton"] button,
 div[data-testid="stDownloadButton"] button {
-    border-radius: 15px !important;
-    min-height: 44px !important;
-    font-weight: 640 !important;
+    border-radius: 16px !important;
+    min-height: 46px !important;
+    font-weight: 660 !important;
+    background: linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.028)) !important;
+    border: 1px solid rgba(255,255,255,0.10) !important;
+    color: #F5F8FD !important;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 8px 22px rgba(0,0,0,0.16);
+    transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease !important;
 }
 
 div[data-testid="stButton"] button:hover,
 div[data-testid="stDownloadButton"] button:hover {
     border-color: rgba(97, 216, 237, 0.36) !important;
+    transform: translateY(-1px);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 14px 26px rgba(0,0,0,0.2);
 }
 
 div[data-testid="stRadio"] > div {
-    gap: 0.55rem;
+    gap: 0.6rem;
 }
 
 div[data-testid="stRadio"] label {
-    background: rgba(255,255,255,0.022);
+    background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.018));
     border: 1px solid rgba(255,255,255,0.08);
     border-radius: 999px;
-    padding: 0.42rem 0.95rem;
+    padding: 0.48rem 1rem;
     transition: all 0.18s ease;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
 }
 
 div[data-testid="stRadio"] label p {
@@ -1033,25 +1099,27 @@ div[data-testid="stRadio"] label p {
 }
 
 div[data-testid="stRadio"] label:has(input:checked) {
-    background: linear-gradient(90deg, rgba(97,216,237,0.24), rgba(156,99,241,0.24));
+    background: linear-gradient(90deg, rgba(97,216,237,0.26), rgba(156,99,241,0.28));
     border-color: rgba(97,216,237,0.42);
-    box-shadow: 0 0 0 1px rgba(97,216,237,0.06);
+    box-shadow: 0 0 0 1px rgba(97,216,237,0.06), 0 10px 24px rgba(76,142,255,0.12);
 }
 
 .action-strip {
     border-radius: 20px;
     padding: 1rem 1.05rem;
     border: 1px solid rgba(255,255,255,0.08);
-    background: linear-gradient(180deg, rgba(255,255,255,0.028), rgba(255,255,255,0.018));
+    background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.018));
     margin-bottom: 1rem;
+    box-shadow: var(--glow-soft);
 }
 
 .helper-card {
     border-radius: 20px;
-    padding: 1rem 1.05rem;
+    padding: 1.05rem 1.08rem;
     border: 1px solid rgba(255,255,255,0.08);
-    background: rgba(255,255,255,0.024);
+    background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.016));
     margin-bottom: 0.9rem;
+    box-shadow: var(--glow-soft);
 }
 
 .helper-title {
@@ -1083,9 +1151,62 @@ div[data-testid="stRadio"] label:has(input:checked) {
 }
 
 [data-testid="stDataFrame"] {
-    border-radius: 16px;
+    border-radius: 18px;
     overflow: hidden;
-    border: 1px solid rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: var(--glow-soft);
+}
+
+[data-testid="stDataFrame"] [role="grid"] {
+    background: rgba(8, 17, 30, 0.45) !important;
+}
+
+[data-testid="stTabs"] [data-baseweb="tab-list"] {
+    gap: 0.55rem;
+    padding: 0.18rem;
+    background: linear-gradient(180deg, rgba(255,255,255,0.026), rgba(255,255,255,0.014));
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 18px;
+    margin-bottom: 1rem;
+}
+
+[data-testid="stTabs"] button[role="tab"] {
+    min-height: 42px;
+    border-radius: 14px !important;
+    color: var(--text-soft) !important;
+    font-weight: 650 !important;
+    transition: all 0.18s ease;
+}
+
+[data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
+    background: linear-gradient(90deg, rgba(97,216,237,0.22), rgba(156,99,241,0.24)) !important;
+    color: var(--text-strong) !important;
+    box-shadow: 0 8px 18px rgba(76,142,255,0.12);
+}
+
+[data-testid="stExpander"] {
+    border-radius: 18px !important;
+    border: 1px solid rgba(255,255,255,0.08) !important;
+    background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.014)) !important;
+    box-shadow: var(--glow-soft);
+    overflow: hidden;
+}
+
+[data-testid="stExpander"] details summary {
+    padding-top: 0.25rem;
+    padding-bottom: 0.25rem;
+}
+
+[data-testid="stFileUploader"] section {
+    border-radius: 18px !important;
+    border: 1px dashed rgba(97,216,237,0.24) !important;
+    background: linear-gradient(180deg, rgba(255,255,255,0.028), rgba(255,255,255,0.012)) !important;
+}
+
+[data-testid="stAlert"] {
+    border-radius: 18px !important;
+    border: 1px solid rgba(255,255,255,0.07) !important;
+    box-shadow: var(--glow-soft);
 }
 
 hr {
@@ -2232,6 +2353,31 @@ def render_app_credit_footer():
     )
 
 
+def normalize_structure_image(image_obj, size=(520, 360)):
+    if Image is None or ImageOps is None or image_obj is None:
+        return image_obj
+    try:
+        image = image_obj.convert("RGBA")
+        contained = ImageOps.contain(image, size, method=Image.Resampling.LANCZOS)
+        canvas = Image.new("RGBA", size, (255, 255, 255, 255))
+        x = (size[0] - contained.width) // 2
+        y = (size[1] - contained.height) // 2
+        canvas.paste(contained, (x, y), contained)
+        return canvas.convert("RGB")
+    except Exception:
+        return image_obj
+
+
+def load_standardized_structure_image(image_path: Path, size=(520, 360)):
+    if Image is None or image_path is None or not image_path.exists():
+        return None
+    try:
+        with Image.open(image_path) as image:
+            return normalize_structure_image(image, size=size)
+    except Exception:
+        return None
+
+
 def render_structure_preview(smiles_text: str, caption: str | None = None, empty_message: bool = True):
     if Chem is None or Draw is None:
         if empty_message:
@@ -2248,7 +2394,7 @@ def render_structure_preview(smiles_text: str, caption: str | None = None, empty
             if empty_message:
                 st.info("Stored structure could not be rendered from the available structure string.")
             return
-        image = Draw.MolToImage(mol, size=(520, 360))
+        image = normalize_structure_image(Draw.MolToImage(mol, size=(520, 360)), size=(520, 360))
         st.image(image, caption=caption, width="stretch")
     except Exception:
         if empty_message:
@@ -2626,7 +2772,11 @@ def render_compound_card(row):
     with preview_col:
         structure_path = get_full_file_path(row.get("structure_image_path"))
         if structure_path and structure_path.exists() and is_image_file(structure_path):
-            st.image(str(structure_path), width="stretch")
+            standardized_image = load_standardized_structure_image(structure_path, size=(360, 260))
+            if standardized_image is not None:
+                st.image(standardized_image, width="stretch")
+            else:
+                st.image(str(structure_path), width="stretch")
         else:
             render_structure_preview(row.get("smiles"), caption=None, empty_message=False)
     with info_col:
@@ -4542,122 +4692,116 @@ def show_compound_detail(compound_id):
         unsafe_allow_html=True,
     )
 
-    overview_tab, proton_tab, carbon_tab, spectra_tab, bioactivity_tab = st.tabs(
-        ["Overview", "1H NMR", "13C NMR", "Spectra & Files", "Bioactivity"]
-    )
+    top_left, top_right = st.columns([1.7, 1])
 
-    with overview_tab:
-        top_left, top_right = st.columns([1.7, 1])
+    with top_left:
+        section_header("Core Information")
+        c1, c2 = st.columns(2)
 
-        with top_left:
-            section_header("Core Information")
-            c1, c2 = st.columns(2)
+        with c1:
+            render_kv("IUPAC Name", row_data["iupac_name"])
+            render_kv("Molecular Formula", row_data["molecular_formula"])
+            render_kv("Mr", row_data["molecular_weight"])
+            render_kv("SMILES", row_data.get("smiles"))
+            render_kv("InChI", row_data.get("inchi"))
+            render_kv("InChIKey", row_data.get("inchikey"))
+            render_kv("Compound Class", row_data["compound_class"])
+            render_kv("Compound Subclass", row_data["compound_subclass"])
+            render_kv("Source Category", row_data.get("source_category"))
+            render_kv("Source Organism", row_data.get("source_organism"))
+            render_kv("Source Summary", source_summary_from_record(row_data))
+            render_kv("Sample Code", row_data["sample_code"])
 
-            with c1:
-                render_kv("IUPAC Name", row_data["iupac_name"])
-                render_kv("Molecular Formula", row_data["molecular_formula"])
-                render_kv("Mr", row_data["molecular_weight"])
-                render_kv("SMILES", row_data.get("smiles"))
-                render_kv("InChI", row_data.get("inchi"))
-                render_kv("InChIKey", row_data.get("inchikey"))
-                render_kv("Compound Class", row_data["compound_class"])
-                render_kv("Compound Subclass", row_data["compound_subclass"])
-                render_kv("Source Category", row_data.get("source_category"))
-                render_kv("Source Organism", row_data.get("source_organism"))
-                render_kv("Source Summary", source_summary_from_record(row_data))
-                render_kv("Sample Code", row_data["sample_code"])
+        with c2:
+            render_kv("Collection Location", row_data["collection_location"])
+            render_kv("GPS Coordinates", row_data["gps_coordinates"])
+            render_kv("Depth (m)", row_data["depth_m"])
+            render_kv("Data Source", row_data["data_source"])
+            render_kv("Journal Name", row_data["journal_name"])
+            render_kv("Article Title", row_data["article_title"])
+            render_kv("DOI", row_data["doi"])
+            render_kv("CCDC", row_data["ccdc_number"])
 
-            with c2:
-                render_kv("Collection Location", row_data["collection_location"])
-                render_kv("GPS Coordinates", row_data["gps_coordinates"])
-                render_kv("Depth (m)", row_data["depth_m"])
-                render_kv("Data Source", row_data["data_source"])
-                render_kv("Journal Name", row_data["journal_name"])
-                render_kv("Article Title", row_data["article_title"])
-                render_kv("DOI", row_data["doi"])
-                render_kv("CCDC", row_data["ccdc_number"])
+        section_header("Physical and Spectral Summary")
+        p1, p2 = st.columns(2)
+        with p1:
+            render_kv("UV Data", row_data["uv_data"])
+            render_kv("FTIR Data", row_data["ftir_data"])
+            render_kv("CD / ECD Data", row_data.get("cd_data"))
+            render_kv("Optical Rotation", row_data["optical_rotation"])
+            render_kv("HRMS", row_data["hrms_data"])
+        with p2:
+            render_kv("Melting Point", row_data["melting_point"])
+            render_kv("Crystallization Method", row_data["crystallization_method"])
+            render_kv(
+                "Publication Year / Volume / Issue / Pages",
+                f"{clean_text(row_data['publication_year'])} / {clean_text(row_data['volume'])} / {clean_text(row_data['issue'])} / {clean_text(row_data['pages'])}"
+            )
 
-            section_header("Physical and Spectral Summary")
-            p1, p2 = st.columns(2)
-            with p1:
-                render_kv("UV Data", row_data["uv_data"])
-                render_kv("FTIR Data", row_data["ftir_data"])
-                render_kv("CD / ECD Data", row_data.get("cd_data"))
-                render_kv("Optical Rotation", row_data["optical_rotation"])
-                render_kv("HRMS", row_data["hrms_data"])
-            with p2:
-                render_kv("Melting Point", row_data["melting_point"])
-                render_kv("Crystallization Method", row_data["crystallization_method"])
-                render_kv(
-                    "Publication Year / Volume / Issue / Pages",
-                    f"{clean_text(row_data['publication_year'])} / {clean_text(row_data['volume'])} / {clean_text(row_data['issue'])} / {clean_text(row_data['pages'])}"
-                )
-
-            section_header("Notes")
-            st.markdown('<div class="panel-card">', unsafe_allow_html=True)
-            st.write(clean_text(row_data["note"]))
-            st.markdown('</div>', unsafe_allow_html=True)
-
-        with top_right:
-            section_header("Structure")
-            st.markdown('<div class="structure-card">', unsafe_allow_html=True)
-            structure_path = row_data["structure_image_path"]
-            if pd.notna(structure_path) and str(structure_path).strip():
-                full_path = get_full_file_path(structure_path)
-                if full_path and full_path.exists():
-                    st.image(str(full_path), width="stretch")
-                    st.caption(full_path.name)
+    with top_right:
+        section_header("Structure")
+        st.markdown('<div class="structure-card">', unsafe_allow_html=True)
+        structure_path = row_data["structure_image_path"]
+        if pd.notna(structure_path) and str(structure_path).strip():
+            full_path = get_full_file_path(structure_path)
+            if full_path and full_path.exists():
+                standardized_image = load_standardized_structure_image(full_path, size=(520, 360))
+                if standardized_image is not None:
+                    st.image(standardized_image, width="stretch")
                 else:
-                    st.warning("Structure image file not found.")
-                    if full_path:
-                        st.code(str(full_path))
+                    st.image(str(full_path), width="stretch")
+                st.caption(full_path.name)
             else:
-                render_structure_preview(row_data.get("smiles"), caption="Rendered from SMILES")
-            st.markdown("---")
-            st.write(f"**SMILES:** {clean_text(row_data.get('smiles'))}")
-            st.write(f"**InChI:** {clean_text(row_data.get('inchi'))}")
-            st.write(f"**InChIKey:** {clean_text(row_data.get('inchikey'))}")
-            st.markdown('</div>', unsafe_allow_html=True)
-
-    with proton_tab:
-        section_header("1H NMR Table")
-        if proton_df_raw.empty:
-            st.info("No 1H NMR data available.")
+                st.warning("Structure image file not found.")
+                if full_path:
+                    st.code(str(full_path))
         else:
-            proton_df = proton_df_raw.rename(columns={
-                "id": "ID",
-                "delta_ppm": "δH (ppm)",
-                "multiplicity": "Multiplicity",
-                "j_value": "J Value",
-                "proton_count": "Proton Count",
-                "assignment": "Assignment",
-                "solvent": "Solvent",
-                "instrument_mhz": "Instrument (MHz)",
-                "note": "Note"
-            })
-            st.dataframe(proton_df, width="stretch", hide_index=True)
+            render_structure_preview(row_data.get("smiles"), caption="Rendered from SMILES")
+        st.markdown("---")
+        st.write(f"**SMILES:** {clean_text(row_data.get('smiles'))}")
+        st.write(f"**InChI:** {clean_text(row_data.get('inchi'))}")
+        st.write(f"**InChIKey:** {clean_text(row_data.get('inchikey'))}")
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    with carbon_tab:
-        section_header("13C NMR Table")
-        if carbon_df_raw.empty:
-            st.info("No 13C NMR data available.")
-        else:
-            carbon_df = carbon_df_raw.rename(columns={
-                "id": "ID",
-                "delta_ppm": "δC (ppm)",
-                "carbon_type": "Carbon Type",
-                "assignment": "Assignment",
-                "solvent": "Solvent",
-                "instrument_mhz": "Instrument (MHz)",
-                "note": "Note"
-            })
-            st.dataframe(carbon_df, width="stretch", hide_index=True)
+    section_header("1H NMR Table")
+    if proton_df_raw.empty:
+        st.info("No 1H NMR data available.")
+    else:
+        proton_df = proton_df_raw.rename(columns={
+            "id": "ID",
+            "delta_ppm": "δH (ppm)",
+            "multiplicity": "Multiplicity",
+            "j_value": "J Value",
+            "proton_count": "Proton Count",
+            "assignment": "Assignment",
+            "solvent": "Solvent",
+            "instrument_mhz": "Instrument (MHz)",
+            "note": "Note"
+        })
+        st.dataframe(proton_df, width="stretch", hide_index=True)
 
-    with spectra_tab:
-        render_spectra_section(compound_id)
+    section_header("13C NMR Table")
+    if carbon_df_raw.empty:
+        st.info("No 13C NMR data available.")
+    else:
+        carbon_df = carbon_df_raw.rename(columns={
+            "id": "ID",
+            "delta_ppm": "δC (ppm)",
+            "carbon_type": "Carbon Type",
+            "assignment": "Assignment",
+            "solvent": "Solvent",
+            "instrument_mhz": "Instrument (MHz)",
+            "note": "Note"
+        })
+        st.dataframe(carbon_df, width="stretch", hide_index=True)
 
-    with bioactivity_tab:
-        render_bioactivity_table(compound_id)
+    render_spectra_section(compound_id)
+    render_bioactivity_table(compound_id)
+
+    section_header("Notes")
+    st.markdown('<div class="panel-card">', unsafe_allow_html=True)
+    st.write(clean_text(row_data["note"]))
+    st.markdown('</div>', unsafe_allow_html=True)
 
 def render_best_match_summary(item, mode_label):
     source_summary = clean_text(source_summary_from_record(item))
