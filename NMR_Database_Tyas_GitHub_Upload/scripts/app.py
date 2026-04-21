@@ -1,13 +1,17 @@
 import hmac
 import io
 import json
+import mimetypes
 import os
 import re
 import sqlite3
+import ssl
 import sys
+import urllib.error
+import urllib.request
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlencode, urlparse
 
 import pandas as pd
 import streamlit as st
@@ -2030,7 +2034,7 @@ def search_by_structure(
 ):
     query_text = maybe_blank(query_smiles)
     if not query_text:
-        return [], "Please draw or paste a query structure first."
+        return [], "Please draw a structure and click Apply in the editor first, or paste a valid SMILES / Molfile query."
 
     if not is_structure_backend_available():
         return [], "Structure search requires RDKit. Install `rdkit>=2026.3` in both requirements.txt files before using this feature."
@@ -2100,16 +2104,15 @@ def search_by_structure(
 
     if searchable_candidates == 0:
         return [], (
-            "No searchable structures are available yet in the current filtered dataset. "
+            f"No searchable structures are available yet in the current filtered dataset. Searchable compounds right now: {searchable_candidates}. "
             "Structure search compares your drawn query against compounds that already have SMILES filled in, "
-            "so please add SMILES to your records first."
+            "so please add SMILES to your records first or use the admin shortcut to save the current drawn structure into a compound record."
         )
 
     if not results:
         return [], (
-            f"No compounds matched this {search_type.lower()} query in the current filtered dataset. "
-            "Try lowering the similarity threshold, changing filters, or checking whether the stored compounds "
-            "have comparable SMILES."
+            f"No compounds matched this {search_type.lower()} query in the current filtered dataset. Searchable compounds checked: {searchable_candidates}. "
+            "Try lowering the similarity threshold, changing filters, or saving structure identifiers for more compounds first."
         )
 
     return results, ""
@@ -5256,6 +5259,31 @@ def show_search_page(all_compounds_df):
             if query_smiles:
                 with st.expander("Technical query preview", expanded=False):
                     st.code(query_smiles)
+                if can_edit_database():
+                    target_df = all_compounds_df.copy()
+                    missing_df = target_df[
+                        target_df["smiles"].fillna("").astype(str).str.strip().eq("")
+                        & target_df["inchi"].fillna("").astype(str).str.strip().eq("")
+                        & target_df["inchikey"].fillna("").astype(str).str.strip().eq("")
+                    ]
+                    preferred_df = missing_df if not missing_df.empty else target_df
+                    preferred_df = preferred_df[["id", "trivial_name"]].copy()
+                    preferred_df["label"] = preferred_df["id"].astype(str) + " - " + preferred_df["trivial_name"].fillna("Unnamed record").astype(str)
+                    st.markdown("---")
+                    st.caption("Admin shortcut: save the current drawn structure into a compound record so structure search becomes searchable in your own database.")
+                    selected_structure_label = st.selectbox(
+                        "Save current structure to compound",
+                        preferred_df["label"].tolist(),
+                        key="structure_link_target_select",
+                    )
+                    if st.button("Save Structure IDs to Selected Compound", use_container_width=True, key="save_structure_ids_from_query"):
+                        target_compound_id = int(selected_structure_label.split(" - ")[0])
+                        saved, save_message = save_structure_query_to_compound(target_compound_id, query_smiles)
+                        if saved:
+                            st.success(save_message)
+                            st.rerun()
+                        else:
+                            st.error(save_message)
             st.markdown('</div>', unsafe_allow_html=True)
 
         if run_structure_search:
@@ -7755,6 +7783,727 @@ def show_spectra_pages():
                         if st.button("Open Record", key=f"open_detail_after_delete_spectra_{file_id}"):
                             open_compound_detail(compound_id)
                             st.rerun()
+
+
+# =========================
+# Supabase-first cloud adapters
+# =========================
+def get_supabase_url() -> str:
+    return get_secret_setting("SUPABASE_URL")
+
+
+def get_supabase_anon_key() -> str:
+    return get_secret_setting("SUPABASE_ANON_KEY")
+
+
+def get_supabase_service_role_key() -> str:
+    return get_secret_setting("SUPABASE_SERVICE_ROLE_KEY")
+
+
+def use_supabase_backend() -> bool:
+    return bool(get_supabase_url() and (get_supabase_service_role_key() or get_supabase_anon_key()))
+
+
+def _supabase_ssl_context():
+    if get_secret_setting("NPDB_SKIP_SSL_VERIFY") == "1":
+        return ssl._create_unverified_context()
+    return None
+
+
+def _json_ready(value):
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return value
+
+
+def _supabase_headers(write: bool = False, json_body: bool = True, extra: dict | None = None):
+    api_key = get_supabase_service_role_key() if write else (get_supabase_anon_key() or get_supabase_service_role_key())
+    headers = {
+        "apikey": api_key,
+        "Authorization": f"Bearer {api_key}",
+    }
+    if json_body:
+        headers["Content-Type"] = "application/json"
+    if extra:
+        headers.update(extra)
+    return headers
+
+
+def _supabase_request(method: str, path: str, query: dict | None = None, body=None, write: bool = False, json_body: bool = True, extra_headers: dict | None = None, return_json: bool = True):
+    base = get_supabase_url().rstrip("/")
+    url = f"{base}{path}"
+    if query:
+        query_text = urlencode(query, doseq=True, safe=",().:*+-")
+        url = f"{url}?{query_text}"
+    payload = None
+    if body is not None:
+        payload = json.dumps(body).encode("utf-8") if json_body else body
+    request = urllib.request.Request(
+        url,
+        data=payload,
+        method=method.upper(),
+        headers=_supabase_headers(write=write, json_body=json_body, extra=extra_headers),
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60, context=_supabase_ssl_context()) as response:
+            raw = response.read()
+            if not return_json:
+                return raw
+            if not raw:
+                return None
+            return json.loads(raw.decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        details = exc.read().decode("utf-8", errors="ignore")
+        raise RuntimeError(f"Supabase request failed ({exc.code} {exc.reason}): {details}") from exc
+
+
+def _supabase_filter_query(filters: dict | None) -> dict:
+    query = {}
+    for key, value in (filters or {}).items():
+        if isinstance(value, tuple) and len(value) == 2:
+            operator, operand = value
+            if operator == "in":
+                joined = ",".join(str(item) for item in operand)
+                query[key] = f"in.({joined})"
+            else:
+                query[key] = f"{operator}.{operand}"
+        else:
+            query[key] = f"eq.{value}"
+    return query
+
+
+def supabase_select_df(table: str, columns: str = "*", filters: dict | None = None, order: str | None = None) -> pd.DataFrame:
+    if not use_supabase_backend():
+        return pd.DataFrame()
+    query = {"select": columns}
+    query.update(_supabase_filter_query(filters))
+    if order:
+        query["order"] = order
+    rows = _supabase_request("GET", f"/rest/v1/{table}", query=query, write=False) or []
+    return pd.DataFrame(rows)
+
+
+def supabase_insert_row(table: str, row: dict):
+    payload = {k: _json_ready(v) for k, v in row.items() if k and v is not None}
+    response = _supabase_request(
+        "POST",
+        f"/rest/v1/{table}",
+        query={"select": "id"},
+        body=payload,
+        write=True,
+        extra_headers={"Prefer": "return=representation"},
+    ) or []
+    if response:
+        return response[0]
+    return {}
+
+
+def supabase_update_row(table: str, row_id: int, row: dict):
+    payload = {k: _json_ready(v) for k, v in row.items() if k and k != "id"}
+    response = _supabase_request(
+        "PATCH",
+        f"/rest/v1/{table}",
+        query={"id": f"eq.{row_id}", "select": "id"},
+        body=payload,
+        write=True,
+        extra_headers={"Prefer": "return=representation"},
+    ) or []
+    if response:
+        return response[0]
+    return {}
+
+
+def supabase_delete_row(table: str, row_id: int):
+    _supabase_request(
+        "DELETE",
+        f"/rest/v1/{table}",
+        query={"id": f"eq.{row_id}"},
+        body=None,
+        write=True,
+        extra_headers={"Prefer": "return=minimal"},
+    )
+
+
+def supabase_upload_bytes(bucket: str, object_path: str, data: bytes, content_type: str = "application/octet-stream") -> str:
+    _supabase_request(
+        "POST",
+        f"/storage/v1/object/{bucket}/{quote(object_path, safe='/')}"
+        ,body=data,
+        write=True,
+        json_body=False,
+        extra_headers={"Content-Type": content_type, "x-upsert": "true"},
+        return_json=False,
+    )
+    return f"{get_supabase_url().rstrip('/')}" + f"/storage/v1/object/public/{bucket}/{quote(object_path, safe='/')}"
+
+
+def _sqlite_dataframe(query: str, params: tuple | list | None = None) -> pd.DataFrame:
+    conn = get_connection()
+    try:
+        return pd.read_sql_query(query, conn, params=params)
+    finally:
+        conn.close()
+
+
+def _sqlite_columns(table: str) -> list[str]:
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(f"PRAGMA table_info({table})")
+        return [row[1] for row in cursor.fetchall()]
+    finally:
+        conn.close()
+
+
+def _sqlite_upsert_row(table: str, row: dict) -> int | None:
+    columns = [column for column in row.keys() if column in _sqlite_columns(table)]
+    if not columns:
+        return None
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        row_id = row.get("id")
+        if row_id is not None:
+            cursor.execute(f"SELECT 1 FROM {table} WHERE id = ?", (row_id,))
+            exists = cursor.fetchone() is not None
+        else:
+            exists = False
+        if exists:
+            set_columns = [column for column in columns if column != "id"]
+            assignments = ", ".join(f"{column} = ?" for column in set_columns)
+            values = [row.get(column) for column in set_columns] + [row_id]
+            cursor.execute(f"UPDATE {table} SET {assignments} WHERE id = ?", values)
+        else:
+            placeholders = ", ".join("?" for _ in columns)
+            values = [row.get(column) for column in columns]
+            cursor.execute(
+                f"INSERT INTO {table} ({', '.join(columns)}) VALUES ({placeholders})",
+                values,
+            )
+            row_id = row_id if row_id is not None else cursor.lastrowid
+        conn.commit()
+        return int(row_id) if row_id is not None else None
+    finally:
+        conn.close()
+
+
+def _sqlite_delete_row(table: str, row_id: int):
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(f"DELETE FROM {table} WHERE id = ?", (row_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _local_binary_path(target_dir: Path, base_name: str, suffix: str) -> Path:
+    safe_name = slugify_value(base_name, fallback="asset")
+    candidate = target_dir / f"{safe_name}{suffix}"
+    counter = 2
+    while candidate.exists():
+        candidate = target_dir / f"{safe_name}_{counter}{suffix}"
+        counter += 1
+    return candidate
+
+
+def save_uploaded_asset(uploaded_file, target_dir: Path, base_name: str) -> str:
+    suffix = Path(uploaded_file.name).suffix.lower() or ".bin"
+    data = uploaded_file.getbuffer().tobytes()
+    candidate = _local_binary_path(target_dir, base_name, suffix)
+    candidate.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(candidate, "wb") as output_file:
+            output_file.write(data)
+    except Exception:
+        pass
+    if use_supabase_backend():
+        bucket = "exports"
+        if target_dir == STRUCTURES_DIR:
+            bucket = "structures"
+        elif target_dir == SPECTRA_DIR:
+            bucket = "spectra"
+        object_path = f"{datetime.utcnow().strftime('%Y/%m/%d')}/{candidate.name}"
+        try:
+            content_type = getattr(uploaded_file, "type", None) or mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
+            return supabase_upload_bytes(bucket, object_path, data, content_type=content_type)
+        except Exception:
+            pass
+    return relative_project_path(candidate) if candidate.exists() else str(candidate)
+
+
+def _merge_compound_names(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    compounds_df = load_all_compounds()[["id", "trivial_name"]].copy()
+    compounds_df = compounds_df.rename(columns={"id": "compound_id"})
+    return df.merge(compounds_df, on="compound_id", how="left")
+
+
+def get_db_signature():
+    if use_supabase_backend():
+        return 1.0
+    if not DB_PATH.exists():
+        return 0.0
+    return DB_PATH.stat().st_mtime
+
+
+@st.cache_data(show_spinner=False)
+def load_all_compounds():
+    columns = "id,trivial_name,iupac_name,molecular_formula,smiles,inchi,inchikey,compound_class,compound_subclass,source_category,source_organism,source_material,sample_code,collection_location,gps_coordinates,depth_m,uv_data,ftir_data,cd_data,optical_rotation,melting_point,crystallization_method,structure_image_path,journal_name,article_title,publication_year,volume,issue,pages,doi,ccdc_number,molecular_weight,hrms_data,data_source,note,created_at,updated_at"
+    if use_supabase_backend():
+        df = supabase_select_df("compounds", columns=columns, order="id.asc")
+        return enrich_compounds_dataframe(df)
+    return enrich_compounds_dataframe(_sqlite_dataframe(f"SELECT {columns} FROM compounds ORDER BY id ASC"))
+
+
+@st.cache_data(show_spinner=False)
+def load_compound_row(compound_id):
+    columns = "id,trivial_name,iupac_name,molecular_formula,smiles,inchi,inchikey,compound_class,compound_subclass,source_category,source_organism,source_material,sample_code,collection_location,gps_coordinates,depth_m,uv_data,ftir_data,cd_data,optical_rotation,melting_point,crystallization_method,structure_image_path,journal_name,article_title,publication_year,volume,issue,pages,doi,ccdc_number,molecular_weight,hrms_data,data_source,note,created_at,updated_at"
+    if use_supabase_backend():
+        df = supabase_select_df("compounds", columns=columns, filters={"id": ("eq", compound_id)})
+        return enrich_compounds_dataframe(df)
+    return enrich_compounds_dataframe(_sqlite_dataframe(f"SELECT {columns} FROM compounds WHERE id = ?", (compound_id,)))
+
+
+@st.cache_data(show_spinner=False)
+def load_proton_data(compound_id):
+    columns = "id,compound_id,delta_ppm,multiplicity,j_value,proton_count,assignment,solvent,instrument_mhz,note"
+    if use_supabase_backend():
+        return supabase_select_df("proton_nmr", columns=columns, filters={"compound_id": ("eq", compound_id)}, order="delta_ppm.desc")
+    return _sqlite_dataframe(f"SELECT {columns} FROM proton_nmr WHERE compound_id = ? ORDER BY delta_ppm DESC", (compound_id,))
+
+
+@st.cache_data(show_spinner=False)
+def load_all_proton_data():
+    columns = "id,compound_id,delta_ppm,multiplicity,j_value,proton_count,assignment,solvent,instrument_mhz,note"
+    if use_supabase_backend():
+        df = supabase_select_df("proton_nmr", columns=columns, order="id.asc")
+        return _merge_compound_names(df)
+    return _sqlite_dataframe("SELECT p.id, p.compound_id, c.trivial_name, p.delta_ppm, p.multiplicity, p.j_value, p.proton_count, p.assignment, p.solvent, p.instrument_mhz, p.note FROM proton_nmr p LEFT JOIN compounds c ON p.compound_id = c.id ORDER BY p.id ASC")
+
+
+@st.cache_data(show_spinner=False)
+def load_proton_row(proton_id):
+    columns = "id,compound_id,delta_ppm,multiplicity,j_value,proton_count,assignment,solvent,instrument_mhz,note"
+    if use_supabase_backend():
+        return supabase_select_df("proton_nmr", columns=columns, filters={"id": ("eq", proton_id)})
+    return _sqlite_dataframe(f"SELECT {columns} FROM proton_nmr WHERE id = ?", (proton_id,))
+
+
+@st.cache_data(show_spinner=False)
+def load_carbon_data(compound_id):
+    columns = "id,compound_id,delta_ppm,carbon_type,assignment,solvent,instrument_mhz,note"
+    if use_supabase_backend():
+        return supabase_select_df("carbon_nmr", columns=columns, filters={"compound_id": ("eq", compound_id)}, order="delta_ppm.desc")
+    return _sqlite_dataframe(f"SELECT {columns} FROM carbon_nmr WHERE compound_id = ? ORDER BY delta_ppm DESC", (compound_id,))
+
+
+@st.cache_data(show_spinner=False)
+def load_all_carbon_data():
+    columns = "id,compound_id,delta_ppm,carbon_type,assignment,solvent,instrument_mhz,note"
+    if use_supabase_backend():
+        df = supabase_select_df("carbon_nmr", columns=columns, order="id.asc")
+        return _merge_compound_names(df)
+    return _sqlite_dataframe("SELECT c.id, c.compound_id, cp.trivial_name, c.delta_ppm, c.carbon_type, c.assignment, c.solvent, c.instrument_mhz, c.note FROM carbon_nmr c LEFT JOIN compounds cp ON c.compound_id = cp.id ORDER BY c.id ASC")
+
+
+@st.cache_data(show_spinner=False)
+def load_carbon_row(carbon_id):
+    columns = "id,compound_id,delta_ppm,carbon_type,assignment,solvent,instrument_mhz,note"
+    if use_supabase_backend():
+        return supabase_select_df("carbon_nmr", columns=columns, filters={"id": ("eq", carbon_id)})
+    return _sqlite_dataframe(f"SELECT {columns} FROM carbon_nmr WHERE id = ?", (carbon_id,))
+
+
+@st.cache_data(show_spinner=False)
+def load_spectra_files(compound_id):
+    columns = "id,compound_id,spectrum_type,file_path,note"
+    if use_supabase_backend():
+        return supabase_select_df("spectra_files", columns=columns, filters={"compound_id": ("eq", compound_id)}, order="id.asc")
+    return _sqlite_dataframe(f"SELECT {columns} FROM spectra_files WHERE compound_id = ? ORDER BY id ASC", (compound_id,))
+
+
+@st.cache_data(show_spinner=False)
+def load_all_spectra_files():
+    columns = "id,compound_id,spectrum_type,file_path,note"
+    if use_supabase_backend():
+        df = supabase_select_df("spectra_files", columns=columns, order="id.asc")
+        return _merge_compound_names(df)
+    return _sqlite_dataframe("SELECT s.id, s.compound_id, c.trivial_name, s.spectrum_type, s.file_path, s.note FROM spectra_files s LEFT JOIN compounds c ON s.compound_id = c.id ORDER BY s.id ASC")
+
+
+@st.cache_data(show_spinner=False)
+def load_spectrum_file_row(file_id):
+    columns = "id,compound_id,spectrum_type,file_path,note"
+    if use_supabase_backend():
+        return supabase_select_df("spectra_files", columns=columns, filters={"id": ("eq", file_id)})
+    return _sqlite_dataframe(f"SELECT {columns} FROM spectra_files WHERE id = ?", (file_id,))
+
+
+@st.cache_data(show_spinner=False)
+def load_bioactivity_data(compound_id):
+    columns = "id,compound_id,activity_label,target_name,target_category,assay_type,potency_type,potency_relation,potency_value,potency_unit,outcome,assay_medium,selectivity,assay_source,note"
+    if use_supabase_backend():
+        return supabase_select_df("bioactivity_records", columns=columns, filters={"compound_id": ("eq", compound_id)}, order="id.asc")
+    return _sqlite_dataframe(f"SELECT {columns} FROM bioactivity_records WHERE compound_id = ? ORDER BY id ASC", (compound_id,))
+
+
+@st.cache_data(show_spinner=False)
+def load_all_bioactivity_data():
+    columns = "id,compound_id,activity_label,target_name,target_category,assay_type,potency_type,potency_relation,potency_value,potency_unit,outcome,assay_medium,selectivity,assay_source,note"
+    if use_supabase_backend():
+        df = supabase_select_df("bioactivity_records", columns=columns, order="id.asc")
+        return _merge_compound_names(df)
+    return _sqlite_dataframe("SELECT b.id, b.compound_id, c.trivial_name, b.activity_label, b.target_name, b.target_category, b.assay_type, b.potency_type, b.potency_relation, b.potency_value, b.potency_unit, b.outcome, b.assay_medium, b.selectivity, b.assay_source, b.note FROM bioactivity_records b LEFT JOIN compounds c ON b.compound_id = c.id ORDER BY b.id ASC")
+
+
+@st.cache_data(show_spinner=False)
+def load_bioactivity_row(bioactivity_id):
+    columns = "id,compound_id,activity_label,target_name,target_category,assay_type,potency_type,potency_relation,potency_value,potency_unit,outcome,assay_medium,selectivity,assay_source,note"
+    if use_supabase_backend():
+        return supabase_select_df("bioactivity_records", columns=columns, filters={"id": ("eq", bioactivity_id)})
+    return _sqlite_dataframe(f"SELECT {columns} FROM bioactivity_records WHERE id = ?", (bioactivity_id,))
+
+
+def count_related_records(filtered_ids):
+    if not filtered_ids:
+        return 0, 0, 0
+    proton_df = load_all_proton_data()
+    carbon_df = load_all_carbon_data()
+    spectra_df = load_all_spectra_files()
+    return (
+        int(proton_df[proton_df["compound_id"].isin(filtered_ids)].shape[0]) if not proton_df.empty else 0,
+        int(carbon_df[carbon_df["compound_id"].isin(filtered_ids)].shape[0]) if not carbon_df.empty else 0,
+        int(spectra_df[spectra_df["compound_id"].isin(filtered_ids)].shape[0]) if not spectra_df.empty else 0,
+    )
+
+
+def count_bioactivity_records(filtered_ids):
+    if not filtered_ids:
+        return 0
+    bio_df = load_all_bioactivity_data()
+    if bio_df.empty:
+        return 0
+    return int(bio_df[bio_df["compound_id"].isin(filtered_ids)].shape[0])
+
+
+@st.cache_data(show_spinner=False)
+def load_search_index(_db_signature: float):
+    compounds_df = load_all_compounds()
+    all_proton_df = load_all_proton_data()
+    all_carbon_df = load_all_carbon_data()
+    proton_df = all_proton_df[["compound_id", "delta_ppm"]] if not all_proton_df.empty else pd.DataFrame(columns=["compound_id", "delta_ppm"])
+    carbon_df = all_carbon_df[["compound_id", "delta_ppm"]] if not all_carbon_df.empty else pd.DataFrame(columns=["compound_id", "delta_ppm"])
+    proton_groups = proton_df.groupby("compound_id")["delta_ppm"].apply(list).to_dict() if not proton_df.empty else {}
+    carbon_groups = carbon_df.groupby("compound_id")["delta_ppm"].apply(list).to_dict() if not carbon_df.empty else {}
+    search_index = []
+    for _, row in compounds_df.iterrows():
+        compound_id = int(row["id"])
+        search_index.append(
+            {
+                "compound_id": compound_id,
+                "trivial_name": row.get("trivial_name"),
+                "sample_code": row.get("sample_code"),
+                "molecular_formula": row.get("molecular_formula"),
+                "source_category": row.get("source_category"),
+                "source_organism": row.get("source_organism"),
+                "source_material": row.get("source_material"),
+                "compound_class": row.get("compound_class"),
+                "compound_subclass": row.get("compound_subclass"),
+                "data_source": row.get("data_source"),
+                "proton_peaks": proton_groups.get(compound_id, []),
+                "carbon_peaks": carbon_groups.get(compound_id, []),
+            }
+        )
+    return search_index
+
+
+def _upsert_compound_local(row: dict):
+    return _sqlite_upsert_row("compounds", row)
+
+
+def insert_compound_record(trivial_name, iupac_name, molecular_formula, compound_class, compound_subclass, smiles, inchi, inchikey, source_category, source_organism, source_material, sample_code, collection_location, gps_coordinates, depth_m, uv_data, ftir_data, cd_data, optical_rotation, melting_point, crystallization_method, structure_image_path, journal_name, article_title, publication_year, volume, issue, pages, doi, ccdc_number, molecular_weight, hrms_data, data_source, note):
+    row = {
+        "trivial_name": trivial_name,
+        "iupac_name": iupac_name,
+        "molecular_formula": molecular_formula,
+        "compound_class": compound_class,
+        "compound_subclass": compound_subclass,
+        "smiles": smiles,
+        "inchi": inchi,
+        "inchikey": inchikey,
+        "source_category": source_category,
+        "source_organism": source_organism,
+        "source_material": source_material,
+        "sample_code": sample_code,
+        "collection_location": collection_location,
+        "gps_coordinates": gps_coordinates,
+        "depth_m": depth_m,
+        "uv_data": uv_data,
+        "ftir_data": ftir_data,
+        "cd_data": cd_data,
+        "optical_rotation": optical_rotation,
+        "melting_point": melting_point,
+        "crystallization_method": crystallization_method,
+        "structure_image_path": structure_image_path,
+        "journal_name": journal_name,
+        "article_title": article_title,
+        "publication_year": publication_year,
+        "volume": volume,
+        "issue": issue,
+        "pages": pages,
+        "doi": doi,
+        "ccdc_number": ccdc_number,
+        "molecular_weight": molecular_weight,
+        "hrms_data": hrms_data,
+        "data_source": data_source,
+        "note": note,
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+    if use_supabase_backend():
+        inserted = supabase_insert_row("compounds", row)
+        row_id = int(inserted.get("id")) if inserted and inserted.get("id") is not None else None
+        if row_id is not None:
+            row["id"] = row_id
+            _upsert_compound_local(row)
+            invalidate_cached_views()
+            return row_id
+    row_id = _sqlite_upsert_row("compounds", row)
+    invalidate_cached_views()
+    return row_id
+
+
+def update_compound_record(compound_id, trivial_name, iupac_name, molecular_formula, compound_class, compound_subclass, smiles, inchi, inchikey, source_category, source_organism, source_material, sample_code, collection_location, gps_coordinates, depth_m, uv_data, ftir_data, cd_data, optical_rotation, melting_point, crystallization_method, structure_image_path, journal_name, article_title, publication_year, volume, issue, pages, doi, ccdc_number, molecular_weight, hrms_data, data_source, note):
+    row = {
+        "id": compound_id,
+        "trivial_name": trivial_name,
+        "iupac_name": iupac_name,
+        "molecular_formula": molecular_formula,
+        "compound_class": compound_class,
+        "compound_subclass": compound_subclass,
+        "smiles": smiles,
+        "inchi": inchi,
+        "inchikey": inchikey,
+        "source_category": source_category,
+        "source_organism": source_organism,
+        "source_material": source_material,
+        "sample_code": sample_code,
+        "collection_location": collection_location,
+        "gps_coordinates": gps_coordinates,
+        "depth_m": depth_m,
+        "uv_data": uv_data,
+        "ftir_data": ftir_data,
+        "cd_data": cd_data,
+        "optical_rotation": optical_rotation,
+        "melting_point": melting_point,
+        "crystallization_method": crystallization_method,
+        "structure_image_path": structure_image_path,
+        "journal_name": journal_name,
+        "article_title": article_title,
+        "publication_year": publication_year,
+        "volume": volume,
+        "issue": issue,
+        "pages": pages,
+        "doi": doi,
+        "ccdc_number": ccdc_number,
+        "molecular_weight": molecular_weight,
+        "hrms_data": hrms_data,
+        "data_source": data_source,
+        "note": note,
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+    if use_supabase_backend():
+        supabase_update_row("compounds", compound_id, row)
+    _upsert_compound_local(row)
+    invalidate_cached_views()
+
+
+def delete_compound_record(compound_id):
+    if use_supabase_backend():
+        supabase_delete_row("compounds", compound_id)
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM bioactivity_records WHERE compound_id = ?", (compound_id,))
+        cursor.execute("DELETE FROM proton_nmr WHERE compound_id = ?", (compound_id,))
+        cursor.execute("DELETE FROM carbon_nmr WHERE compound_id = ?", (compound_id,))
+        cursor.execute("DELETE FROM spectra_files WHERE compound_id = ?", (compound_id,))
+        cursor.execute("DELETE FROM compounds WHERE id = ?", (compound_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    invalidate_cached_views()
+
+
+def _write_child_row(table: str, row: dict, row_id: int | None = None):
+    if use_supabase_backend():
+        if row_id is None:
+            inserted = supabase_insert_row(table, row)
+            if inserted and inserted.get("id") is not None:
+                row["id"] = int(inserted.get("id"))
+        else:
+            supabase_update_row(table, row_id, row)
+            row["id"] = row_id
+    return _sqlite_upsert_row(table, row)
+
+
+def insert_proton_record(compound_id, delta_ppm, multiplicity, j_value, proton_count, assignment, solvent, instrument_mhz, note):
+    row = {"compound_id": compound_id, "delta_ppm": delta_ppm, "multiplicity": multiplicity, "j_value": j_value, "proton_count": proton_count, "assignment": assignment, "solvent": solvent, "instrument_mhz": instrument_mhz, "note": note}
+    row_id = _write_child_row("proton_nmr", row)
+    invalidate_cached_views()
+    return row_id
+
+
+def update_proton_record(proton_id, compound_id, delta_ppm, multiplicity, j_value, proton_count, assignment, solvent, instrument_mhz, note):
+    row = {"compound_id": compound_id, "delta_ppm": delta_ppm, "multiplicity": multiplicity, "j_value": j_value, "proton_count": proton_count, "assignment": assignment, "solvent": solvent, "instrument_mhz": instrument_mhz, "note": note}
+    _write_child_row("proton_nmr", row, row_id=proton_id)
+    invalidate_cached_views()
+
+
+def delete_proton_record_by_id(proton_id):
+    if use_supabase_backend():
+        supabase_delete_row("proton_nmr", proton_id)
+    _sqlite_delete_row("proton_nmr", proton_id)
+    invalidate_cached_views()
+
+
+def insert_carbon_record(compound_id, delta_ppm, carbon_type, assignment, solvent, instrument_mhz, note):
+    row = {"compound_id": compound_id, "delta_ppm": delta_ppm, "carbon_type": carbon_type, "assignment": assignment, "solvent": solvent, "instrument_mhz": instrument_mhz, "note": note}
+    row_id = _write_child_row("carbon_nmr", row)
+    invalidate_cached_views()
+    return row_id
+
+
+def update_carbon_record(carbon_id, compound_id, delta_ppm, carbon_type, assignment, solvent, instrument_mhz, note):
+    row = {"compound_id": compound_id, "delta_ppm": delta_ppm, "carbon_type": carbon_type, "assignment": assignment, "solvent": solvent, "instrument_mhz": instrument_mhz, "note": note}
+    _write_child_row("carbon_nmr", row, row_id=carbon_id)
+    invalidate_cached_views()
+
+
+def delete_carbon_record_by_id(carbon_id):
+    if use_supabase_backend():
+        supabase_delete_row("carbon_nmr", carbon_id)
+    _sqlite_delete_row("carbon_nmr", carbon_id)
+    invalidate_cached_views()
+
+
+def insert_spectrum_file_record(compound_id, spectrum_type, file_path, note):
+    row = {"compound_id": compound_id, "spectrum_type": spectrum_type, "file_path": file_path, "note": note}
+    row_id = _write_child_row("spectra_files", row)
+    invalidate_cached_views()
+    return row_id
+
+
+def update_spectrum_file_record(file_id, compound_id, spectrum_type, file_path, note):
+    row = {"compound_id": compound_id, "spectrum_type": spectrum_type, "file_path": file_path, "note": note}
+    _write_child_row("spectra_files", row, row_id=file_id)
+    invalidate_cached_views()
+
+
+def delete_spectrum_file_record_by_id(file_id):
+    if use_supabase_backend():
+        supabase_delete_row("spectra_files", file_id)
+    _sqlite_delete_row("spectra_files", file_id)
+    invalidate_cached_views()
+
+
+def insert_bioactivity_record(compound_id, activity_label, target_name, target_category, assay_type, potency_type, potency_relation, potency_value, potency_unit, outcome, assay_medium, selectivity, assay_source, note):
+    row = {"compound_id": compound_id, "activity_label": activity_label, "target_name": target_name, "target_category": target_category, "assay_type": assay_type, "potency_type": potency_type, "potency_relation": potency_relation, "potency_value": potency_value, "potency_unit": potency_unit, "outcome": outcome, "assay_medium": assay_medium, "selectivity": selectivity, "assay_source": assay_source, "note": note}
+    row_id = _write_child_row("bioactivity_records", row)
+    invalidate_cached_views()
+    return row_id
+
+
+def update_bioactivity_record(bioactivity_id, compound_id, activity_label, target_name, target_category, assay_type, potency_type, potency_relation, potency_value, potency_unit, outcome, assay_medium, selectivity, assay_source, note):
+    row = {"compound_id": compound_id, "activity_label": activity_label, "target_name": target_name, "target_category": target_category, "assay_type": assay_type, "potency_type": potency_type, "potency_relation": potency_relation, "potency_value": potency_value, "potency_unit": potency_unit, "outcome": outcome, "assay_medium": assay_medium, "selectivity": selectivity, "assay_source": assay_source, "note": note}
+    _write_child_row("bioactivity_records", row, row_id=bioactivity_id)
+    invalidate_cached_views()
+
+
+def delete_bioactivity_record_by_id(bioactivity_id):
+    if use_supabase_backend():
+        supabase_delete_row("bioactivity_records", bioactivity_id)
+    _sqlite_delete_row("bioactivity_records", bioactivity_id)
+    invalidate_cached_views()
+
+
+def derive_structure_identifiers(structure_text: str) -> dict | None:
+    if not is_structure_backend_available():
+        return None
+    mol = structure_text_to_mol(structure_text)
+    if mol is None:
+        return None
+    smiles_value = maybe_blank(Chem.MolToSmiles(mol, canonical=True)) if Chem is not None else ""
+    inchi_value = ""
+    inchikey_value = ""
+    if Chem is not None:
+        try:
+            inchi_value = maybe_blank(Chem.MolToInchi(mol))
+        except Exception:
+            inchi_value = ""
+        try:
+            inchikey_value = maybe_blank(Chem.InchiToInchiKey(inchi_value)) if inchi_value else ""
+        except Exception:
+            inchikey_value = ""
+    return {"mol": mol, "smiles": smiles_value, "inchi": inchi_value, "inchikey": inchikey_value}
+
+
+def _save_generated_structure_image(compound_id: int, mol) -> str:
+    if Draw is None or Image is None or mol is None:
+        return ""
+    image = normalize_structure_image(Draw.MolToImage(mol, size=(720, 540)), size=(720, 540))
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    data = buffer.getvalue()
+    candidate = _local_binary_path(STRUCTURES_DIR, f"compound_{compound_id}_structure", ".png")
+    candidate.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(candidate, "wb") as output_file:
+            output_file.write(data)
+    except Exception:
+        pass
+    if use_supabase_backend():
+        try:
+            return supabase_upload_bytes("structures", f"generated/{candidate.name}", data, content_type="image/png")
+        except Exception:
+            pass
+    return relative_project_path(candidate) if candidate.exists() else ""
+
+
+def save_structure_query_to_compound(compound_id: int, query_text: str) -> tuple[bool, str]:
+    identifiers = derive_structure_identifiers(query_text)
+    if not identifiers:
+        return False, "The current query could not be converted into searchable structure identifiers."
+    structure_image_path = _save_generated_structure_image(compound_id, identifiers.get("mol"))
+    payload = {
+        "smiles": identifiers.get("smiles"),
+        "inchi": identifiers.get("inchi"),
+        "inchikey": identifiers.get("inchikey"),
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+    if structure_image_path:
+        payload["structure_image_path"] = structure_image_path
+    if use_supabase_backend():
+        supabase_update_row("compounds", compound_id, payload)
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        assignments = ", ".join(f"{key} = ?" for key in payload.keys())
+        values = list(payload.values()) + [compound_id]
+        cursor.execute(f"UPDATE compounds SET {assignments} WHERE id = ?", values)
+        conn.commit()
+    finally:
+        conn.close()
+    invalidate_cached_views()
+    return True, f"Structure identifiers were saved to compound ID {compound_id}."
 
 
 # =========================
