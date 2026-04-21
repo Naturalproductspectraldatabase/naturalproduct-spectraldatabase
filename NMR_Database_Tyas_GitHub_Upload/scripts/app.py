@@ -551,6 +551,7 @@ def clear_structure_search_state():
     st.session_state["structure_search_results"] = []
     st.session_state["structure_search_error"] = ""
     st.session_state["structure_search_mode_label"] = ""
+    st.session_state["structure_search_attempted"] = False
 
 # =========================
 # Session state defaults
@@ -2040,6 +2041,7 @@ def search_by_structure(
 
     query_canonical = canonicalize_smiles(query_text)
     results = []
+    searchable_candidates = 0
 
     for _, row in compounds_df.iterrows():
         candidate_smiles = maybe_blank(row.get("smiles"))
@@ -2049,6 +2051,7 @@ def search_by_structure(
         candidate_mol = smiles_to_mol(candidate_smiles)
         if candidate_mol is None:
             continue
+        searchable_candidates += 1
 
         matched = False
         score = 0.0
@@ -2093,6 +2096,20 @@ def search_by_structure(
                 maybe_blank(item.get("trivial_name")).lower(),
                 int(item.get("id", 0)),
             )
+        )
+
+    if searchable_candidates == 0:
+        return [], (
+            "No searchable structures are available yet in the current filtered dataset. "
+            "Structure search compares your drawn query against compounds that already have SMILES filled in, "
+            "so please add SMILES to your records first."
+        )
+
+    if not results:
+        return [], (
+            f"No compounds matched this {search_type.lower()} query in the current filtered dataset. "
+            "Try lowering the similarity threshold, changing filters, or checking whether the stored compounds "
+            "have comparable SMILES."
         )
 
     return results, ""
@@ -5251,13 +5268,18 @@ def show_search_page(all_compounds_df):
             st.session_state["structure_search_results"] = results
             st.session_state["structure_search_error"] = error_message
             st.session_state["structure_search_mode_label"] = structure_search_type
+            st.session_state["structure_search_attempted"] = True
 
         structure_error = maybe_blank(st.session_state.get("structure_search_error"))
         structure_results = st.session_state.get("structure_search_results", [])
         structure_mode_label = maybe_blank(st.session_state.get("structure_search_mode_label")) or structure_search_type
+        structure_attempted = bool(st.session_state.get("structure_search_attempted"))
 
         if structure_error:
-            st.error(structure_error)
+            if structure_error.lower().startswith("no compounds matched") or structure_error.lower().startswith("no searchable structures"):
+                st.info(structure_error)
+            else:
+                st.error(structure_error)
         elif structure_results:
             st.write(f"Found {len(structure_results)} compound(s) for the current structure query.")
             query_col, summary_col = st.columns([1.05, 1.35])
@@ -5299,6 +5321,8 @@ def show_search_page(all_compounds_df):
                 sheet_name="Structure Search",
             )
             render_structure_search_results(structure_results, structure_mode_label, limit=candidate_limit)
+        elif structure_attempted:
+            st.info("The structure query was submitted, but no result rows were returned.")
         else:
             render_helper_card(
                 "Structure search workflow",
