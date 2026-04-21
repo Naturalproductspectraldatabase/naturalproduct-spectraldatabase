@@ -10,13 +10,13 @@ _IS_DEV = "__main__" == __name__
 
 if _IS_DEV:
     _render_component = components.declare_component(
-        "streamlit_ketcher",
+        "npdb_streamlit_ketcher_local",
         url="http://localhost:3000",
     )
 else:
     build_dir = Path(__file__).parent / "frontend"
     _render_component = components.declare_component(
-        "streamlit_ketcher", path=str(build_dir)
+        "npdb_streamlit_ketcher_local", path=str(build_dir)
     )
 
 

@@ -2041,7 +2041,7 @@ def search_by_structure(
         return [], "Please draw or paste a query structure first."
 
     if not is_structure_backend_available():
-        return [], "Structure search requires RDKit. Install `rdkit-pypi==2022.9.5` in both requirements.txt files before using this feature."
+        return [], "Structure search requires RDKit. Install `rdkit>=2026.3` in both requirements.txt files before using this feature."
 
     query_mol = structure_text_to_mol(query_text)
     if query_mol is None:
