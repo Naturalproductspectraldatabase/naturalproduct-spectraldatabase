@@ -77,6 +77,7 @@ DB_PATH = PROJECT_DIR / "database" / "nmr.db"
 
 MAX_PAGE_ICON_BYTES = 5 * 1024 * 1024
 OWNER_CREDIT = "© Trianda Ayuning Tyas_project"
+OWNER_EDITOR_USERNAME = "npdb_tyas"
 
 
 def pick_branding_asset(*filenames: str) -> Path:
@@ -497,15 +498,6 @@ def verify_access_gate():
                 if submitted_slug in allowed_slugs and hmac.compare_digest(password, approved_password):
                     authenticated = True
                     matched_role = "approved-viewer"
-        elif approved_names and approved_password:
-            submitted_username = str(username).strip() if username is not None else ""
-            if submitted_username.lower().startswith("npdb_"):
-                submitted_name = submitted_username[5:]
-                submitted_slug = normalize_login_slug(submitted_name)
-                allowed_slugs = {normalize_login_slug(name) for name in approved_names}
-                if submitted_slug in allowed_slugs and hmac.compare_digest(password, approved_password):
-                    authenticated = True
-                    matched_role = "approved-viewer"
         else:
             username_ok = True if not expected_username else hmac.compare_digest(username.strip(), expected_username)
             password_ok = hmac.compare_digest(password, expected_password)
@@ -522,6 +514,28 @@ def verify_access_gate():
 
 
 verify_access_gate()
+
+
+def is_owner_editor() -> bool:
+    current_username = normalize_login_slug(st.session_state.get("npdb_username", ""))
+    return current_username == normalize_login_slug(OWNER_EDITOR_USERNAME)
+
+
+def can_edit_database() -> bool:
+    return is_owner_editor()
+
+
+def render_read_only_notice(feature_label: str):
+    st.info(
+        f"Read-only access. Only `{OWNER_EDITOR_USERNAME}` can {feature_label}. "
+        "Other approved users can still browse records, search structures, and review spectra."
+    )
+
+
+def clear_structure_search_state():
+    st.session_state["structure_search_results"] = []
+    st.session_state["structure_search_error"] = ""
+    st.session_state["structure_search_mode_label"] = ""
 
 # =========================
 # Session state defaults
@@ -767,7 +781,7 @@ st.markdown("""
     position: fixed;
     left: 50%;
     transform: translateX(-50%);
-    bottom: 16px;
+    bottom: 58px;
     z-index: 9999;
     padding: 0.42rem 0.95rem;
     border-radius: 999px;
@@ -984,6 +998,18 @@ st.markdown("""
     box-shadow: var(--glow-soft), var(--shadow-soft);
 }
 
+.record-shell {
+    margin-top: 0.55rem;
+}
+
+.record-section-note {
+    color: var(--text-soft);
+    font-size: 0.94rem;
+    line-height: 1.6;
+    margin-top: -0.25rem;
+    margin-bottom: 0.85rem;
+}
+
 .record-badge-strip {
     display: flex;
     flex-wrap: wrap;
@@ -1019,6 +1045,36 @@ st.markdown("""
     color: var(--text-soft);
     font-size: 0.92rem;
     line-height: 1.5;
+}
+
+.query-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 0.7rem;
+}
+
+.query-summary-card {
+    border-radius: 18px;
+    padding: 0.95rem 1rem;
+    background: linear-gradient(180deg, rgba(255,255,255,0.036), rgba(255,255,255,0.018));
+    border: 1px solid rgba(255,255,255,0.08);
+}
+
+.query-summary-label {
+    color: var(--text-soft);
+    font-size: 0.84rem;
+    margin-bottom: 0.18rem;
+}
+
+.query-summary-value {
+    color: var(--text-strong);
+    font-size: 1.15rem;
+    font-weight: 740;
+    line-height: 1.2;
+}
+
+.detail-table-wrap {
+    padding: 0.2rem 0 0.9rem 0;
 }
 
 @media (max-width: 900px) {
@@ -1233,6 +1289,7 @@ header[data-testid="stHeader"] {
     .app-credit-footer {
         left: 14px;
         right: 14px;
+        bottom: 82px;
         transform: none;
         text-align: center;
         white-space: normal;
@@ -1706,11 +1763,12 @@ def build_existing_options(df: pd.DataFrame, column_name: str, defaults=None):
 def select_or_custom(label: str, options: list[str], key: str, value: str = "", help_text: str | None = None):
     normalized_value = maybe_blank(value)
     clean_options = [item for item in options if maybe_blank(item)]
-    if normalized_value and normalized_value not in clean_options:
-        clean_options.append(normalized_value)
+    known_values = sorted(set(clean_options))
 
-    select_options = [""] + sorted(set(clean_options)) + ["Custom..."]
-    default_value = normalized_value if normalized_value in select_options else ("Custom..." if normalized_value else "")
+    custom_default = normalized_value if normalized_value and normalized_value not in known_values else ""
+    select_options = [""] + known_values + ["Custom..."]
+    default_value = normalized_value if normalized_value in known_values else ("Custom..." if custom_default else "")
+
     selected = st.selectbox(
         label,
         select_options,
@@ -1718,15 +1776,18 @@ def select_or_custom(label: str, options: list[str], key: str, value: str = "", 
         key=f"{key}_select",
         help=help_text,
     )
+    custom_value = st.text_input(
+        f"{label} (Custom, optional)",
+        value=custom_default,
+        key=f"{key}_custom",
+        placeholder=f"Type a new {label.lower()} here if it is not in the list.",
+    )
 
+    custom_text = maybe_blank(custom_value)
+    if custom_text:
+        return custom_text
     if selected == "Custom...":
-        custom_default = normalized_value if normalized_value not in select_options else ""
-        return st.text_input(
-            f"{label} (Custom)",
-            value=custom_default,
-            key=f"{key}_custom",
-        )
-
+        return ""
     return selected
 
 def reset_compound_wizard():
@@ -2047,7 +2108,9 @@ def render_structure_search_results(results: list[dict], search_type: str, limit
                 "Score (%)": round(float(item.get("structure_score", 0.0)), 2),
             }
         )
+    st.markdown('<div class="detail-table-wrap">', unsafe_allow_html=True)
     st.dataframe(pd.DataFrame(summary_rows[:limit]), width="stretch", hide_index=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
     for i, item in enumerate(results[:limit], start=1):
         title = clean_text(item.get("trivial_name"))
@@ -2068,7 +2131,7 @@ def render_structure_search_results(results: list[dict], search_type: str, limit
             )
             preview_col, meta_col = st.columns([1, 1.3])
             with preview_col:
-                render_structure_preview(item.get("matched_smiles"), caption=f"Query candidate #{i}")
+                render_structure_preview(item.get("matched_smiles"), caption=f"Query candidate #{i}", size=(380, 260))
             with meta_col:
                 st.markdown('<div class="structure-result-meta">', unsafe_allow_html=True)
                 st.markdown(f'<div class="structure-result-stat"><strong>Compound ID:</strong> {item.get("id")}</div>', unsafe_allow_html=True)
@@ -2085,9 +2148,10 @@ def render_structure_search_results(results: list[dict], search_type: str, limit
                     open_compound_detail(int(item["id"]))
                     st.rerun()
             with action_right:
-                if st.button(f"Update Metadata #{i}", key=f"edit_structure_result_{item.get('id')}_{i}"):
-                    open_compound_editor(int(item["id"]))
-                    st.rerun()
+                if can_edit_database():
+                    if st.button(f"Update Metadata #{i}", key=f"edit_structure_result_{item.get('id')}_{i}"):
+                        open_compound_editor(int(item["id"]))
+                        st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
 
 def calculate_completeness_score(compound_row, proton_df, carbon_df, spectra_df):
@@ -2378,7 +2442,7 @@ def load_standardized_structure_image(image_path: Path, size=(520, 360)):
         return None
 
 
-def render_structure_preview(smiles_text: str, caption: str | None = None, empty_message: bool = True):
+def render_structure_preview(smiles_text: str, caption: str | None = None, empty_message: bool = True, size=(520, 360)):
     if Chem is None or Draw is None:
         if empty_message:
             st.info("Structure preview becomes available when RDKit drawing support is active.")
@@ -2394,7 +2458,7 @@ def render_structure_preview(smiles_text: str, caption: str | None = None, empty
             if empty_message:
                 st.info("Stored structure could not be rendered from the available structure string.")
             return
-        image = normalize_structure_image(Draw.MolToImage(mol, size=(520, 360)), size=(520, 360))
+        image = normalize_structure_image(Draw.MolToImage(mol, size=size), size=size)
         st.image(image, caption=caption, width="stretch")
     except Exception:
         if empty_message:
@@ -2778,7 +2842,7 @@ def render_compound_card(row):
             else:
                 st.image(str(structure_path), width="stretch")
         else:
-            render_structure_preview(row.get("smiles"), caption=None, empty_message=False)
+            render_structure_preview(row.get("smiles"), caption=None, empty_message=False, size=(360, 260))
     with info_col:
         st.markdown(
             f"""
@@ -2824,7 +2888,7 @@ def show_app_header():
     with hero_col3:
         if st.button("Start Submission", use_container_width=True, key="hero_add_btn"):
             set_main_nav("Compound Workspace")
-            set_compound_page("New Submission")
+            set_compound_page("New Submission" if can_edit_database() else "Browse Record")
             st.rerun()
 
 # =========================
@@ -2842,7 +2906,8 @@ def load_all_compounds():
                optical_rotation, melting_point, crystallization_method,
                structure_image_path, journal_name, article_title, publication_year,
                volume, issue, pages, doi, ccdc_number,
-               molecular_weight, hrms_data, data_source, note
+               molecular_weight, hrms_data, data_source, note,
+               created_at, updated_at
         FROM compounds
         ORDER BY id ASC
     """
@@ -2862,7 +2927,8 @@ def load_compound_row(compound_id):
                optical_rotation, melting_point, crystallization_method,
                structure_image_path, journal_name, article_title, publication_year,
                volume, issue, pages, doi, ccdc_number,
-               molecular_weight, hrms_data, data_source, note
+               molecular_weight, hrms_data, data_source, note,
+               created_at, updated_at
         FROM compounds
         WHERE id = ?
     """
@@ -3107,7 +3173,7 @@ def insert_compound_record(
             hrms_data,
             data_source,
             note
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         trivial_name,
         iupac_name,
@@ -4639,8 +4705,14 @@ def show_compound_detail(compound_id):
         clean_text(row_data["trivial_name"]),
         f"Record ID {row_data['id']} · full metadata, structure, peak tables, and linked spectra arranged in one review page"
     )
+    st.markdown('<div class="record-shell">', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="record-section-note">All submitted metadata, structure information, NMR tables, spectra files, and bioactivity records are displayed together here so the compound can be reviewed as one complete dossier.</div>',
+        unsafe_allow_html=True,
+    )
 
     st.markdown('<div class="action-strip">', unsafe_allow_html=True)
+    is_editor = can_edit_database()
     action_col1, action_col2, action_col3, action_col4, action_col5 = st.columns(5)
     with action_col1:
         summary_bytes = build_compound_summary_text(row, proton_df_raw, carbon_df_raw, spectra_df_raw)
@@ -4652,24 +4724,43 @@ def show_compound_detail(compound_id):
             key=f"download_summary_{row_data['id']}"
         )
     with action_col2:
-        if st.button("Edit This Record", key=f"edit_compound_from_detail_{row_data['id']}", use_container_width=True):
-            open_compound_editor(int(row_data["id"]))
-            st.rerun()
+        if is_editor:
+            if st.button("Edit This Record", key=f"edit_compound_from_detail_{row_data['id']}", use_container_width=True):
+                open_compound_editor(int(row_data["id"]))
+                st.rerun()
+        else:
+            if st.button("Open Search", key=f"search_from_detail_{row_data['id']}", use_container_width=True):
+                set_main_nav("Search & Match")
+                st.rerun()
     with action_col3:
-        if st.button("Open 1H Workspace", key=f"open_1h_from_detail_{row_data['id']}", use_container_width=True):
-            st.session_state["selected_compound_id"] = int(row_data["id"])
-            set_main_nav("1H Peaks")
-            st.rerun()
+        if is_editor:
+            if st.button("Open 1H Workspace", key=f"open_1h_from_detail_{row_data['id']}", use_container_width=True):
+                st.session_state["selected_compound_id"] = int(row_data["id"])
+                set_main_nav("1H Peaks")
+                st.rerun()
+        else:
+            if st.button("Open Bioactivity", key=f"bioactivity_from_detail_{row_data['id']}", use_container_width=True):
+                set_main_nav("Bioactivity")
+                st.rerun()
     with action_col4:
-        if st.button("Open 13C Workspace", key=f"open_13c_from_detail_{row_data['id']}", use_container_width=True):
-            st.session_state["selected_compound_id"] = int(row_data["id"])
-            set_main_nav("13C Peaks")
-            st.rerun()
+        if is_editor:
+            if st.button("Open 13C Workspace", key=f"open_13c_from_detail_{row_data['id']}", use_container_width=True):
+                st.session_state["selected_compound_id"] = int(row_data["id"])
+                set_main_nav("13C Peaks")
+                st.rerun()
+        else:
+            if st.button("Open Spectra Browser", key=f"spectra_from_detail_{row_data['id']}", use_container_width=True):
+                st.session_state["selected_compound_id"] = int(row_data["id"])
+                set_main_nav("Spectra Library")
+                st.rerun()
     with action_col5:
-        if st.button("Open Spectra Files", key=f"open_spectra_from_detail_{row_data['id']}", use_container_width=True):
-            st.session_state["selected_compound_id"] = int(row_data["id"])
-            set_main_nav("Spectra Library")
-            st.rerun()
+        if is_editor:
+            if st.button("Open Spectra Files", key=f"open_spectra_from_detail_{row_data['id']}", use_container_width=True):
+                st.session_state["selected_compound_id"] = int(row_data["id"])
+                set_main_nav("Spectra Library")
+                st.rerun()
+        else:
+            st.button("Read-only Access", key=f"readonly_detail_{row_data['id']}", disabled=True, use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
     completeness_score = calculate_completeness_score(row, proton_df_raw, carbon_df_raw, spectra_df_raw)
@@ -4692,53 +4783,39 @@ def show_compound_detail(compound_id):
         unsafe_allow_html=True,
     )
 
-    top_left, top_right = st.columns([1.7, 1])
+    info_left, info_mid, info_right = st.columns([1.12, 1.12, 0.96])
 
-    with top_left:
-        section_header("Core Information")
-        c1, c2 = st.columns(2)
+    with info_left:
+        section_header("Structure & Identity")
+        render_kv("IUPAC Name", row_data["iupac_name"])
+        render_kv("Molecular Formula", row_data["molecular_formula"])
+        render_kv("Mr", row_data["molecular_weight"])
+        render_kv("SMILES", row_data.get("smiles"))
+        render_kv("InChI", row_data.get("inchi"))
+        render_kv("InChIKey", row_data.get("inchikey"))
+        render_kv("Compound Class", row_data["compound_class"])
+        render_kv("Compound Subclass", row_data["compound_subclass"])
 
-        with c1:
-            render_kv("IUPAC Name", row_data["iupac_name"])
-            render_kv("Molecular Formula", row_data["molecular_formula"])
-            render_kv("Mr", row_data["molecular_weight"])
-            render_kv("SMILES", row_data.get("smiles"))
-            render_kv("InChI", row_data.get("inchi"))
-            render_kv("InChIKey", row_data.get("inchikey"))
-            render_kv("Compound Class", row_data["compound_class"])
-            render_kv("Compound Subclass", row_data["compound_subclass"])
-            render_kv("Source Category", row_data.get("source_category"))
-            render_kv("Source Organism", row_data.get("source_organism"))
-            render_kv("Source Summary", source_summary_from_record(row_data))
-            render_kv("Sample Code", row_data["sample_code"])
+    with info_mid:
+        section_header("Origin & Reference")
+        render_kv("Source Category", row_data.get("source_category"))
+        render_kv("Source Organism / Species", row_data.get("source_organism"))
+        render_kv("Source Summary", source_summary_from_record(row_data))
+        render_kv("Sample Code", row_data["sample_code"])
+        render_kv("Collection Location", row_data["collection_location"])
+        render_kv("GPS Coordinates", row_data["gps_coordinates"])
+        render_kv("Depth (m)", row_data["depth_m"])
+        render_kv("Data Source", row_data["data_source"])
+        render_kv("Journal Name", row_data["journal_name"])
+        render_kv("Article Title", row_data["article_title"])
+        render_kv(
+            "Publication Year / Volume / Issue / Pages",
+            f"{clean_text(row_data['publication_year'])} / {clean_text(row_data['volume'])} / {clean_text(row_data['issue'])} / {clean_text(row_data['pages'])}"
+        )
+        render_kv("DOI", row_data["doi"])
+        render_kv("CCDC", row_data["ccdc_number"])
 
-        with c2:
-            render_kv("Collection Location", row_data["collection_location"])
-            render_kv("GPS Coordinates", row_data["gps_coordinates"])
-            render_kv("Depth (m)", row_data["depth_m"])
-            render_kv("Data Source", row_data["data_source"])
-            render_kv("Journal Name", row_data["journal_name"])
-            render_kv("Article Title", row_data["article_title"])
-            render_kv("DOI", row_data["doi"])
-            render_kv("CCDC", row_data["ccdc_number"])
-
-        section_header("Physical and Spectral Summary")
-        p1, p2 = st.columns(2)
-        with p1:
-            render_kv("UV Data", row_data["uv_data"])
-            render_kv("FTIR Data", row_data["ftir_data"])
-            render_kv("CD / ECD Data", row_data.get("cd_data"))
-            render_kv("Optical Rotation", row_data["optical_rotation"])
-            render_kv("HRMS", row_data["hrms_data"])
-        with p2:
-            render_kv("Melting Point", row_data["melting_point"])
-            render_kv("Crystallization Method", row_data["crystallization_method"])
-            render_kv(
-                "Publication Year / Volume / Issue / Pages",
-                f"{clean_text(row_data['publication_year'])} / {clean_text(row_data['volume'])} / {clean_text(row_data['issue'])} / {clean_text(row_data['pages'])}"
-            )
-
-    with top_right:
+    with info_right:
         section_header("Structure")
         st.markdown('<div class="structure-card">', unsafe_allow_html=True)
         structure_path = row_data["structure_image_path"]
@@ -4756,12 +4833,30 @@ def show_compound_detail(compound_id):
                 if full_path:
                     st.code(str(full_path))
         else:
-            render_structure_preview(row_data.get("smiles"), caption="Rendered from SMILES")
-        st.markdown("---")
-        st.write(f"**SMILES:** {clean_text(row_data.get('smiles'))}")
-        st.write(f"**InChI:** {clean_text(row_data.get('inchi'))}")
-        st.write(f"**InChIKey:** {clean_text(row_data.get('inchikey'))}")
+            render_structure_preview(row_data.get("smiles"), caption="Rendered from SMILES", size=(520, 360))
         st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('<div class="panel-card">', unsafe_allow_html=True)
+        st.markdown("**Record Snapshot**")
+        st.caption(f"Created: {clean_text(row_data.get('created_at'))}")
+        st.caption(f"Updated: {clean_text(row_data.get('updated_at'))}")
+        st.caption(f"Source summary: {clean_text(source_summary_from_record(row_data))}")
+        st.caption(f"Bioactivity records linked: {len(bioactivity_df_raw)}")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    section_header("Physical, Spectral & Supporting Data")
+    spectral_col1, spectral_col2, spectral_col3 = st.columns(3)
+    with spectral_col1:
+        render_kv("UV Data", row_data["uv_data"])
+        render_kv("FTIR Data", row_data["ftir_data"])
+        render_kv("CD / ECD Data", row_data.get("cd_data"))
+    with spectral_col2:
+        render_kv("Optical Rotation", row_data["optical_rotation"])
+        render_kv("HRMS", row_data["hrms_data"])
+        render_kv("Melting Point", row_data["melting_point"])
+    with spectral_col3:
+        render_kv("Crystallization Method", row_data["crystallization_method"])
+        render_kv("Structure Image Path", row_data["structure_image_path"])
+        render_kv("Reference DOI / Journal", f"{clean_text(row_data['doi'])} / {clean_text(row_data['journal_name'])}")
 
     section_header("1H NMR Table")
     if proton_df_raw.empty:
@@ -4801,6 +4896,7 @@ def show_compound_detail(compound_id):
     section_header("Notes")
     st.markdown('<div class="panel-card">', unsafe_allow_html=True)
     st.write(clean_text(row_data["note"]))
+    st.markdown('</div>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
 def render_best_match_summary(item, mode_label):
@@ -4997,37 +5093,36 @@ def show_search_page(all_compounds_df):
         )
 
         query_smiles = maybe_blank(st.session_state.get("structure_query_smiles"))
-        editor_is_active = False
-        editor_left, editor_right = st.columns([1.65, 1])
+        editor_left, editor_right = st.columns([1.95, 1])
 
         with editor_left:
             st.markdown('<div class="panel-card">', unsafe_allow_html=True)
             st.markdown("**Search by Structure**")
-            if streamlit_ketchersa is not None:
-                drawn_structure = streamlit_ketchersa(height="700px", key="structure_search_editor_full")
-                drawn_structure_text = "" if drawn_structure in {None, 0, "0"} else maybe_blank(drawn_structure)
-                previous_query_smiles = maybe_blank(st.session_state.get("structure_query_smiles"))
-                if drawn_structure_text != previous_query_smiles:
-                    st.session_state["structure_query_smiles"] = drawn_structure_text
-                query_smiles = drawn_structure_text
-                editor_is_active = True
-                st.caption("Full Ketcher editor is active. Draw directly in the canvas, then run identity, substructure, or similarity search.")
-            elif st_ketcher is not None:
+            previous_query_smiles = maybe_blank(st.session_state.get("structure_query_smiles"))
+            editor_mode_message = ""
+            if st_ketcher is not None:
                 drawn_smiles = st_ketcher(
-                    value=maybe_blank(st.session_state.get("structure_query_smiles")),
-                    height=650,
+                    value=previous_query_smiles,
+                    height=720,
                     molecule_format="SMILES",
-                    key="structure_search_editor_fallback",
+                    key="structure_search_editor_primary",
                 )
-                drawn_smiles_text = maybe_blank(drawn_smiles)
-                previous_query_smiles = maybe_blank(st.session_state.get("structure_query_smiles"))
+                drawn_smiles_text = "" if drawn_smiles in {None, 0, "0"} else maybe_blank(drawn_smiles)
                 if drawn_smiles_text != previous_query_smiles:
                     st.session_state["structure_query_smiles"] = drawn_smiles_text
+                    clear_structure_search_state()
                 query_smiles = drawn_smiles_text
-                editor_is_active = True
-                st.caption("A simplified drawing editor is active. The full nmrshiftdb-style toolbar still depends on the complete Ketcher build loading in deployment.")
+                editor_mode_message = "Direct drawing editor is active. Draw the structure in the canvas, then run identity, substructure, or similarity search."
+            elif streamlit_ketchersa is not None:
+                drawn_structure = streamlit_ketchersa(height="720px", key="structure_search_editor_full")
+                drawn_structure_text = "" if drawn_structure in {None, 0, "0"} else maybe_blank(drawn_structure)
+                if drawn_structure_text != previous_query_smiles:
+                    st.session_state["structure_query_smiles"] = drawn_structure_text
+                    clear_structure_search_state()
+                query_smiles = drawn_structure_text
+                editor_mode_message = "Embedded Ketcher build is active. Draw directly in the canvas, then run identity, substructure, or similarity search."
             else:
-                st.warning("The full Ketcher editor is not active in this deployment yet.")
+                st.warning("The direct drawing editor is not active in this deployment yet.")
                 st.caption(f"Editor status: {KETCHER_STATUS}")
                 query_smiles = st.text_area(
                     "Query Structure (SMILES or Molfile)",
@@ -5040,7 +5135,10 @@ def show_search_page(all_compounds_df):
                     key="structure_seed_smiles",
                     placeholder="Paste a known scaffold here if you want to seed the editor in a future run.",
                 )
-                st.caption("Fallback mode is active. You can still search by pasting a valid SMILES or Molfile query.")
+                editor_mode_message = "Fallback mode is active. You can still search by pasting a valid SMILES or Molfile query."
+                if maybe_blank(query_smiles) != previous_query_smiles:
+                    clear_structure_search_state()
+            st.caption(editor_mode_message)
             st.markdown('</div>', unsafe_allow_html=True)
 
         with editor_right:
@@ -5052,9 +5150,9 @@ def show_search_page(all_compounds_df):
                 key="structure_search_type",
             )
             if query_smiles:
-                render_structure_preview(query_smiles, caption="Current query", empty_message=False)
+                render_structure_preview(query_smiles, caption="Current query", empty_message=False, size=(420, 300))
             else:
-                st.caption("Draw or paste a structure to prepare the current query.")
+                st.caption("Draw a structure in the editor area to prepare the current query.")
             if structure_search_type == "Similarity Search":
                 st.caption(f"Minimum similarity score: {min_similarity_score}%")
                 st.caption("Similarity mode compares molecular fingerprints and ranks the closest structures first.")
@@ -5087,6 +5185,36 @@ def show_search_page(all_compounds_df):
             st.error(structure_error)
         elif structure_results:
             st.write(f"Found {len(structure_results)} compound(s) for the current structure query.")
+            query_col, summary_col = st.columns([1.05, 1.35])
+            with query_col:
+                st.markdown('<div class="panel-card">', unsafe_allow_html=True)
+                st.markdown("**Query Structure**")
+                render_structure_preview(query_smiles, caption="Current query", empty_message=False, size=(420, 300))
+                st.markdown('</div>', unsafe_allow_html=True)
+            with summary_col:
+                st.markdown('<div class="panel-card">', unsafe_allow_html=True)
+                top_score = float(structure_results[0].get("structure_score", 0.0)) if structure_results else 0.0
+                st.markdown(
+                    f'''
+                    <div class="query-summary-grid">
+                        <div class="query-summary-card">
+                            <div class="query-summary-label">Search Mode</div>
+                            <div class="query-summary-value">{structure_mode_label}</div>
+                        </div>
+                        <div class="query-summary-card">
+                            <div class="query-summary-label">Top Similarity / Match</div>
+                            <div class="query-summary-value">{top_score:.1f}%</div>
+                        </div>
+                        <div class="query-summary-card">
+                            <div class="query-summary-label">Candidates Returned</div>
+                            <div class="query-summary-value">{len(structure_results)}</div>
+                        </div>
+                    </div>
+                    ''',
+                    unsafe_allow_html=True,
+                )
+                st.caption("Results are ranked against the structures currently available in your database, so the percentages always reflect your own curated dataset.")
+                st.markdown('</div>', unsafe_allow_html=True)
             export_df = export_structure_search_results(structure_results)
             download_dataframe_button(
                 label="Download Structure Search Results as Excel",
@@ -5099,7 +5227,7 @@ def show_search_page(all_compounds_df):
         else:
             render_helper_card(
                 "Structure search workflow",
-                "Draw a structure with the embedded editor or paste a SMILES string, choose identity, substructure, or similarity mode, then run the search against the currently filtered dataset.",
+                "Draw a structure directly in the embedded editor, choose identity, substructure, or similarity mode, then run the search against the currently filtered dataset.",
             )
 
     elif search_mode == "Keyword Search":
@@ -5706,7 +5834,7 @@ def show_guide_page():
 # Compound pages
 # =========================
 def show_compound_pages():
-    compound_options = COMPOUND_PAGE_OPTIONS
+    compound_options = COMPOUND_PAGE_OPTIONS if can_edit_database() else ["Browse Record"]
 
     current_page = st.session_state.get("compound_page", "Browse Record")
     if current_page not in compound_options:
@@ -5729,6 +5857,8 @@ def show_compound_pages():
         "Compound workspace",
         "Browse full records, create new submissions, import batches, update metadata, and remove outdated entries from one consistent workflow. The editor now lives in a single clear place instead of appearing as a duplicated menu.",
     )
+    if not can_edit_database():
+        render_read_only_notice("submit, edit, import, or delete compound records")
 
     if compound_page == "Browse Record":
         section_header("Compound Browser", "Inspect the full record, structure, spectral tables, and attached spectra from one focused review page.")
@@ -6338,6 +6468,39 @@ def show_compound_pages():
 # 1H pages
 # =========================
 def show_proton_pages():
+    if not can_edit_database():
+        section_header("1H Peak Browser", "Read-only access to proton assignments. Full edit access remains reserved for the database owner.")
+        render_read_only_notice("add, edit, or delete 1H peak records")
+        compounds_df = load_all_compounds()
+        if compounds_df.empty:
+            st.info("No compounds available.")
+            return
+        options = compounds_df[["id", "trivial_name"]].copy()
+        options["label"] = options["id"].astype(str) + " - " + options["trivial_name"].fillna("")
+        default_index = 0
+        selected_id = st.session_state.get("selected_compound_id")
+        if selected_id is not None and selected_id in options["id"].tolist():
+            default_index = options.index[options["id"] == selected_id][0]
+        selected_compound_label = st.selectbox("Select Compound", options["label"].tolist(), index=default_index, key="readonly_proton_compound")
+        compound_id = int(selected_compound_label.split(" - ")[0])
+        proton_df = load_proton_data(compound_id)
+        if proton_df.empty:
+            st.info("No 1H NMR data available for this compound.")
+        else:
+            proton_df = proton_df.rename(columns={
+                "id": "ID",
+                "delta_ppm": "δH (ppm)",
+                "multiplicity": "Multiplicity",
+                "j_value": "J Value",
+                "proton_count": "Proton Count",
+                "assignment": "Assignment",
+                "solvent": "Solvent",
+                "instrument_mhz": "Instrument (MHz)",
+                "note": "Note",
+            })
+            st.dataframe(proton_df, width="stretch", hide_index=True)
+        return
+
     proton_page = st.radio(
         "1H Peak Tools",
         ["Add Peak", "Edit Peak", "Delete Peak"],
@@ -6584,6 +6747,37 @@ def show_proton_pages():
 # 13C pages
 # =========================
 def show_carbon_pages():
+    if not can_edit_database():
+        section_header("13C Peak Browser", "Read-only access to carbon assignments. Full edit access remains reserved for the database owner.")
+        render_read_only_notice("add, edit, or delete 13C peak records")
+        compounds_df = load_all_compounds()
+        if compounds_df.empty:
+            st.info("No compounds available.")
+            return
+        options = compounds_df[["id", "trivial_name"]].copy()
+        options["label"] = options["id"].astype(str) + " - " + options["trivial_name"].fillna("")
+        default_index = 0
+        selected_id = st.session_state.get("selected_compound_id")
+        if selected_id is not None and selected_id in options["id"].tolist():
+            default_index = options.index[options["id"] == selected_id][0]
+        selected_compound_label = st.selectbox("Select Compound", options["label"].tolist(), index=default_index, key="readonly_carbon_compound")
+        compound_id = int(selected_compound_label.split(" - ")[0])
+        carbon_df = load_carbon_data(compound_id)
+        if carbon_df.empty:
+            st.info("No 13C NMR data available for this compound.")
+        else:
+            carbon_df = carbon_df.rename(columns={
+                "id": "ID",
+                "delta_ppm": "δC (ppm)",
+                "carbon_type": "Carbon Type",
+                "assignment": "Assignment",
+                "solvent": "Solvent",
+                "instrument_mhz": "Instrument (MHz)",
+                "note": "Note",
+            })
+            st.dataframe(carbon_df, width="stretch", hide_index=True)
+        return
+
     carbon_page = st.radio(
         "13C Peak Tools",
         ["Add Peak", "Edit Peak", "Delete Peak"],
@@ -6822,14 +7016,17 @@ def show_carbon_pages():
 # Bioactivity pages
 # =========================
 def show_bioactivity_pages():
+    bioactivity_options = ["Browse Assays", "Add Assay", "Edit Assay", "Delete Assay"] if can_edit_database() else ["Browse Assays"]
     bioactivity_page = st.radio(
         "Bioactivity Tools",
-        ["Browse Assays", "Add Assay", "Edit Assay", "Delete Assay"],
+        bioactivity_options,
         horizontal=True,
     )
 
     bioactivity_df = load_all_bioactivity_data()
     compounds_df = load_all_compounds()
+    if not can_edit_database():
+        render_read_only_notice("add, edit, or delete bioactivity records")
 
     if bioactivity_page == "Browse Assays":
         section_header(
@@ -7197,6 +7394,11 @@ def show_spectra_library_overview():
 
 
 def show_spectra_pages():
+    if not can_edit_database():
+        render_read_only_notice("add, edit, or delete spectra file records")
+        show_spectra_library_overview()
+        return
+
     spectra_page = st.radio(
         "Spectra Tools",
         ["Library Overview", "Add Files", "Edit Files", "Delete Files"],
