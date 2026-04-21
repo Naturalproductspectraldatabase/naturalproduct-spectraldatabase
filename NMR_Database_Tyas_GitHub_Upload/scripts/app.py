@@ -646,19 +646,23 @@ st.markdown("""
 }
 
 .block-container {
-    padding-top: 1.2rem;
-    padding-bottom: 6.75rem;
-    max-width: 1520px;
+    padding-top: 1rem;
+    padding-bottom: 4.25rem;
+    max-width: 1360px;
 }
 
 [data-testid="stSidebar"] {
     border-right: 1px solid rgba(255,255,255,0.06);
     background:
         linear-gradient(180deg, rgba(8, 17, 30, 0.96), rgba(8, 14, 24, 0.98)) !important;
+    min-width: 20rem !important;
+    max-width: 20rem !important;
 }
 
 [data-testid="stSidebar"] .block-container {
-    padding-top: 1.35rem;
+    padding-top: 1.1rem;
+    padding-left: 1rem;
+    padding-right: 1rem;
 }
 
 .sidebar-note {
@@ -674,8 +678,8 @@ st.markdown("""
 
 .sidebar-logo-shell {
     border-radius: 24px;
-    padding: 0.7rem;
-    margin-bottom: 0.9rem;
+    padding: 0.48rem;
+    margin-bottom: 0.75rem;
     background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.018));
     border: 1px solid rgba(255,255,255,0.08);
     box-shadow: var(--shadow-soft);
@@ -683,8 +687,8 @@ st.markdown("""
 
 .sidebar-brand {
     border-radius: 22px;
-    padding: 1rem 1rem 1rem 1rem;
-    margin-bottom: 1rem;
+    padding: 0.85rem 0.9rem 0.9rem 0.9rem;
+    margin-bottom: 0.8rem;
     background: linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.02));
     border: 1px solid rgba(255,255,255,0.08);
     box-shadow: var(--shadow-soft);
@@ -692,7 +696,7 @@ st.markdown("""
 
 .sidebar-brand-title {
     color: var(--text-main);
-    font-size: 1.05rem;
+    font-size: 0.98rem;
     font-weight: 760;
     letter-spacing: -0.02em;
     margin-top: 0.15rem;
@@ -700,8 +704,8 @@ st.markdown("""
 
 .sidebar-brand-subtitle {
     color: var(--text-soft);
-    font-size: 0.89rem;
-    line-height: 1.5;
+    font-size: 0.82rem;
+    line-height: 1.42;
     margin-top: 0.25rem;
 }
 
@@ -714,7 +718,7 @@ st.markdown("""
 
 .sidebar-stat {
     border-radius: 16px;
-    padding: 0.75rem 0.8rem;
+    padding: 0.66rem 0.72rem;
     background: linear-gradient(180deg, rgba(255,255,255,0.036), rgba(255,255,255,0.018));
     border: 1px solid rgba(255,255,255,0.08);
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
@@ -722,14 +726,14 @@ st.markdown("""
 
 .sidebar-stat-value {
     color: var(--text-main);
-    font-size: 1.15rem;
+    font-size: 1.02rem;
     font-weight: 760;
     line-height: 1.1;
 }
 
 .sidebar-stat-label {
     color: var(--text-soft);
-    font-size: 0.8rem;
+    font-size: 0.74rem;
     margin-top: 0.18rem;
 }
 
@@ -788,9 +792,9 @@ st.markdown("""
 }
 .section-title {
     margin-top: 0.2rem;
-    margin-bottom: 0.34rem;
-    font-size: 1.88rem;
-    line-height: 1.15;
+    margin-bottom: 0.28rem;
+    font-size: 1.56rem;
+    line-height: 1.16;
     font-weight: 800;
     letter-spacing: -0.03em;
     color: var(--text-strong);
@@ -801,35 +805,45 @@ st.markdown("""
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    margin: 2rem auto 0.35rem auto;
-    padding: 0.42rem 0.95rem;
+    margin: 0;
+    padding: 0.34rem 0.82rem;
     border-radius: 999px;
     background: linear-gradient(180deg, rgba(11, 21, 34, 0.9), rgba(7, 15, 27, 0.88));
     border: 1px solid rgba(255,255,255,0.08);
-    box-shadow: 0 10px 28px rgba(0,0,0,0.22);
+    box-shadow: 0 8px 20px rgba(0,0,0,0.18);
     color: rgba(245, 248, 253, 0.92);
-    font-size: 0.76rem;
+    font-size: 0.68rem;
     letter-spacing: 0.01em;
     backdrop-filter: blur(8px);
     white-space: nowrap;
 }
 
+.sidebar-credit-wrap {
+    margin-top: 1rem;
+    padding-left: 0.08rem;
+    text-align: left;
+}
+
+.sidebar-credit-wrap .app-credit-footer {
+    justify-content: flex-start;
+}
+
 .section-subtitle {
     color: var(--text-soft);
-    margin-bottom: 1.1rem;
-    line-height: 1.65;
+    margin-bottom: 0.92rem;
+    line-height: 1.55;
     max-width: 62rem;
-    font-size: 1rem;
+    font-size: 0.93rem;
 }
 
 .metric-card {
     border-radius: var(--radius-card);
-    padding: 1.08rem 1.12rem;
+    padding: 0.92rem 0.98rem;
     background: linear-gradient(180deg, rgba(255,255,255,0.042), rgba(255,255,255,0.02));
     border: 1px solid rgba(255,255,255,0.08);
-    margin-bottom: 0.9rem;
+    margin-bottom: 0.72rem;
     box-shadow: var(--glow-soft), var(--shadow-soft);
-    min-height: 118px;
+    min-height: 96px;
     transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
 }
 
@@ -847,14 +861,14 @@ st.markdown("""
 
 .metric-card-label {
     color: var(--text-soft);
-    font-size: 0.9rem;
+    font-size: 0.8rem;
     font-weight: 580;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.38rem;
     line-height: 1.35;
 }
 
 .metric-card-value {
-    font-size: 2.18rem;
+    font-size: 1.86rem;
     font-weight: 780;
     line-height: 1;
     letter-spacing: -0.03em;
@@ -862,8 +876,8 @@ st.markdown("""
 }
 
 .dashboard-section {
-    margin-top: 0.5rem;
-    margin-bottom: 1.2rem;
+    margin-top: 0.36rem;
+    margin-bottom: 0.92rem;
 }
 
 .dashboard-dataframe-note {
@@ -874,17 +888,17 @@ st.markdown("""
 }
 
 .clean-stat {
-    padding: 0.95rem 1rem;
+    padding: 0.82rem 0.9rem;
     border-radius: 18px;
     background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.016));
     border: 1px solid rgba(255,255,255,0.07);
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.035);
-    min-height: 116px;
+    min-height: 96px;
 }
 
 .clean-stat-label {
     color: var(--text-soft);
-    font-size: 1rem;
+    font-size: 0.88rem;
     font-weight: 560;
     margin-bottom: 0.3rem;
     line-height: 1.5;
@@ -892,14 +906,14 @@ st.markdown("""
 
 .clean-stat-value {
     color: var(--text-main);
-    font-size: 2.08rem;
+    font-size: 1.78rem;
     font-weight: 780;
     letter-spacing: -0.03em;
     line-height: 1;
 }
 
 .panel-card {
-    padding: 1.1rem 1.12rem;
+    padding: 0.92rem 0.98rem;
     border-radius: 24px;
     background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.018));
     border: 1px solid rgba(255,255,255,0.08);
@@ -917,8 +931,8 @@ st.markdown("""
 }
 
 .compound-card {
-    padding: 1.02rem 1.08rem;
-    border-radius: 22px;
+    padding: 0.82rem 0.94rem;
+    border-radius: 20px;
     border: 1px solid rgba(255,255,255,0.08);
     background: linear-gradient(180deg, rgba(255,255,255,0.034), rgba(255,255,255,0.016));
     margin-bottom: 0.85rem;
@@ -927,7 +941,7 @@ st.markdown("""
 
 .compound-thumb-shell {
     width: 100%;
-    height: 184px;
+    height: 144px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -939,7 +953,7 @@ st.markdown("""
 
 .compound-thumb-shell img {
     width: 100%;
-    height: 184px;
+    height: 144px;
     object-fit: contain;
     display: block;
     background: rgba(255,255,255,0.96);
@@ -967,16 +981,16 @@ st.markdown("""
 }
 
 .result-title {
-    font-size: 1.16rem;
+    font-size: 1rem;
     font-weight: 780;
-    margin-bottom: 0.22rem;
+    margin-bottom: 0.18rem;
     color: var(--text-strong);
 }
 
 .result-subtitle {
     color: var(--text-soft);
-    font-size: 0.95rem;
-    margin-bottom: 0.55rem;
+    font-size: 0.85rem;
+    margin-bottom: 0.42rem;
 }
 
 .badge-row {
@@ -989,15 +1003,15 @@ st.markdown("""
 .info-chip-row {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.45rem;
-    margin-top: 0.55rem;
+    gap: 0.36rem;
+    margin-top: 0.42rem;
 }
 
 .info-chip {
     display: inline-block;
     border-radius: 999px;
-    padding: 0.38rem 0.72rem;
-    font-size: 0.82rem;
+    padding: 0.3rem 0.62rem;
+    font-size: 0.76rem;
     color: #E8EEF8;
     background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.025));
     border: 1px solid rgba(255,255,255,0.07);
@@ -1130,7 +1144,7 @@ div[data-baseweb="select"] > div {
     border-radius: 16px !important;
     background: rgba(255,255,255,0.028) !important;
     border-color: rgba(255,255,255,0.09) !important;
-    min-height: 50px !important;
+    min-height: 44px !important;
 }
 
 div[data-testid="stTextInput"] input,
@@ -1152,7 +1166,7 @@ div[data-testid="stNumberInput"] input:focus {
 
 button[kind="primary"] {
     border-radius: 16px !important;
-    min-height: 46px !important;
+    min-height: 42px !important;
 }
 
 div[data-testid="stButton"] button,
@@ -1188,7 +1202,7 @@ div[data-testid="stRadio"] label {
 }
 
 div[data-testid="stRadio"] label p {
-    font-size: 0.95rem !important;
+    font-size: 0.88rem !important;
     font-weight: 600 !important;
 }
 
@@ -1265,7 +1279,7 @@ div[data-testid="stRadio"] label:has(input:checked) {
 }
 
 [data-testid="stTabs"] button[role="tab"] {
-    min-height: 42px;
+    min-height: 38px;
     border-radius: 14px !important;
     color: var(--text-soft) !important;
     font-weight: 650 !important;
@@ -1313,11 +1327,11 @@ header[data-testid="stHeader"] {
 
 @media (max-width: 900px) {
     .section-title {
-        font-size: 1.45rem;
+        font-size: 1.28rem;
     }
 
     .section-subtitle {
-        font-size: 0.95rem;
+        font-size: 0.9rem;
     }
 
     .sidebar-stats {
@@ -2526,6 +2540,13 @@ def render_app_credit_footer():
     )
 
 
+def render_sidebar_credit():
+    st.markdown(
+        f'<div class="sidebar-credit-wrap"><div class="app-credit-footer">{OWNER_CREDIT}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
 def normalize_structure_image(image_obj, size=(520, 360)):
     if Image is None or ImageOps is None or image_obj is None:
         return image_obj
@@ -2968,10 +2989,10 @@ def render_compound_card(row):
     source_summary = clean_text(source_summary_from_record(row))
     sample_code = clean_text(row["sample_code"])
     st.markdown('<div class="compound-card">', unsafe_allow_html=True)
-    preview_col, info_col = st.columns([1, 3.7])
+    preview_col, info_col = st.columns([0.92, 4.08])
     with preview_col:
         source_value = row.get("structure_image_path")
-        standardized_image = load_standardized_structure_source(source_value, size=(360, 260))
+        standardized_image = load_standardized_structure_source(source_value, size=(300, 220))
         if standardized_image is not None:
             st.image(standardized_image, width="stretch")
         elif source_value and is_external_url(str(source_value).strip()):
@@ -2981,7 +3002,7 @@ def render_compound_card(row):
                 unsafe_allow_html=True,
             )
         else:
-            render_structure_preview(row.get("smiles"), caption=None, empty_message=False, size=(360, 260))
+            render_structure_preview(row.get("smiles"), caption=None, empty_message=False, size=(300, 220))
     with info_col:
         st.markdown(
             f"""
@@ -5668,6 +5689,8 @@ def show_overview_page(all_compounds_df):
             build_filter_options(all_compounds_df, "data_source"),
             key="dashboard_data_source"
         )
+    with st.sidebar:
+        render_sidebar_credit()
 
     filtered_df = apply_dataframe_filters(
         all_compounds_df,
@@ -5798,7 +5821,7 @@ def show_overview_page(all_compounds_df):
 
     st.markdown('<div class="dashboard-section"></div>', unsafe_allow_html=True)
     section_header("Distribution Overview", "These charts help you see how the current filtered dataset is distributed across class and source category.")
-    left, right = st.columns([1.25, 1])
+    left, right = st.columns([1.15, 0.95])
 
     with left:
         section_header("Compound Distribution")
@@ -5845,9 +5868,9 @@ def show_overview_page(all_compounds_df):
     if filtered_df.empty:
         st.info("No compounds available for the selected filters.")
     else:
-        browse_limit = st.slider("Number of compounds to preview", min_value=3, max_value=20, value=8)
+        browse_limit = st.slider("Number of compounds to preview", min_value=3, max_value=16, value=6)
         for _, row in filtered_df.head(browse_limit).iterrows():
-            c1, c2 = st.columns([5, 1])
+            c1, c2 = st.columns([6.2, 0.8])
             with c1:
                 render_compound_card(row)
             with c2:
@@ -5857,7 +5880,7 @@ def show_overview_page(all_compounds_df):
                     st.rerun()
 
     st.markdown('<div class="dashboard-section"></div>', unsafe_allow_html=True)
-    table_col, utility_col = st.columns([4.2, 1.3])
+    table_col, utility_col = st.columns([4.8, 1.05])
 
     with table_col:
         section_header("Compound Table")
@@ -8659,5 +8682,3 @@ elif main_section == "Spectra Library":
 
 elif main_section == "Guide":
     show_guide_page()
-
-render_app_credit_footer()
