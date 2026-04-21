@@ -1682,20 +1682,50 @@ def source_summary_from_record(record) -> str:
 def enrich_compounds_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     enriched = df.copy()
     required_columns = [
+        "id",
+        "trivial_name",
+        "iupac_name",
+        "molecular_formula",
         "smiles",
         "inchi",
         "inchikey",
+        "compound_class",
+        "compound_subclass",
         "source_category",
         "source_organism",
         "source_material",
+        "sample_code",
+        "collection_location",
+        "gps_coordinates",
+        "depth_m",
+        "uv_data",
+        "ftir_data",
         "cd_data",
+        "optical_rotation",
+        "melting_point",
+        "crystallization_method",
+        "structure_image_path",
+        "journal_name",
+        "article_title",
+        "publication_year",
+        "volume",
+        "issue",
+        "pages",
+        "doi",
+        "ccdc_number",
+        "molecular_weight",
+        "hrms_data",
+        "data_source",
+        "note",
+        "created_at",
+        "updated_at",
     ]
     for column_name in required_columns:
         if column_name not in enriched.columns:
             enriched[column_name] = ""
 
     if enriched.empty:
-        return enriched
+        return enriched[required_columns]
 
     source_fields = enriched.apply(
         lambda row: infer_source_fields(
@@ -2531,27 +2561,27 @@ def get_backup_bytes():
         return f.read()
 
 def count_related_records(filtered_ids):
+    filtered_ids = [int(item) for item in filtered_ids if str(item).strip()]
+    if not filtered_ids:
+        return 0, 0, 0
     conn = get_connection()
 
-    if filtered_ids:
+    try:
         placeholders = ",".join("?" * len(filtered_ids))
         proton_query = f"SELECT COUNT(*) AS n FROM proton_nmr WHERE compound_id IN ({placeholders})"
         carbon_query = f"SELECT COUNT(*) AS n FROM carbon_nmr WHERE compound_id IN ({placeholders})"
         spectra_query = f"SELECT COUNT(*) AS n FROM spectra_files WHERE compound_id IN ({placeholders})"
 
-        proton_count = pd.read_sql_query(proton_query, conn, params=filtered_ids)["n"][0]
-        carbon_count = pd.read_sql_query(carbon_query, conn, params=filtered_ids)["n"][0]
-        spectra_count = pd.read_sql_query(spectra_query, conn, params=filtered_ids)["n"][0]
-    else:
-        proton_count = 0
-        carbon_count = 0
-        spectra_count = 0
-
-    conn.close()
-    return proton_count, carbon_count, spectra_count
+        proton_count = int(pd.read_sql_query(proton_query, conn, params=filtered_ids)["n"][0])
+        carbon_count = int(pd.read_sql_query(carbon_query, conn, params=filtered_ids)["n"][0])
+        spectra_count = int(pd.read_sql_query(spectra_query, conn, params=filtered_ids)["n"][0])
+        return proton_count, carbon_count, spectra_count
+    finally:
+        conn.close()
 
 
 def count_bioactivity_records(filtered_ids):
+    filtered_ids = [int(item) for item in filtered_ids if str(item).strip()]
     if not filtered_ids:
         return 0
     conn = get_connection()
@@ -2693,8 +2723,9 @@ def render_dashboard_bar_chart(df: pd.DataFrame, x_col: str, y_col: str, color_h
 
 def render_sidebar_workspace_summary(active_section: str, all_compounds_df: pd.DataFrame):
     total_compounds = len(all_compounds_df)
-    proton_count, carbon_count, spectra_count = count_related_records(all_compounds_df["id"].tolist())
-    bioactivity_count = count_bioactivity_records(all_compounds_df["id"].tolist())
+    available_ids = all_compounds_df["id"].tolist() if "id" in all_compounds_df.columns else []
+    proton_count, carbon_count, spectra_count = count_related_records(available_ids)
+    bioactivity_count = count_bioactivity_records(available_ids)
     health = calculate_workspace_health(all_compounds_df)
     active_copy = NAV_SECTION_COPY.get(active_section, {"title": active_section, "summary": ""})
 
