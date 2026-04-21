@@ -1679,53 +1679,55 @@ def source_summary_from_record(record) -> str:
     return summary
 
 
+COMPOUND_REQUIRED_COLUMNS = [
+    "id",
+    "trivial_name",
+    "iupac_name",
+    "molecular_formula",
+    "smiles",
+    "inchi",
+    "inchikey",
+    "compound_class",
+    "compound_subclass",
+    "source_category",
+    "source_organism",
+    "source_material",
+    "sample_code",
+    "collection_location",
+    "gps_coordinates",
+    "depth_m",
+    "uv_data",
+    "ftir_data",
+    "cd_data",
+    "optical_rotation",
+    "melting_point",
+    "crystallization_method",
+    "structure_image_path",
+    "journal_name",
+    "article_title",
+    "publication_year",
+    "volume",
+    "issue",
+    "pages",
+    "doi",
+    "ccdc_number",
+    "molecular_weight",
+    "hrms_data",
+    "data_source",
+    "note",
+    "created_at",
+    "updated_at",
+]
+
+
 def enrich_compounds_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     enriched = df.copy()
-    required_columns = [
-        "id",
-        "trivial_name",
-        "iupac_name",
-        "molecular_formula",
-        "smiles",
-        "inchi",
-        "inchikey",
-        "compound_class",
-        "compound_subclass",
-        "source_category",
-        "source_organism",
-        "source_material",
-        "sample_code",
-        "collection_location",
-        "gps_coordinates",
-        "depth_m",
-        "uv_data",
-        "ftir_data",
-        "cd_data",
-        "optical_rotation",
-        "melting_point",
-        "crystallization_method",
-        "structure_image_path",
-        "journal_name",
-        "article_title",
-        "publication_year",
-        "volume",
-        "issue",
-        "pages",
-        "doi",
-        "ccdc_number",
-        "molecular_weight",
-        "hrms_data",
-        "data_source",
-        "note",
-        "created_at",
-        "updated_at",
-    ]
-    for column_name in required_columns:
+    for column_name in COMPOUND_REQUIRED_COLUMNS:
         if column_name not in enriched.columns:
             enriched[column_name] = ""
 
     if enriched.empty:
-        return enriched[required_columns]
+        return enriched[COMPOUND_REQUIRED_COLUMNS]
 
     source_fields = enriched.apply(
         lambda row: infer_source_fields(
@@ -2594,6 +2596,7 @@ def count_bioactivity_records(filtered_ids):
 
 
 def calculate_workspace_health(compounds_df: pd.DataFrame):
+    compounds_df = enrich_compounds_dataframe(compounds_df)
     if compounds_df.empty:
         return {
             "structure_ready": 0,
@@ -2723,6 +2726,7 @@ def render_dashboard_bar_chart(df: pd.DataFrame, x_col: str, y_col: str, color_h
 
 
 def render_sidebar_workspace_summary(active_section: str, all_compounds_df: pd.DataFrame):
+    all_compounds_df = enrich_compounds_dataframe(all_compounds_df)
     total_compounds = len(all_compounds_df)
     available_ids = all_compounds_df["id"].tolist() if "id" in all_compounds_df.columns else []
     proton_count, carbon_count, spectra_count = count_related_records(available_ids)
@@ -2784,6 +2788,7 @@ def render_sidebar_workspace_summary(active_section: str, all_compounds_df: pd.D
     current_user = maybe_blank(st.session_state.get("npdb_username")) or "Approved user"
     current_role = maybe_blank(st.session_state.get("npdb_role")) or "viewer"
     st.caption(f"Signed in as {current_user} ({current_role})")
+    st.caption(f"Data backend: {'Supabase cloud' if use_supabase_backend() else 'Local SQLite'}")
     st.caption(
         f"Structure-ready: {health['structure_ready']} | Reference-ready: {health['reference_ready']} | "
         f"Drive-linked: {health['external_ready']} | Submission-ready: {health['submission_ready']}"
@@ -5662,7 +5667,7 @@ def show_overview_page(all_compounds_df):
     render_metric_card("Reference Ready", health["reference_ready"], h2)
     render_metric_card("Drive-linked Records", health["external_ready"], h3)
     render_metric_card("Submission-ready Metadata", health["submission_ready"], h4)
-    render_metric_card("Bioactivity-linked Compounds", health["bioactivity_ready"], h5)
+    render_metric_card("Bioactivity-linked Compounds", health.get("bioactivity_ready", 0), h5)
 
     section_header("Metadata Gaps", "This section helps you see which records should be curated next.")
     g1, g2, g3, g4 = st.columns(4)
@@ -7856,7 +7861,7 @@ def _json_ready(value):
 
 
 def _supabase_headers(write: bool = False, json_body: bool = True, extra: dict | None = None):
-    api_key = get_supabase_service_role_key() if write else (get_supabase_anon_key() or get_supabase_service_role_key())
+    api_key = get_supabase_service_role_key() or get_supabase_anon_key()
     headers = {
         "apikey": api_key,
         "Authorization": f"Bearer {api_key}",
@@ -8211,6 +8216,12 @@ def count_related_records(filtered_ids):
     proton_df = load_all_proton_data()
     carbon_df = load_all_carbon_data()
     spectra_df = load_all_spectra_files()
+    if "compound_id" not in proton_df.columns:
+        proton_df = pd.DataFrame(columns=["compound_id"])
+    if "compound_id" not in carbon_df.columns:
+        carbon_df = pd.DataFrame(columns=["compound_id"])
+    if "compound_id" not in spectra_df.columns:
+        spectra_df = pd.DataFrame(columns=["compound_id"])
     return (
         int(proton_df[proton_df["compound_id"].isin(filtered_ids)].shape[0]) if not proton_df.empty else 0,
         int(carbon_df[carbon_df["compound_id"].isin(filtered_ids)].shape[0]) if not carbon_df.empty else 0,
@@ -8222,7 +8233,7 @@ def count_bioactivity_records(filtered_ids):
     if not filtered_ids:
         return 0
     bio_df = load_all_bioactivity_data()
-    if bio_df.empty:
+    if bio_df.empty or "compound_id" not in bio_df.columns:
         return 0
     return int(bio_df[bio_df["compound_id"].isin(filtered_ids)].shape[0])
 
@@ -8543,6 +8554,12 @@ def save_structure_query_to_compound(compound_id: int, query_text: str) -> tuple
 # =========================
 show_app_header()
 all_compounds_df = load_all_compounds()
+if use_supabase_backend() and all_compounds_df.empty:
+    try:
+        load_all_compounds.clear()
+    except Exception:
+        pass
+    all_compounds_df = load_all_compounds()
 write_batch_import_templates()
 
 
