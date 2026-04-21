@@ -2600,6 +2600,7 @@ def calculate_workspace_health(compounds_df: pd.DataFrame):
             "reference_ready": 0,
             "external_ready": 0,
             "submission_ready": 0,
+            "bioactivity_ready": 0,
         }
 
     structure_ready = compounds_df[
@@ -2787,7 +2788,7 @@ def render_sidebar_workspace_summary(active_section: str, all_compounds_df: pd.D
         f"Structure-ready: {health['structure_ready']} | Reference-ready: {health['reference_ready']} | "
         f"Drive-linked: {health['external_ready']} | Submission-ready: {health['submission_ready']}"
     )
-    st.caption(f"Bioactivity records: {bioactivity_count} | Bioactivity-linked compounds: {health['bioactivity_ready']}")
+    st.caption(f"Bioactivity records: {bioactivity_count} | Bioactivity-linked compounds: {health.get('bioactivity_ready', 0)}")
 
 
 def show_section_banner(image_path: Path, caption: str | None = None):
