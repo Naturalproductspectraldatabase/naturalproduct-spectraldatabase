@@ -1,4 +1,5 @@
 import hmac
+import io
 import json
 import os
 import re
@@ -26,11 +27,19 @@ except Exception:
 
 try:
     from rdkit import Chem, DataStructs
-    from rdkit.Chem import AllChem
+    from rdkit.Chem import AllChem, Draw
 except Exception:
     Chem = None
     DataStructs = None
     AllChem = None
+    Draw = None
+
+try:
+    from openpyxl.styles import Alignment, Font, PatternFill
+except Exception:
+    Alignment = None
+    Font = None
+    PatternFill = None
 
 # =========================
 # Basic configuration
@@ -61,6 +70,7 @@ BACKUPS_DIR = DATABASE_DIR / "backups"
 DB_PATH = PROJECT_DIR / "database" / "nmr.db"
 
 MAX_PAGE_ICON_BYTES = 5 * 1024 * 1024
+OWNER_CREDIT = "© Trianda Ayuning Tyas_project"
 
 
 def pick_branding_asset(*filenames: str) -> Path:
@@ -82,6 +92,7 @@ FAVICON_PATH = pick_branding_asset(
     "favicon.png",
 )
 SIDEBAR_LOGO_PATH = pick_branding_asset(
+    "coral_favicon1.png",
     "favicon_circle.png",
     "favicon2.png",
     "favicon.png",
@@ -101,7 +112,11 @@ DEFAULT_CLASS_OPTIONS = [
 ]
 DEFAULT_SOURCE_OPTIONS = [
     "Sponge",
+    "Soft Coral",
+    "Hard Coral",
     "Tunicate",
+    "Cyanobacteria",
+    "Bacteria",
     "Coral",
     "Seaweed",
     "Microorganism",
@@ -205,6 +220,8 @@ COMPOUND_IMPORT_COLUMNS = [
     "inchikey",
     "compound_class",
     "compound_subclass",
+    "source_category",
+    "source_organism",
     "source_material",
     "sample_code",
     "collection_location",
@@ -212,6 +229,7 @@ COMPOUND_IMPORT_COLUMNS = [
     "depth_m",
     "uv_data",
     "ftir_data",
+    "cd_data",
     "optical_rotation",
     "melting_point",
     "crystallization_method",
@@ -534,7 +552,7 @@ st.markdown("""
 
 .block-container {
     padding-top: 1.1rem;
-    padding-bottom: 2rem;
+    padding-bottom: 5.5rem;
     max-width: 1500px;
 }
 
@@ -678,6 +696,22 @@ st.markdown("""
     font-weight: 780;
     letter-spacing: -0.02em;
     color: var(--text-main);
+}
+
+.app-credit-footer {
+    position: fixed;
+    right: 18px;
+    bottom: 12px;
+    z-index: 9999;
+    padding: 0.45rem 0.8rem;
+    border-radius: 999px;
+    background: rgba(8, 17, 30, 0.82);
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 10px 28px rgba(0,0,0,0.22);
+    color: rgba(245, 248, 253, 0.92);
+    font-size: 0.78rem;
+    letter-spacing: 0.01em;
+    backdrop-filter: blur(8px);
 }
 
 .section-subtitle {
@@ -856,6 +890,48 @@ st.markdown("""
     background: rgba(255,255,255,0.022);
     border: 1px solid rgba(255,255,255,0.08);
     box-shadow: var(--shadow-soft);
+}
+
+.record-badge-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    margin-bottom: 1rem;
+}
+
+.record-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.45rem 0.8rem;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    color: #E8EEF8;
+    font-size: 0.88rem;
+}
+
+.structure-result-grid {
+    display: grid;
+    grid-template-columns: minmax(220px, 280px) 1fr;
+    gap: 1rem;
+    align-items: start;
+}
+
+.structure-result-meta {
+    display: grid;
+    gap: 0.45rem;
+}
+
+.structure-result-stat {
+    color: var(--text-soft);
+    font-size: 0.92rem;
+    line-height: 1.5;
+}
+
+@media (max-width: 900px) {
+    .structure-result-grid {
+        grid-template-columns: 1fr;
+    }
 }
 
 .small-note {
@@ -1054,8 +1130,13 @@ def ensure_database_schema():
                 trivial_name TEXT NOT NULL,
                 iupac_name TEXT,
                 molecular_formula TEXT,
+                smiles TEXT,
+                inchi TEXT,
+                inchikey TEXT,
                 compound_class TEXT,
                 compound_subclass TEXT,
+                source_category TEXT,
+                source_organism TEXT,
                 source_material TEXT,
                 sample_code TEXT,
                 collection_location TEXT,
@@ -1063,6 +1144,7 @@ def ensure_database_schema():
                 depth_m REAL,
                 uv_data TEXT,
                 ftir_data TEXT,
+                cd_data TEXT,
                 optical_rotation TEXT,
                 melting_point TEXT,
                 crystallization_method TEXT,
@@ -1166,6 +1248,9 @@ def ensure_compounds_schema():
         "inchi": "TEXT",
         "inchikey": "TEXT",
         "hrms_data": "TEXT",
+        "source_category": "TEXT",
+        "source_organism": "TEXT",
+        "cd_data": "TEXT",
         "article_title": "TEXT",
         "created_at": "TEXT",
         "updated_at": "TEXT",
@@ -1215,6 +1300,85 @@ def safe_float_or_none(value):
         return float(text)
     except ValueError:
         return None
+
+
+def normalize_source_category(value: str) -> str:
+    text = maybe_blank(value)
+    if not text:
+        return ""
+    for option in DEFAULT_SOURCE_OPTIONS:
+        if text.casefold() == option.casefold():
+            return option
+    return text
+
+
+def infer_source_fields(source_category="", source_organism="", source_material="") -> tuple[str, str, str]:
+    category = normalize_source_category(source_category)
+    organism = maybe_blank(source_organism)
+    legacy = maybe_blank(source_material)
+
+    if not category and legacy:
+        category = normalize_source_category(legacy)
+        if category and category.casefold() != legacy.casefold():
+            category = normalize_source_category(category)
+
+    if not organism and legacy:
+        normalized_legacy_category = normalize_source_category(legacy)
+        if not normalized_legacy_category or normalized_legacy_category.casefold() != legacy.casefold():
+            organism = legacy
+
+    summary = legacy
+    if category and organism:
+        summary = f"{category} | {organism}"
+    elif category:
+        summary = category
+    elif organism:
+        summary = organism
+
+    return category, organism, summary
+
+
+def source_summary_from_record(record) -> str:
+    category, organism, summary = infer_source_fields(
+        record.get("source_category"),
+        record.get("source_organism"),
+        record.get("source_material"),
+    )
+    return summary
+
+
+def enrich_compounds_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    enriched = df.copy()
+    required_columns = [
+        "smiles",
+        "inchi",
+        "inchikey",
+        "source_category",
+        "source_organism",
+        "source_material",
+        "cd_data",
+    ]
+    for column_name in required_columns:
+        if column_name not in enriched.columns:
+            enriched[column_name] = ""
+
+    if enriched.empty:
+        return enriched
+
+    source_fields = enriched.apply(
+        lambda row: infer_source_fields(
+            row.get("source_category"),
+            row.get("source_organism"),
+            row.get("source_material"),
+        ),
+        axis=1,
+        result_type="expand",
+    )
+    source_fields.columns = ["source_category", "source_organism", "source_material"]
+    enriched["source_category"] = source_fields["source_category"]
+    enriched["source_organism"] = source_fields["source_organism"]
+    enriched["source_material"] = source_fields["source_material"]
+    return enriched
 
 
 def is_raw_spectrum_type(spectrum_type_value: str) -> bool:
@@ -1336,14 +1500,16 @@ def reset_compound_wizard():
         "wizard_compound_subclass_custom",
         "wizard_data_source_select",
         "wizard_data_source_custom",
-        "wizard_source_material_select",
-        "wizard_source_material_custom",
+        "wizard_source_category_select",
+        "wizard_source_category_custom",
+        "wizard_source_organism",
         "wizard_sample_code",
         "wizard_collection_location",
         "wizard_gps_coordinates",
         "wizard_depth_m",
         "wizard_uv_data",
         "wizard_ftir_data",
+        "wizard_cd_data",
         "wizard_optical_rotation",
         "wizard_melting_point",
         "wizard_crystallization_method",
@@ -1367,7 +1533,76 @@ def reset_compound_wizard():
     for key in wizard_keys:
         if key in st.session_state:
             del st.session_state[key]
+        draft_key = f"_draft_{key}"
+        if draft_key in st.session_state:
+            del st.session_state[draft_key]
     st.session_state["compound_wizard_step"] = 1
+
+
+def persist_wizard_inputs():
+    wizard_keys = [
+        "wizard_trivial_name",
+        "wizard_iupac_name",
+        "wizard_formula",
+        "wizard_molecular_weight",
+        "wizard_smiles",
+        "wizard_inchi",
+        "wizard_inchikey",
+        "wizard_compound_class_select",
+        "wizard_compound_class_custom",
+        "wizard_compound_subclass_select",
+        "wizard_compound_subclass_custom",
+        "wizard_data_source_select",
+        "wizard_data_source_custom",
+        "wizard_source_category_select",
+        "wizard_source_category_custom",
+        "wizard_source_organism",
+        "wizard_sample_code",
+        "wizard_collection_location",
+        "wizard_gps_coordinates",
+        "wizard_depth_m",
+        "wizard_uv_data",
+        "wizard_ftir_data",
+        "wizard_cd_data",
+        "wizard_optical_rotation",
+        "wizard_melting_point",
+        "wizard_crystallization_method",
+        "wizard_ccdc_number",
+        "wizard_hrms_data",
+        "wizard_structure_path",
+        "wizard_structure_upload",
+        "wizard_submission_spectrum_type_select",
+        "wizard_submission_spectrum_type_custom",
+        "wizard_submission_spectra_note",
+        "wizard_submission_spectra_uploads",
+        "wizard_journal_name",
+        "wizard_article_title",
+        "wizard_publication_year",
+        "wizard_volume",
+        "wizard_issue",
+        "wizard_pages",
+        "wizard_doi",
+        "wizard_note",
+    ]
+    for key in wizard_keys:
+        if key in st.session_state:
+            st.session_state[f"_draft_{key}"] = st.session_state[key]
+
+
+def get_wizard_value(key: str, default=""):
+    draft_key = f"_draft_{key}"
+    if draft_key in st.session_state:
+        return st.session_state[draft_key]
+    return st.session_state.get(key, default)
+
+
+def hydrate_wizard_widget(key: str, default=""):
+    draft_key = f"_draft_{key}"
+    if key not in st.session_state:
+        if draft_key in st.session_state:
+            st.session_state[key] = st.session_state[draft_key]
+        else:
+            st.session_state[key] = default
 
 def keyword_search_mask(df: pd.DataFrame, keyword: str) -> pd.Series:
     searchable_columns = [
@@ -1377,6 +1612,8 @@ def keyword_search_mask(df: pd.DataFrame, keyword: str) -> pd.Series:
         "inchi",
         "inchikey",
         "sample_code",
+        "source_category",
+        "source_organism",
         "source_material",
         "collection_location",
         "compound_class",
@@ -1518,7 +1755,9 @@ def export_structure_search_results(results: list[dict]) -> pd.DataFrame:
                 "Trivial Name": clean_text(item.get("trivial_name")),
                 "Molecular Formula": clean_text(item.get("molecular_formula")),
                 "Compound Class": clean_text(item.get("compound_class")),
-                "Source Material": clean_text(item.get("source_material")),
+                "Source Category": clean_text(item.get("source_category")),
+                "Source Organism": clean_text(item.get("source_organism")),
+                "Source Summary": clean_text(source_summary_from_record(item)),
                 "Match Type": clean_text(item.get("structure_match_type")),
                 "Score (%)": round(float(item.get("structure_score", 0.0)), 2),
                 "SMILES": clean_text(item.get("matched_smiles")),
@@ -1533,31 +1772,50 @@ def render_structure_search_results(results: list[dict], search_type: str, limit
         return
 
     section_header("Structure Search Results", f"Showing the top {min(limit, len(results))} candidate(s) for {search_type.lower()}.")
+    st.caption(f"Results: {len(results)}")
+
+    summary_rows = []
+    for i, item in enumerate(results, start=1):
+        summary_rows.append(
+            {
+                "Rank": i,
+                "Compound ID": item.get("id"),
+                "Trivial Name": clean_text(item.get("trivial_name")),
+                "Match Type": clean_text(item.get("structure_match_type")),
+                "Score (%)": round(float(item.get("structure_score", 0.0)), 2),
+            }
+        )
+    st.dataframe(pd.DataFrame(summary_rows[:limit]), width="stretch", hide_index=True)
 
     for i, item in enumerate(results[:limit], start=1):
         title = clean_text(item.get("trivial_name"))
         formula = clean_text(item.get("molecular_formula"))
         compound_class = clean_text(item.get("compound_class"))
-        source_material = clean_text(item.get("source_material"))
+        source_summary = clean_text(source_summary_from_record(item))
         score = float(item.get("structure_score", 0.0))
         subtitle = f"{item.get('structure_match_type', search_type)} match | Score: {score:.1f}%"
 
         with st.expander(f"#{i} · {title}", expanded=(i == 1)):
+            st.markdown('<div class="result-card">', unsafe_allow_html=True)
             st.markdown(
                 f"""
-                <div class="result-card">
-                    <div class="result-title">{title}</div>
-                    <div class="result-subtitle">{subtitle}</div>
-                    <div class="badge-row"><strong>Compound ID:</strong> {item.get('id')}</div>
-                    <div class="badge-row"><strong>Molecular Formula:</strong> {formula}</div>
-                    <div class="badge-row"><strong>Compound Class:</strong> {compound_class}</div>
-                    <div class="badge-row"><strong>Source Material:</strong> {source_material}</div>
-                    <div class="badge-row"><strong>SMILES:</strong> {clean_text(item.get('matched_smiles'))}</div>
-                </div>
+                <div class="result-title">{title}</div>
+                <div class="result-subtitle">{subtitle}</div>
                 """,
                 unsafe_allow_html=True,
             )
-            st.progress(min(max(score / 100.0, 0.0), 1.0))
+            preview_col, meta_col = st.columns([1, 1.3])
+            with preview_col:
+                render_structure_preview(item.get("matched_smiles"), caption=f"Query candidate #{i}")
+            with meta_col:
+                st.markdown('<div class="structure-result-meta">', unsafe_allow_html=True)
+                st.markdown(f'<div class="structure-result-stat"><strong>Compound ID:</strong> {item.get("id")}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="structure-result-stat"><strong>Molecular Formula:</strong> {formula}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="structure-result-stat"><strong>Compound Class:</strong> {compound_class}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="structure-result-stat"><strong>Source:</strong> {source_summary}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="structure-result-stat"><strong>SMILES:</strong> {clean_text(item.get("matched_smiles"))}</div>', unsafe_allow_html=True)
+                st.progress(min(max(score / 100.0, 0.0), 1.0))
+                st.markdown('</div>', unsafe_allow_html=True)
 
             action_left, action_right = st.columns([1, 1])
             with action_left:
@@ -1568,6 +1826,7 @@ def render_structure_search_results(results: list[dict], search_type: str, limit
                 if st.button(f"Update Metadata #{i}", key=f"edit_structure_result_{item.get('id')}_{i}"):
                     open_compound_editor(int(item["id"]))
                     st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
 
 def calculate_completeness_score(compound_row, proton_df, carbon_df, spectra_df):
     row = compound_row.iloc[0] if isinstance(compound_row, pd.DataFrame) else compound_row
@@ -1576,7 +1835,11 @@ def calculate_completeness_score(compound_row, proton_df, carbon_df, spectra_df)
         bool(maybe_blank(row.get("molecular_formula"))),
         bool(maybe_blank(row.get("smiles")) or maybe_blank(row.get("inchi")) or maybe_blank(row.get("inchikey"))),
         bool(maybe_blank(row.get("compound_class"))),
-        bool(maybe_blank(row.get("source_material"))),
+        bool(
+            maybe_blank(row.get("source_category"))
+            or maybe_blank(row.get("source_organism"))
+            or maybe_blank(row.get("source_material"))
+        ),
         bool(maybe_blank(row.get("data_source"))),
         bool(maybe_blank(row.get("hrms_data"))),
         bool(maybe_blank(row.get("doi")) or maybe_blank(row.get("journal_name"))),
@@ -1729,7 +1992,7 @@ def apply_dataframe_filters(
         result = result[result["compound_subclass"].fillna("").astype(str).str.strip() == subclass_filter]
 
     if source_filter != "All":
-        result = result[result["source_material"].fillna("").astype(str).str.strip() == source_filter]
+        result = result[result["source_category"].fillna("").astype(str).str.strip() == source_filter]
 
     if data_source_filter != "All":
         result = result[result["data_source"].fillna("").astype(str).str.strip() == data_source_filter]
@@ -1745,7 +2008,10 @@ def filter_similarity_results(results, class_filter="All", source_filter="All", 
         if class_filter != "All" and clean_text(item.get("compound_class")) != class_filter:
             ok = False
 
-        if source_filter != "All" and clean_text(item.get("source_material")) != source_filter:
+        item_source_category = normalize_source_category(item.get("source_category"))
+        if not item_source_category:
+            item_source_category = normalize_source_category(item.get("source_material"))
+        if source_filter != "All" and clean_text(item_source_category) != source_filter:
             ok = False
 
         if data_source_filter != "All" and clean_text(item.get("data_source")) != data_source_filter:
@@ -1758,6 +2024,90 @@ def filter_similarity_results(results, class_filter="All", source_filter="All", 
 
 def dataframe_to_csv_bytes(df: pd.DataFrame) -> bytes:
     return df.to_csv(index=False).encode("utf-8")
+
+
+def dataframe_to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Data") -> bytes:
+    output = io.BytesIO()
+    export_df = df.copy()
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        export_df.to_excel(writer, sheet_name=sheet_name, index=False)
+        worksheet = writer.book[sheet_name]
+
+        worksheet.freeze_panes = "A2"
+        worksheet.auto_filter.ref = worksheet.dimensions
+
+        for column_cells in worksheet.columns:
+            max_length = 0
+            column_letter = column_cells[0].column_letter
+            for cell in column_cells:
+                cell_value = "" if cell.value is None else str(cell.value)
+                max_length = max(max_length, len(cell_value))
+            worksheet.column_dimensions[column_letter].width = min(max(max_length + 2, 14), 42)
+
+        footer_row = worksheet.max_row + 2
+        footer_col_end = max(1, worksheet.max_column)
+        worksheet.cell(row=footer_row, column=1, value=OWNER_CREDIT)
+        if footer_col_end > 1:
+            worksheet.merge_cells(start_row=footer_row, start_column=1, end_row=footer_row, end_column=footer_col_end)
+
+        footer_cell = worksheet.cell(row=footer_row, column=1)
+        if Font is not None:
+            footer_cell.font = Font(italic=True, size=10, color="4F5B6B")
+        if Alignment is not None:
+            footer_cell.alignment = Alignment(horizontal="right")
+        if PatternFill is not None:
+            footer_cell.fill = PatternFill(fill_type="solid", fgColor="F5F8FD")
+
+        try:
+            worksheet.oddFooter.right.text = OWNER_CREDIT
+        except Exception:
+            pass
+
+    output.seek(0)
+    return output.getvalue()
+
+
+def download_dataframe_button(label: str, df: pd.DataFrame, file_name: str, key: str, sheet_name: str = "Data"):
+    st.download_button(
+        label=label,
+        data=dataframe_to_excel_bytes(df, sheet_name=sheet_name),
+        file_name=file_name,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key=key,
+    )
+
+
+def add_credit_to_text_bytes(payload: bytes) -> bytes:
+    text = payload.decode("utf-8")
+    text = text.rstrip() + f"\n\n{OWNER_CREDIT}\n"
+    return text.encode("utf-8")
+
+
+def render_app_credit_footer():
+    st.markdown(
+        f'<div class="app-credit-footer">{OWNER_CREDIT}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def render_structure_preview(smiles_text: str, caption: str | None = None):
+    if Chem is None or Draw is None:
+        st.info("Structure preview becomes available when RDKit drawing support is active.")
+        return
+    smiles_value = maybe_blank(smiles_text)
+    if not smiles_value:
+        st.info("No SMILES preview available for this record.")
+        return
+    try:
+        mol = Chem.MolFromSmiles(smiles_value)
+        if mol is None:
+            st.info("Stored structure could not be rendered from the available SMILES string.")
+            return
+        image = Draw.MolToImage(mol, size=(520, 360))
+        st.image(image, caption=caption, width="stretch")
+    except Exception:
+        st.info("Structure preview could not be rendered for this record.")
 
 def get_backup_bytes():
     with open(DB_PATH, "rb") as f:
@@ -1810,7 +2160,11 @@ def calculate_workspace_health(compounds_df: pd.DataFrame):
     submission_ready = compounds_df[
         compounds_df["trivial_name"].fillna("").astype(str).str.strip().ne("")
         & compounds_df["compound_class"].fillna("").astype(str).str.strip().ne("")
-        & compounds_df["source_material"].fillna("").astype(str).str.strip().ne("")
+        & (
+            compounds_df["source_category"].fillna("").astype(str).str.strip().ne("")
+            | compounds_df["source_organism"].fillna("").astype(str).str.strip().ne("")
+            | compounds_df["source_material"].fillna("").astype(str).str.strip().ne("")
+        )
     ]
 
     return {
@@ -2103,7 +2457,7 @@ def render_compound_card(row):
     formula = clean_text(row["molecular_formula"])
     compound_class = clean_text(row["compound_class"])
     subclass = clean_text(row["compound_subclass"])
-    source_material = clean_text(row["source_material"])
+    source_summary = clean_text(source_summary_from_record(row))
     sample_code = clean_text(row["sample_code"])
 
     st.markdown(
@@ -2114,7 +2468,7 @@ def render_compound_card(row):
             <div class="info-chip-row">
                 <span class="info-chip">Class: {compound_class}</span>
                 <span class="info-chip">Subclass: {subclass}</span>
-                <span class="info-chip">Source: {source_material}</span>
+                <span class="info-chip">Source: {source_summary}</span>
                 <span class="info-chip">Sample: {sample_code}</span>
             </div>
         </div>
@@ -2163,8 +2517,9 @@ def load_all_compounds():
         SELECT id, trivial_name, iupac_name, molecular_formula,
                smiles, inchi, inchikey,
                compound_class, compound_subclass,
-               source_material, sample_code, collection_location,
-               gps_coordinates, depth_m, uv_data, ftir_data,
+               source_category, source_organism, source_material,
+               sample_code, collection_location,
+               gps_coordinates, depth_m, uv_data, ftir_data, cd_data,
                optical_rotation, melting_point, crystallization_method,
                structure_image_path, journal_name, article_title, publication_year,
                volume, issue, pages, doi, ccdc_number,
@@ -2174,7 +2529,7 @@ def load_all_compounds():
     """
     df = pd.read_sql_query(query, conn)
     conn.close()
-    return df
+    return enrich_compounds_dataframe(df)
 
 def load_compound_row(compound_id):
     conn = get_connection()
@@ -2182,8 +2537,9 @@ def load_compound_row(compound_id):
         SELECT id, trivial_name, iupac_name, molecular_formula,
                smiles, inchi, inchikey,
                compound_class, compound_subclass,
-               source_material, sample_code, collection_location,
-               gps_coordinates, depth_m, uv_data, ftir_data,
+               source_category, source_organism, source_material,
+               sample_code, collection_location,
+               gps_coordinates, depth_m, uv_data, ftir_data, cd_data,
                optical_rotation, melting_point, crystallization_method,
                structure_image_path, journal_name, article_title, publication_year,
                volume, issue, pages, doi, ccdc_number,
@@ -2193,7 +2549,7 @@ def load_compound_row(compound_id):
     """
     df = pd.read_sql_query(query, conn, params=(compound_id,))
     conn.close()
-    return df
+    return enrich_compounds_dataframe(df)
 
 def load_proton_data(compound_id):
     conn = get_connection()
@@ -2321,6 +2677,8 @@ def insert_compound_record(
     smiles,
     inchi,
     inchikey,
+    source_category,
+    source_organism,
     source_material,
     sample_code,
     collection_location,
@@ -2328,6 +2686,7 @@ def insert_compound_record(
     depth_m,
     uv_data,
     ftir_data,
+    cd_data,
     optical_rotation,
     melting_point,
     crystallization_method,
@@ -2358,6 +2717,8 @@ def insert_compound_record(
             smiles,
             inchi,
             inchikey,
+            source_category,
+            source_organism,
             source_material,
             sample_code,
             collection_location,
@@ -2365,6 +2726,7 @@ def insert_compound_record(
             depth_m,
             uv_data,
             ftir_data,
+            cd_data,
             optical_rotation,
             melting_point,
             crystallization_method,
@@ -2381,7 +2743,7 @@ def insert_compound_record(
             hrms_data,
             data_source,
             note
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         trivial_name,
         iupac_name,
@@ -2391,6 +2753,8 @@ def insert_compound_record(
         smiles,
         inchi,
         inchikey,
+        source_category,
+        source_organism,
         source_material,
         sample_code,
         collection_location,
@@ -2398,6 +2762,7 @@ def insert_compound_record(
         depth_m,
         uv_data,
         ftir_data,
+        cd_data,
         optical_rotation,
         melting_point,
         crystallization_method,
@@ -2431,6 +2796,8 @@ def update_compound_record(
     smiles,
     inchi,
     inchikey,
+    source_category,
+    source_organism,
     source_material,
     sample_code,
     collection_location,
@@ -2438,6 +2805,7 @@ def update_compound_record(
     depth_m,
     uv_data,
     ftir_data,
+    cd_data,
     optical_rotation,
     melting_point,
     crystallization_method,
@@ -2468,6 +2836,8 @@ def update_compound_record(
             smiles = ?,
             inchi = ?,
             inchikey = ?,
+            source_category = ?,
+            source_organism = ?,
             source_material = ?,
             sample_code = ?,
             collection_location = ?,
@@ -2475,6 +2845,7 @@ def update_compound_record(
             depth_m = ?,
             uv_data = ?,
             ftir_data = ?,
+            cd_data = ?,
             optical_rotation = ?,
             melting_point = ?,
             crystallization_method = ?,
@@ -2502,6 +2873,8 @@ def update_compound_record(
         smiles,
         inchi,
         inchikey,
+        source_category,
+        source_organism,
         source_material,
         sample_code,
         collection_location,
@@ -2509,6 +2882,7 @@ def update_compound_record(
         depth_m,
         uv_data,
         ftir_data,
+        cd_data,
         optical_rotation,
         melting_point,
         crystallization_method,
@@ -2861,6 +3235,8 @@ def build_batch_import_template_map() -> dict[str, pd.DataFrame]:
     for column in COMPOUND_IMPORT_COLUMNS:
         compound_row[column] = maybe_blank(compound_example.get(column))
     compound_row["trivial_name"] = "TEMPLATE_Replace_With_Compound_Name"
+    compound_row["source_category"] = compound_row["source_category"] or "Sponge"
+    compound_row["source_organism"] = compound_row["source_organism"] or "Stylissa sp."
     compound_row["sample_code"] = compound_row["sample_code"] or "NP-001"
     compound_row["data_source"] = compound_row["data_source"] or "Experimental"
     compound_row["note"] = "Delete or replace this template row before import."
@@ -2947,6 +3323,12 @@ def import_compounds_from_dataframe(df: pd.DataFrame):
             errors.append(f"Row {display_row}: molecular_weight must be a valid number.")
             continue
 
+        source_category, source_organism, source_material = infer_source_fields(
+            row.get("source_category"),
+            row.get("source_organism"),
+            row.get("source_material"),
+        )
+
         insert_compound_record(
             trivial_name=trivial_name,
             iupac_name=maybe_blank(row.get("iupac_name")),
@@ -2956,13 +3338,16 @@ def import_compounds_from_dataframe(df: pd.DataFrame):
             smiles=maybe_blank(row.get("smiles")),
             inchi=maybe_blank(row.get("inchi")),
             inchikey=maybe_blank(row.get("inchikey")),
-            source_material=maybe_blank(row.get("source_material")),
+            source_category=source_category,
+            source_organism=source_organism,
+            source_material=source_material,
             sample_code=maybe_blank(row.get("sample_code")),
             collection_location=maybe_blank(row.get("collection_location")),
             gps_coordinates=maybe_blank(row.get("gps_coordinates")),
             depth_m=depth_value,
             uv_data=maybe_blank(row.get("uv_data")),
             ftir_data=maybe_blank(row.get("ftir_data")),
+            cd_data=maybe_blank(row.get("cd_data")),
             optical_rotation=maybe_blank(row.get("optical_rotation")),
             melting_point=maybe_blank(row.get("melting_point")),
             crystallization_method=maybe_blank(row.get("crystallization_method")),
@@ -3202,7 +3587,8 @@ def load_search_index(_db_signature: float):
     try:
         compounds_df = pd.read_sql_query(
             """
-            SELECT id, trivial_name, sample_code, molecular_formula, smiles, inchi, inchikey, source_material,
+            SELECT id, trivial_name, sample_code, molecular_formula, smiles, inchi, inchikey,
+                   source_category, source_organism, source_material,
                    compound_class, compound_subclass, data_source
             FROM compounds
             ORDER BY id ASC
@@ -3228,6 +3614,8 @@ def load_search_index(_db_signature: float):
     finally:
         conn.close()
 
+    compounds_df = enrich_compounds_dataframe(compounds_df)
+
     proton_groups = {}
     carbon_groups = {}
 
@@ -3245,6 +3633,8 @@ def load_search_index(_db_signature: float):
                 "trivial_name": row["trivial_name"],
                 "sample_code": row["sample_code"],
                 "molecular_formula": row["molecular_formula"],
+                "source_category": row.get("source_category"),
+                "source_organism": row.get("source_organism"),
                 "source_material": row["source_material"],
                 "compound_class": row["compound_class"],
                 "compound_subclass": row["compound_subclass"],
@@ -3408,20 +3798,26 @@ def search_similarity_combined(query_protons, proton_tol, query_carbons, carbon_
 # Export helpers
 # =========================
 def export_name_results(result_df: pd.DataFrame) -> pd.DataFrame:
-    return result_df.rename(columns={
+    export_df = result_df.copy()
+    if "source_material" in export_df.columns:
+        export_df["source_material"] = export_df.apply(source_summary_from_record, axis=1)
+    return export_df.rename(columns={
         "id": "ID",
         "trivial_name": "Trivial Name",
         "iupac_name": "IUPAC Name",
         "molecular_formula": "Molecular Formula",
         "compound_class": "Compound Class",
         "compound_subclass": "Compound Subclass",
-        "source_material": "Source Material",
+        "source_category": "Source Category",
+        "source_organism": "Source Organism",
+        "source_material": "Source Summary",
         "sample_code": "Sample Code",
         "collection_location": "Collection Location",
         "gps_coordinates": "GPS Coordinates",
         "depth_m": "Depth (m)",
         "uv_data": "UV Data",
         "ftir_data": "FTIR Data",
+        "cd_data": "CD / ECD Data",
         "optical_rotation": "Optical Rotation",
         "melting_point": "Melting Point",
         "crystallization_method": "Crystallization Method",
@@ -3450,7 +3846,9 @@ def export_similarity_results_13c(results: list) -> pd.DataFrame:
             "Molecular Formula": clean_text(item["molecular_formula"]),
             "Compound Class": clean_text(item["compound_class"]),
             "Compound Subclass": clean_text(item["compound_subclass"]),
-            "Source Material": clean_text(item["source_material"]),
+            "Source Category": clean_text(item.get("source_category")),
+            "Source Organism": clean_text(item.get("source_organism")),
+            "Source Summary": clean_text(source_summary_from_record(item)),
             "Sample Code": clean_text(item["sample_code"]),
             "Matched Peaks": item["match_count"],
             "Query Peaks": item["total_query"],
@@ -3472,7 +3870,9 @@ def export_similarity_results_1h(results: list) -> pd.DataFrame:
             "Molecular Formula": clean_text(item["molecular_formula"]),
             "Compound Class": clean_text(item["compound_class"]),
             "Compound Subclass": clean_text(item["compound_subclass"]),
-            "Source Material": clean_text(item["source_material"]),
+            "Source Category": clean_text(item.get("source_category")),
+            "Source Organism": clean_text(item.get("source_organism")),
+            "Source Summary": clean_text(source_summary_from_record(item)),
             "Sample Code": clean_text(item["sample_code"]),
             "Matched Peaks": item["match_count"],
             "Query Peaks": item["total_query"],
@@ -3494,7 +3894,9 @@ def export_similarity_results_combined(results: list) -> pd.DataFrame:
             "Molecular Formula": clean_text(item["molecular_formula"]),
             "Compound Class": clean_text(item["compound_class"]),
             "Compound Subclass": clean_text(item["compound_subclass"]),
-            "Source Material": clean_text(item["source_material"]),
+            "Source Category": clean_text(item.get("source_category")),
+            "Source Organism": clean_text(item.get("source_organism")),
+            "Source Summary": clean_text(source_summary_from_record(item)),
             "Sample Code": clean_text(item["sample_code"]),
             "1H Matched Peaks": item["proton_match_count"],
             "1H Query Peaks": item["proton_total_query"],
@@ -3525,7 +3927,9 @@ InChIKey: {clean_text(row.get('inchikey'))}
 Compound Class: {clean_text(row['compound_class'])}
 Compound Subclass: {clean_text(row['compound_subclass'])}
 
-Source Material: {clean_text(row['source_material'])}
+Source Category: {clean_text(row.get('source_category'))}
+Source Organism: {clean_text(row.get('source_organism'))}
+Source Summary: {clean_text(source_summary_from_record(row))}
 Sample Code: {clean_text(row['sample_code'])}
 Collection Location: {clean_text(row['collection_location'])}
 GPS Coordinates: {clean_text(row['gps_coordinates'])}
@@ -3533,6 +3937,7 @@ Depth (m): {clean_text(row['depth_m'])}
 
 UV Data: {clean_text(row['uv_data'])}
 FTIR Data: {clean_text(row['ftir_data'])}
+CD / ECD Data: {clean_text(row.get('cd_data'))}
 Optical Rotation: {clean_text(row['optical_rotation'])}
 Melting Point: {clean_text(row['melting_point'])}
 Crystallization Method: {clean_text(row['crystallization_method'])}
@@ -3558,7 +3963,7 @@ Data Coverage
 13C NMR Peaks: {len(carbon_df)}
 Spectra Files: {len(spectra_df)}
 """
-    return summary.encode("utf-8")
+    return add_credit_to_text_bytes(summary.encode("utf-8"))
 
 # =========================
 # Spectra preview
@@ -3702,111 +4107,134 @@ def show_compound_detail(compound_id):
     render_metric_card("13C NMR Peaks", len(carbon_df_raw), m2)
     render_metric_card("Spectra Files", len(spectra_df_raw), m3)
     render_metric_card("Completeness", f"{completeness_score}%", m4)
+    st.markdown(
+        f"""
+        <div class="record-badge-strip">
+            <span class="record-badge">Class: {clean_text(row_data['compound_class'])}</span>
+            <span class="record-badge">Source: {clean_text(source_summary_from_record(row_data))}</span>
+            <span class="record-badge">Data Source: {clean_text(row_data['data_source'])}</span>
+            <span class="record-badge">Completeness: {completeness_score}%</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    top_left, top_right = st.columns([1.7, 1])
+    overview_tab, proton_tab, carbon_tab, spectra_tab = st.tabs(
+        ["Overview", "1H NMR", "13C NMR", "Spectra & Files"]
+    )
 
-    with top_left:
-        section_header("Core Information")
-        c1, c2 = st.columns(2)
+    with overview_tab:
+        top_left, top_right = st.columns([1.7, 1])
 
-        with c1:
-            render_kv("IUPAC Name", row_data["iupac_name"])
-            render_kv("Molecular Formula", row_data["molecular_formula"])
-            render_kv("Mr", row_data["molecular_weight"])
-            render_kv("SMILES", row_data.get("smiles"))
-            render_kv("InChI", row_data.get("inchi"))
-            render_kv("InChIKey", row_data.get("inchikey"))
-            render_kv("Compound Class", row_data["compound_class"])
-            render_kv("Compound Subclass", row_data["compound_subclass"])
-            render_kv("Source Material", row_data["source_material"])
-            render_kv("Sample Code", row_data["sample_code"])
+        with top_left:
+            section_header("Core Information")
+            c1, c2 = st.columns(2)
 
-        with c2:
-            render_kv("Collection Location", row_data["collection_location"])
-            render_kv("GPS Coordinates", row_data["gps_coordinates"])
-            render_kv("Depth (m)", row_data["depth_m"])
-            render_kv("Data Source", row_data["data_source"])
-            render_kv("Journal Name", row_data["journal_name"])
-            render_kv("Article Title", row_data["article_title"])
-            render_kv("DOI", row_data["doi"])
-            render_kv("CCDC", row_data["ccdc_number"])
+            with c1:
+                render_kv("IUPAC Name", row_data["iupac_name"])
+                render_kv("Molecular Formula", row_data["molecular_formula"])
+                render_kv("Mr", row_data["molecular_weight"])
+                render_kv("SMILES", row_data.get("smiles"))
+                render_kv("InChI", row_data.get("inchi"))
+                render_kv("InChIKey", row_data.get("inchikey"))
+                render_kv("Compound Class", row_data["compound_class"])
+                render_kv("Compound Subclass", row_data["compound_subclass"])
+                render_kv("Source Category", row_data.get("source_category"))
+                render_kv("Source Organism", row_data.get("source_organism"))
+                render_kv("Source Summary", source_summary_from_record(row_data))
+                render_kv("Sample Code", row_data["sample_code"])
 
-        section_header("Physical and Spectral Summary")
-        p1, p2 = st.columns(2)
-        with p1:
-            render_kv("UV Data", row_data["uv_data"])
-            render_kv("FTIR Data", row_data["ftir_data"])
-            render_kv("Optical Rotation", row_data["optical_rotation"])
-            render_kv("HRMS", row_data["hrms_data"])
-        with p2:
-            render_kv("Melting Point", row_data["melting_point"])
-            render_kv("Crystallization Method", row_data["crystallization_method"])
-            render_kv(
-                "Publication Year / Volume / Issue / Pages",
-                f"{clean_text(row_data['publication_year'])} / {clean_text(row_data['volume'])} / {clean_text(row_data['issue'])} / {clean_text(row_data['pages'])}"
-            )
+            with c2:
+                render_kv("Collection Location", row_data["collection_location"])
+                render_kv("GPS Coordinates", row_data["gps_coordinates"])
+                render_kv("Depth (m)", row_data["depth_m"])
+                render_kv("Data Source", row_data["data_source"])
+                render_kv("Journal Name", row_data["journal_name"])
+                render_kv("Article Title", row_data["article_title"])
+                render_kv("DOI", row_data["doi"])
+                render_kv("CCDC", row_data["ccdc_number"])
 
-        section_header("Notes")
-        st.markdown('<div class="panel-card">', unsafe_allow_html=True)
-        st.write(clean_text(row_data["note"]))
-        st.markdown('</div>', unsafe_allow_html=True)
+            section_header("Physical and Spectral Summary")
+            p1, p2 = st.columns(2)
+            with p1:
+                render_kv("UV Data", row_data["uv_data"])
+                render_kv("FTIR Data", row_data["ftir_data"])
+                render_kv("CD / ECD Data", row_data.get("cd_data"))
+                render_kv("Optical Rotation", row_data["optical_rotation"])
+                render_kv("HRMS", row_data["hrms_data"])
+            with p2:
+                render_kv("Melting Point", row_data["melting_point"])
+                render_kv("Crystallization Method", row_data["crystallization_method"])
+                render_kv(
+                    "Publication Year / Volume / Issue / Pages",
+                    f"{clean_text(row_data['publication_year'])} / {clean_text(row_data['volume'])} / {clean_text(row_data['issue'])} / {clean_text(row_data['pages'])}"
+                )
 
-    with top_right:
-        section_header("Structure")
-        st.markdown('<div class="structure-card">', unsafe_allow_html=True)
-        structure_path = row_data["structure_image_path"]
-        if pd.notna(structure_path) and str(structure_path).strip():
-            full_path = get_full_file_path(structure_path)
-            if full_path and full_path.exists():
-                st.image(str(full_path), width="stretch")
-                st.caption(full_path.name)
+            section_header("Notes")
+            st.markdown('<div class="panel-card">', unsafe_allow_html=True)
+            st.write(clean_text(row_data["note"]))
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        with top_right:
+            section_header("Structure")
+            st.markdown('<div class="structure-card">', unsafe_allow_html=True)
+            structure_path = row_data["structure_image_path"]
+            if pd.notna(structure_path) and str(structure_path).strip():
+                full_path = get_full_file_path(structure_path)
+                if full_path and full_path.exists():
+                    st.image(str(full_path), width="stretch")
+                    st.caption(full_path.name)
+                else:
+                    st.warning("Structure image file not found.")
+                    if full_path:
+                        st.code(str(full_path))
             else:
-                st.warning("Structure image file not found.")
-                if full_path:
-                    st.code(str(full_path))
+                render_structure_preview(row_data.get("smiles"), caption="Rendered from SMILES")
+            st.markdown("---")
+            st.write(f"**SMILES:** {clean_text(row_data.get('smiles'))}")
+            st.write(f"**InChI:** {clean_text(row_data.get('inchi'))}")
+            st.write(f"**InChIKey:** {clean_text(row_data.get('inchikey'))}")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    with proton_tab:
+        section_header("1H NMR Table")
+        if proton_df_raw.empty:
+            st.info("No 1H NMR data available.")
         else:
-            st.info("No structure image path available.")
-        st.markdown("---")
-        st.write(f"**SMILES:** {clean_text(row_data.get('smiles'))}")
-        st.write(f"**InChI:** {clean_text(row_data.get('inchi'))}")
-        st.write(f"**InChIKey:** {clean_text(row_data.get('inchikey'))}")
-        st.markdown('</div>', unsafe_allow_html=True)
+            proton_df = proton_df_raw.rename(columns={
+                "id": "ID",
+                "delta_ppm": "δH (ppm)",
+                "multiplicity": "Multiplicity",
+                "j_value": "J Value",
+                "proton_count": "Proton Count",
+                "assignment": "Assignment",
+                "solvent": "Solvent",
+                "instrument_mhz": "Instrument (MHz)",
+                "note": "Note"
+            })
+            st.dataframe(proton_df, width="stretch", hide_index=True)
 
-    section_header("1H NMR Table")
-    if proton_df_raw.empty:
-        st.info("No 1H NMR data available.")
-    else:
-        proton_df = proton_df_raw.rename(columns={
-            "id": "ID",
-            "delta_ppm": "δH (ppm)",
-            "multiplicity": "Multiplicity",
-            "j_value": "J Value",
-            "proton_count": "Proton Count",
-            "assignment": "Assignment",
-            "solvent": "Solvent",
-            "instrument_mhz": "Instrument (MHz)",
-            "note": "Note"
-        })
-        st.dataframe(proton_df, width="stretch", hide_index=True)
+    with carbon_tab:
+        section_header("13C NMR Table")
+        if carbon_df_raw.empty:
+            st.info("No 13C NMR data available.")
+        else:
+            carbon_df = carbon_df_raw.rename(columns={
+                "id": "ID",
+                "delta_ppm": "δC (ppm)",
+                "carbon_type": "Carbon Type",
+                "assignment": "Assignment",
+                "solvent": "Solvent",
+                "instrument_mhz": "Instrument (MHz)",
+                "note": "Note"
+            })
+            st.dataframe(carbon_df, width="stretch", hide_index=True)
 
-    section_header("13C NMR Table")
-    if carbon_df_raw.empty:
-        st.info("No 13C NMR data available.")
-    else:
-        carbon_df = carbon_df_raw.rename(columns={
-            "id": "ID",
-            "delta_ppm": "δC (ppm)",
-            "carbon_type": "Carbon Type",
-            "assignment": "Assignment",
-            "solvent": "Solvent",
-            "instrument_mhz": "Instrument (MHz)",
-            "note": "Note"
-        })
-        st.dataframe(carbon_df, width="stretch", hide_index=True)
-
-    render_spectra_section(compound_id)
+    with spectra_tab:
+        render_spectra_section(compound_id)
 
 def render_best_match_summary(item, mode_label):
+    source_summary = clean_text(source_summary_from_record(item))
     st.markdown("### Best Match Summary")
     st.markdown(
         f"""
@@ -3817,7 +4245,7 @@ def render_best_match_summary(item, mode_label):
             <div class="badge-row"><strong>Molecular Formula:</strong> {clean_text(item.get('molecular_formula'))}</div>
             <div class="badge-row"><strong>Compound Class:</strong> {clean_text(item.get('compound_class'))}</div>
             <div class="badge-row"><strong>Compound Subclass:</strong> {clean_text(item.get('compound_subclass'))}</div>
-            <div class="badge-row"><strong>Source Material:</strong> {clean_text(item.get('source_material'))}</div>
+            <div class="badge-row"><strong>Source:</strong> {source_summary}</div>
             <div class="badge-row"><strong>Sample Code:</strong> {clean_text(item.get('sample_code'))}</div>
             <div class="badge-row"><strong>Data Source:</strong> {clean_text(item.get('data_source'))}</div>
         </div>
@@ -3849,7 +4277,7 @@ def render_candidate_cards(results, mode="13C", limit=10):
         formula = clean_text(item.get("molecular_formula"))
         compound_class = clean_text(item.get("compound_class"))
         subclass = clean_text(item.get("compound_subclass"))
-        source_material = clean_text(item.get("source_material"))
+        source_summary = clean_text(source_summary_from_record(item))
         sample_code = clean_text(item.get("sample_code"))
         data_source = clean_text(item.get("data_source"))
 
@@ -3883,7 +4311,7 @@ def render_candidate_cards(results, mode="13C", limit=10):
                     <div class="badge-row"><strong>Molecular Formula:</strong> {formula}</div>
                     <div class="badge-row"><strong>Compound Class:</strong> {compound_class}</div>
                     <div class="badge-row"><strong>Compound Subclass:</strong> {subclass}</div>
-                    <div class="badge-row"><strong>Source Material:</strong> {source_material}</div>
+                    <div class="badge-row"><strong>Source:</strong> {source_summary}</div>
                     <div class="badge-row"><strong>Sample Code:</strong> {sample_code}</div>
                     <div class="badge-row"><strong>Data Source:</strong> {data_source}</div>
                 </div>
@@ -3965,8 +4393,8 @@ def show_search_page(all_compounds_df):
             key="search_class_filter"
         )
         search_source_filter = st.selectbox(
-            "Source Material",
-            build_filter_options(all_compounds_df, "source_material"),
+            "Source Category",
+            build_filter_options(all_compounds_df, "source_category"),
             key="search_source_filter"
         )
         search_data_source_filter = st.selectbox(
@@ -4005,20 +4433,34 @@ def show_search_page(all_compounds_df):
             key="structure_search_type",
         )
 
+        query_smiles = maybe_blank(st.session_state.get("structure_query_smiles"))
+        editor_is_active = False
+
         st.markdown('<div class="panel-card">', unsafe_allow_html=True)
         st.markdown("**Structure Editor**")
         if streamlit_ketchersa is not None:
-            drawn_structure = streamlit_ketchersa()
-            drawn_structure_text = maybe_blank(drawn_structure)
-            if drawn_structure_text and drawn_structure_text != maybe_blank(st.session_state.get("structure_query_smiles")):
+            drawn_structure = streamlit_ketchersa(height="700px", key="structure_search_editor_full")
+            drawn_structure_text = "" if drawn_structure in {None, 0, "0"} else maybe_blank(drawn_structure)
+            previous_query_smiles = maybe_blank(st.session_state.get("structure_query_smiles"))
+            if drawn_structure_text != previous_query_smiles:
                 st.session_state["structure_query_smiles"] = drawn_structure_text
-            st.caption("Full Ketcher editor is active. Draw the structure directly, then run identity, substructure, or similarity search.")
+            query_smiles = drawn_structure_text
+            editor_is_active = True
+            st.caption("Full Ketcher editor is active. Draw the structure directly in the web app, then choose identity, substructure, or similarity mode.")
         elif st_ketcher is not None:
-            drawn_smiles = st_ketcher(maybe_blank(st.session_state.get("structure_seed_smiles")))
+            drawn_smiles = st_ketcher(
+                value=maybe_blank(st.session_state.get("structure_query_smiles")),
+                height=650,
+                molecule_format="SMILES",
+                key="structure_search_editor_fallback",
+            )
             drawn_smiles_text = maybe_blank(drawn_smiles)
-            if drawn_smiles_text and drawn_smiles_text != maybe_blank(st.session_state.get("structure_query_smiles")):
+            previous_query_smiles = maybe_blank(st.session_state.get("structure_query_smiles"))
+            if drawn_smiles_text != previous_query_smiles:
                 st.session_state["structure_query_smiles"] = drawn_smiles_text
-            st.caption("Simplified editor is active. For the full nmrshiftdb-style toolbar, deploy with `streamlit-ketchersa` available.")
+            query_smiles = drawn_smiles_text
+            editor_is_active = True
+            st.caption("A simplified drawing editor is active. For the full nmrshiftdb-style toolbar, keep `streamlit-ketchersa` available during deployment.")
         else:
             st.warning("The full Ketcher editor is not active in this deployment yet.")
             st.caption(f"Editor status: {KETCHER_STATUS}")
@@ -4031,13 +4473,6 @@ def show_search_page(all_compounds_df):
                 4. If install still fails, we should switch to an iframe-based Ketcher embed.
                 """
             )
-            st.caption("You can still use structure search right now by pasting a valid SMILES string below.")
-        st.markdown('</div>', unsafe_allow_html=True)
-
-        query_left, query_right = st.columns([1.35, 1])
-
-        with query_left:
-            st.markdown('<div class="panel-card">', unsafe_allow_html=True)
             query_smiles = st.text_area(
                 "Query Structure (SMILES)",
                 key="structure_query_smiles",
@@ -4049,9 +4484,25 @@ def show_search_page(all_compounds_df):
                 key="structure_seed_smiles",
                 placeholder="Paste a known scaffold here if you want to seed the editor in a future run.",
             )
+            st.caption("You can still use structure search right now by pasting a valid SMILES string below.")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        control_left, control_right = st.columns([1.35, 1])
+
+        with control_left:
+            st.markdown('<div class="panel-card">', unsafe_allow_html=True)
+            if editor_is_active:
+                st.caption("The structure drawn in the editor will be used directly for searching.")
+                if query_smiles:
+                    with st.expander("Technical preview of the drawn structure (SMILES)", expanded=False):
+                        st.code(query_smiles)
+                else:
+                    st.caption("Draw a structure in the editor area above to prepare the query.")
+            else:
+                st.caption("Paste a valid SMILES string here until the drawing editor is active in deployment.")
             st.markdown('</div>', unsafe_allow_html=True)
 
-        with query_right:
+        with control_right:
             st.markdown('<div class="panel-card">', unsafe_allow_html=True)
             if structure_search_type == "Similarity Search":
                 st.caption(f"Minimum similarity score: {min_similarity_score}%")
@@ -4084,12 +4535,12 @@ def show_search_page(all_compounds_df):
         elif structure_results:
             st.write(f"Found {len(structure_results)} compound(s) for the current structure query.")
             export_df = export_structure_search_results(structure_results)
-            st.download_button(
-                label="Download Structure Search Results as CSV",
-                data=dataframe_to_csv_bytes(export_df),
-                file_name="search_by_structure_results.csv",
-                mime="text/csv",
-                key="download_structure_search_csv"
+            download_dataframe_button(
+                label="Download Structure Search Results as Excel",
+                df=export_df,
+                file_name="search_by_structure_results.xlsx",
+                key="download_structure_search_xlsx",
+                sheet_name="Structure Search",
             )
             render_structure_search_results(structure_results, structure_mode_label, limit=candidate_limit)
         else:
@@ -4109,7 +4560,7 @@ def show_search_page(all_compounds_df):
         with st.form("search_by_name_form"):
             st.markdown('<div class="panel-card">', unsafe_allow_html=True)
             keyword = st.text_input(
-                "Enter compound name, keyword, sample code, source material, journal, or DOI",
+                "Enter compound name, keyword, sample code, source category/organism, journal, or DOI",
                 key="search_name_keyword",
             )
             run_name_search = st.form_submit_button("Run Keyword Search", use_container_width=True)
@@ -4121,12 +4572,12 @@ def show_search_page(all_compounds_df):
 
             if not result.empty:
                 export_df = export_name_results(result)
-                st.download_button(
-                    label="Download Search Results as CSV",
-                    data=dataframe_to_csv_bytes(export_df),
-                    file_name="search_by_name_results.csv",
-                    mime="text/csv",
-                    key="download_name_csv"
+                download_dataframe_button(
+                    label="Download Search Results as Excel",
+                    df=export_df,
+                    file_name="search_by_name_results.xlsx",
+                    key="download_name_xlsx",
+                    sheet_name="Keyword Search",
                 )
                 st.dataframe(export_df, width="stretch", hide_index=True)
 
@@ -4189,12 +4640,12 @@ def show_search_page(all_compounds_df):
 
                 if filtered_results:
                     export_df = export_similarity_results_13c(filtered_results)
-                    st.download_button(
-                        label="Download 13C Similarity Results as CSV",
-                        data=dataframe_to_csv_bytes(export_df),
-                        file_name="search_by_13c_results.csv",
-                        mime="text/csv",
-                        key="download_13c_csv"
+                    download_dataframe_button(
+                        label="Download 13C Similarity Results as Excel",
+                        df=export_df,
+                        file_name="search_by_13c_results.xlsx",
+                        key="download_13c_xlsx",
+                        sheet_name="13C Match",
                     )
 
                 render_candidate_cards(filtered_results, mode="13C", limit=candidate_limit)
@@ -4237,12 +4688,12 @@ def show_search_page(all_compounds_df):
 
                 if filtered_results:
                     export_df = export_similarity_results_1h(filtered_results)
-                    st.download_button(
-                        label="Download 1H Similarity Results as CSV",
-                        data=dataframe_to_csv_bytes(export_df),
-                        file_name="search_by_1h_results.csv",
-                        mime="text/csv",
-                        key="download_1h_csv"
+                    download_dataframe_button(
+                        label="Download 1H Similarity Results as Excel",
+                        df=export_df,
+                        file_name="search_by_1h_results.xlsx",
+                        key="download_1h_xlsx",
+                        sheet_name="1H Match",
                     )
 
                 render_candidate_cards(filtered_results, mode="1H", limit=candidate_limit)
@@ -4289,12 +4740,12 @@ def show_search_page(all_compounds_df):
 
                 if filtered_results:
                     export_df = export_similarity_results_combined(filtered_results)
-                    st.download_button(
-                        label="Download Combined Similarity Results as CSV",
-                        data=dataframe_to_csv_bytes(export_df),
-                        file_name="search_combined_results.csv",
-                        mime="text/csv",
-                        key="download_combined_csv"
+                    download_dataframe_button(
+                        label="Download Combined Similarity Results as Excel",
+                        df=export_df,
+                        file_name="search_combined_results.xlsx",
+                        key="download_combined_xlsx",
+                        sheet_name="Combined Match",
                     )
 
                 render_candidate_cards(filtered_results, mode="combined", limit=candidate_limit)
@@ -4318,8 +4769,8 @@ def show_overview_page(all_compounds_df):
             key="dashboard_subclass"
         )
         dashboard_source_filter = st.selectbox(
-            "Source Material",
-            build_filter_options(all_compounds_df, "source_material"),
+            "Source Category",
+            build_filter_options(all_compounds_df, "source_category"),
             key="dashboard_source"
         )
         dashboard_data_source_filter = st.selectbox(
@@ -4352,7 +4803,9 @@ def show_overview_page(all_compounds_df):
         & filtered_df["journal_name"].fillna("").astype(str).str.strip().eq("")
     ]
     missing_source_df = filtered_df[
-        filtered_df["source_material"].fillna("").astype(str).str.strip().eq("")
+        filtered_df["source_category"].fillna("").astype(str).str.strip().eq("")
+        & filtered_df["source_organism"].fillna("").astype(str).str.strip().eq("")
+        & filtered_df["source_material"].fillna("").astype(str).str.strip().eq("")
     ]
     missing_spectra_df = filtered_df[~filtered_df["id"].isin(linked_spectra_ids)]
 
@@ -4372,7 +4825,7 @@ def show_overview_page(all_compounds_df):
     g1, g2, g3, g4 = st.columns(4)
     render_clean_stat("Missing Structure IDs", len(missing_structure_df), g1)
     render_clean_stat("Missing Reference Info", len(missing_reference_df), g2)
-    render_clean_stat("Missing Source Material", len(missing_source_df), g3)
+    render_clean_stat("Missing Source Info", len(missing_source_df), g3)
     render_clean_stat("Without Spectra Links", len(missing_spectra_df), g4)
 
     priority_df = filtered_df.copy()
@@ -4386,7 +4839,12 @@ def show_overview_page(all_compounds_df):
             priority_df["doi"].fillna("").astype(str).str.strip().eq("")
             & priority_df["journal_name"].fillna("").astype(str).str.strip().eq("")
         )
-        priority_df["missing_source"] = priority_df["source_material"].fillna("").astype(str).str.strip().eq("")
+        priority_df["missing_source"] = (
+            priority_df["source_category"].fillna("").astype(str).str.strip().eq("")
+            & priority_df["source_organism"].fillna("").astype(str).str.strip().eq("")
+            & priority_df["source_material"].fillna("").astype(str).str.strip().eq("")
+        )
+        priority_df["source_material"] = priority_df.apply(source_summary_from_record, axis=1)
         priority_df["missing_spectra"] = ~priority_df["id"].isin(linked_spectra_ids)
         priority_df["curation_priority"] = (
             priority_df["missing_structure"].astype(int)
@@ -4432,7 +4890,7 @@ def show_overview_page(all_compounds_df):
                         "id": "ID",
                         "trivial_name": "Trivial Name",
                         "compound_class": "Compound Class",
-                        "source_material": "Source Material",
+                        "source_material": "Source Summary",
                         "curation_priority": "Priority Score",
                     }
                 ),
@@ -4446,7 +4904,7 @@ def show_overview_page(all_compounds_df):
             )
 
     st.markdown('<div class="dashboard-section"></div>', unsafe_allow_html=True)
-    section_header("Distribution Overview", "These charts help you see how the current filtered dataset is distributed across class and source.")
+    section_header("Distribution Overview", "These charts help you see how the current filtered dataset is distributed across class and source category.")
     left, right = st.columns([1.25, 1])
 
     with left:
@@ -4470,21 +4928,21 @@ def show_overview_page(all_compounds_df):
             )
 
     with right:
-        section_header("Source Material Distribution")
+        section_header("Source Category Distribution")
         if filtered_df.empty:
             st.info("No compounds available for the selected filters.")
         else:
             source_counts = (
-                filtered_df["source_material"]
+                filtered_df["source_category"]
                 .fillna("Uncategorized")
                 .replace("", "Uncategorized")
                 .value_counts()
                 .reset_index()
             )
-            source_counts.columns = ["Source Material", "Count"]
+            source_counts.columns = ["Source Category", "Count"]
             render_dashboard_bar_chart(
                 source_counts,
-                x_col="Source Material",
+                x_col="Source Category",
                 y_col="Count",
                 color_hex="#9C63F1",
             )
@@ -4524,6 +4982,8 @@ def show_overview_page(all_compounds_df):
                     "molecular_formula",
                     "compound_class",
                     "compound_subclass",
+                    "source_category",
+                    "source_organism",
                     "source_material",
                     "sample_code"
                 ]
@@ -4533,16 +4993,18 @@ def show_overview_page(all_compounds_df):
                 "molecular_formula": "Molecular Formula",
                 "compound_class": "Compound Class",
                 "compound_subclass": "Compound Subclass",
-                "source_material": "Source Material",
+                "source_category": "Source Category",
+                "source_organism": "Source Organism",
+                "source_material": "Source Summary",
                 "sample_code": "Sample Code"
             })
 
-            st.download_button(
-                label="Download Current Overview as CSV",
-                data=dataframe_to_csv_bytes(display_df),
-                file_name="overview_filtered_compounds.csv",
-                mime="text/csv",
-                key="download_overview_csv"
+            download_dataframe_button(
+                label="Download Current Overview as Excel",
+                df=display_df,
+                file_name="overview_filtered_compounds.xlsx",
+                key="download_overview_xlsx",
+                sheet_name="Dashboard Overview",
             )
 
             st.dataframe(display_df, width="stretch", hide_index=True)
@@ -4582,11 +5044,11 @@ def show_guide_page():
     use_tabs = st.tabs(["Browse", "Submit", "Spectra & Raw Data", "Storage Layout", "Access & Deployment"])
 
     with use_tabs[0]:
-        st.markdown(
-            """
-            1. Open `Dashboard` to see coverage, quick browsing, and backup.
-            2. Use `Search & Match` for keyword lookup or 1H/13C spectral matching.
-            3. Open `Compound Workspace` to inspect full records, references, and linked files.
+            st.markdown(
+                """
+                1. Open `Dashboard` to see coverage, quick browsing, and backup.
+                2. Use `Search & Match` for keyword lookup or 1H/13C spectral matching.
+                3. Open `Compound Workspace` to inspect full records, references, and linked files.
             4. Use `1H Peaks`, `13C Peaks`, and `Spectra Library` when you want to manage sub-records directly.
             """
         )
@@ -4595,7 +5057,7 @@ def show_guide_page():
         st.markdown(
             """
             1. Start in `Compound Workspace` > `New Submission`.
-            2. Fill the core identity fields first: trivial name, formula, SMILES/InChI/InChIKey, class, subclass, source material, and structure.
+            2. Fill the core identity fields first: trivial name, formula, SMILES/InChI/InChIKey, class, subclass, source category/organism, and structure.
             3. Add publication information, notes, and reference fields.
             4. Save the compound record.
             5. Add 1H peaks, 13C peaks, preview images, PDFs, and raw-data links from the dedicated sections if needed.
@@ -4704,7 +5166,7 @@ def show_compound_pages():
     if "compound_page_radio" not in st.session_state:
         compound_radio_kwargs["index"] = compound_options.index(current_page)
     compound_page = st.radio(**compound_radio_kwargs)
-    set_compound_page(compound_page)
+    st.session_state["compound_page"] = compound_page
 
     render_helper_card(
         "Compound workspace",
@@ -4741,6 +5203,50 @@ def show_compound_pages():
 
         compounds_df = load_all_compounds()
         spectra_df = load_all_spectra_files()
+        persist_wizard_inputs()
+        for key in [
+            "wizard_trivial_name",
+            "wizard_iupac_name",
+            "wizard_formula",
+            "wizard_molecular_weight",
+            "wizard_smiles",
+            "wizard_inchi",
+            "wizard_inchikey",
+            "wizard_compound_class_select",
+            "wizard_compound_class_custom",
+            "wizard_compound_subclass_select",
+            "wizard_compound_subclass_custom",
+            "wizard_data_source_select",
+            "wizard_data_source_custom",
+            "wizard_source_category_select",
+            "wizard_source_category_custom",
+            "wizard_source_organism",
+            "wizard_sample_code",
+            "wizard_collection_location",
+            "wizard_gps_coordinates",
+            "wizard_depth_m",
+            "wizard_uv_data",
+            "wizard_ftir_data",
+            "wizard_cd_data",
+            "wizard_optical_rotation",
+            "wizard_melting_point",
+            "wizard_crystallization_method",
+            "wizard_ccdc_number",
+            "wizard_hrms_data",
+            "wizard_structure_path",
+            "wizard_submission_spectrum_type_select",
+            "wizard_submission_spectrum_type_custom",
+            "wizard_submission_spectra_note",
+            "wizard_journal_name",
+            "wizard_article_title",
+            "wizard_publication_year",
+            "wizard_volume",
+            "wizard_issue",
+            "wizard_pages",
+            "wizard_doi",
+            "wizard_note",
+        ]:
+            hydrate_wizard_widget(key)
         wizard_step = st.session_state.get("compound_wizard_step", 1)
         step_labels = {
             1: "Identity",
@@ -4769,15 +5275,30 @@ def show_compound_pages():
                 class_options = build_existing_options(compounds_df, "compound_class", DEFAULT_CLASS_OPTIONS)
                 subclass_options = build_existing_options(compounds_df, "compound_subclass")
                 data_source_options = build_existing_options(compounds_df, "data_source", DEFAULT_DATA_SOURCE_OPTIONS)
-                select_or_custom("Compound Class", class_options, "wizard_compound_class")
+                select_or_custom(
+                    "Compound Class",
+                    class_options,
+                    "wizard_compound_class",
+                    help_text="Choose an existing class or use Custom... to add a new compound class.",
+                )
                 select_or_custom("Compound Subclass", subclass_options, "wizard_compound_subclass")
                 select_or_custom("Data Source", data_source_options, "wizard_data_source", value="Experimental")
 
         elif wizard_step == 2:
             c1, c2 = st.columns(2)
             with c1:
-                source_options = build_existing_options(compounds_df, "source_material", DEFAULT_SOURCE_OPTIONS)
-                select_or_custom("Source Material", source_options, "wizard_source_material")
+                source_options = build_existing_options(compounds_df, "source_category", DEFAULT_SOURCE_OPTIONS)
+                select_or_custom(
+                    "Source Category",
+                    source_options,
+                    "wizard_source_category",
+                    help_text="Choose an existing source category or use Custom... to add a new one.",
+                )
+                st.text_input(
+                    "Source Organism / Species (optional)",
+                    key="wizard_source_organism",
+                    placeholder="e.g. Halicondria sp. or Unknown sponge",
+                )
                 st.text_input("Sample Code", key="wizard_sample_code")
                 st.text_input("Collection Location", key="wizard_collection_location")
             with c2:
@@ -4790,6 +5311,7 @@ def show_compound_pages():
             with c1:
                 st.text_input("UV Data", key="wizard_uv_data")
                 st.text_input("FTIR Data", key="wizard_ftir_data")
+                st.text_area("Circular Dichroism (CD / ECD)", key="wizard_cd_data")
                 st.text_input("Optical Rotation", key="wizard_optical_rotation")
                 st.text_input("Melting Point", key="wizard_melting_point")
                 st.text_input("Crystallization Method", key="wizard_crystallization_method")
@@ -4842,19 +5364,27 @@ def show_compound_pages():
                 st.text_input("DOI", key="wizard_doi")
             with c2:
                 draft_row = {
-                    "trivial_name": st.session_state.get("wizard_trivial_name", ""),
-                    "molecular_formula": st.session_state.get("wizard_formula", ""),
-                    "smiles": st.session_state.get("wizard_smiles", ""),
-                    "inchi": st.session_state.get("wizard_inchi", ""),
-                    "inchikey": st.session_state.get("wizard_inchikey", ""),
-                    "compound_class": st.session_state.get("wizard_compound_class_custom") or st.session_state.get("wizard_compound_class_select", ""),
-                    "source_material": st.session_state.get("wizard_source_material_custom") or st.session_state.get("wizard_source_material_select", ""),
-                    "data_source": st.session_state.get("wizard_data_source_custom") or st.session_state.get("wizard_data_source_select", ""),
-                    "hrms_data": st.session_state.get("wizard_hrms_data", ""),
-                    "doi": st.session_state.get("wizard_doi", ""),
-                    "journal_name": st.session_state.get("wizard_journal_name", ""),
-                    "article_title": st.session_state.get("wizard_article_title", ""),
-                    "structure_image_path": st.session_state.get("wizard_structure_path", "") or ("uploaded" if st.session_state.get("wizard_structure_upload") else ""),
+                    "trivial_name": get_wizard_value("wizard_trivial_name", ""),
+                    "molecular_formula": get_wizard_value("wizard_formula", ""),
+                    "smiles": get_wizard_value("wizard_smiles", ""),
+                    "inchi": get_wizard_value("wizard_inchi", ""),
+                    "inchikey": get_wizard_value("wizard_inchikey", ""),
+                    "compound_class": get_wizard_value("wizard_compound_class_custom", "") or get_wizard_value("wizard_compound_class_select", ""),
+                    "source_category": get_wizard_value("wizard_source_category_custom", "") or get_wizard_value("wizard_source_category_select", ""),
+                    "source_organism": get_wizard_value("wizard_source_organism", ""),
+                    "source_material": source_summary_from_record(
+                        {
+                            "source_category": get_wizard_value("wizard_source_category_custom", "") or get_wizard_value("wizard_source_category_select", ""),
+                            "source_organism": get_wizard_value("wizard_source_organism", ""),
+                            "source_material": "",
+                        }
+                    ),
+                    "data_source": get_wizard_value("wizard_data_source_custom", "") or get_wizard_value("wizard_data_source_select", ""),
+                    "hrms_data": get_wizard_value("wizard_hrms_data", ""),
+                    "doi": get_wizard_value("wizard_doi", ""),
+                    "journal_name": get_wizard_value("wizard_journal_name", ""),
+                    "article_title": get_wizard_value("wizard_article_title", ""),
+                    "structure_image_path": get_wizard_value("wizard_structure_path", "") or ("uploaded" if get_wizard_value("wizard_structure_upload") else ""),
                 }
                 completeness_preview = calculate_completeness_score(
                     draft_row,
@@ -4869,63 +5399,71 @@ def show_compound_pages():
                 st.write(f"**SMILES:** {clean_text(draft_row['smiles'])}")
                 st.write(f"**InChIKey:** {clean_text(draft_row['inchikey'])}")
                 st.write(f"**Class:** {clean_text(draft_row['compound_class'])}")
-                st.write(f"**Source:** {clean_text(draft_row['source_material'])}")
+                st.write(f"**Source Category:** {clean_text(draft_row['source_category'])}")
+                st.write(f"**Source Organism:** {clean_text(draft_row['source_organism'])}")
+                st.write(f"**Source Summary:** {clean_text(draft_row['source_material'])}")
                 st.write(f"**Data Source:** {clean_text(draft_row['data_source'])}")
-                st.write(f"**Journal:** {clean_text(st.session_state.get('wizard_journal_name'))}")
-                st.write(f"**Article:** {clean_text(st.session_state.get('wizard_article_title'))}")
+                st.write(f"**Journal:** {clean_text(get_wizard_value('wizard_journal_name'))}")
+                st.write(f"**Article:** {clean_text(get_wizard_value('wizard_article_title'))}")
                 st.markdown('</div>', unsafe_allow_html=True)
 
         nav_left, nav_right = st.columns([1, 1])
         with nav_left:
             if wizard_step > 1 and st.button("Back", use_container_width=True, key=f"wizard_back_{wizard_step}"):
+                persist_wizard_inputs()
                 st.session_state["compound_wizard_step"] = wizard_step - 1
                 st.rerun()
 
         with nav_right:
             if wizard_step < 4:
                 if st.button("Continue", use_container_width=True, key=f"wizard_next_{wizard_step}"):
-                    if wizard_step == 1 and not maybe_blank(st.session_state.get("wizard_trivial_name")):
+                    persist_wizard_inputs()
+                    if wizard_step == 1 and not maybe_blank(get_wizard_value("wizard_trivial_name")):
                         st.error("Trivial Name is required before moving to the next step.")
                     else:
                         st.session_state["compound_wizard_step"] = wizard_step + 1
                         st.rerun()
             else:
                 if st.button("Save New Record", use_container_width=True, key="wizard_submit_compound"):
-                    trivial_name = maybe_blank(st.session_state.get("wizard_trivial_name"))
-                    iupac_name = maybe_blank(st.session_state.get("wizard_iupac_name"))
-                    molecular_formula = maybe_blank(st.session_state.get("wizard_formula"))
-                    smiles = maybe_blank(st.session_state.get("wizard_smiles"))
-                    inchi = maybe_blank(st.session_state.get("wizard_inchi"))
-                    inchikey = maybe_blank(st.session_state.get("wizard_inchikey"))
-                    compound_class = maybe_blank(st.session_state.get("wizard_compound_class_custom")) or maybe_blank(st.session_state.get("wizard_compound_class_select"))
-                    compound_subclass = maybe_blank(st.session_state.get("wizard_compound_subclass_custom")) or maybe_blank(st.session_state.get("wizard_compound_subclass_select"))
-                    source_material = maybe_blank(st.session_state.get("wizard_source_material_custom")) or maybe_blank(st.session_state.get("wizard_source_material_select"))
-                    sample_code = maybe_blank(st.session_state.get("wizard_sample_code"))
-                    collection_location = maybe_blank(st.session_state.get("wizard_collection_location"))
-                    gps_coordinates = maybe_blank(st.session_state.get("wizard_gps_coordinates"))
-                    depth_m_text = maybe_blank(st.session_state.get("wizard_depth_m"))
-                    uv_data = maybe_blank(st.session_state.get("wizard_uv_data"))
-                    ftir_data = maybe_blank(st.session_state.get("wizard_ftir_data"))
-                    optical_rotation = maybe_blank(st.session_state.get("wizard_optical_rotation"))
-                    melting_point = maybe_blank(st.session_state.get("wizard_melting_point"))
-                    crystallization_method = maybe_blank(st.session_state.get("wizard_crystallization_method"))
-                    structure_image_path = maybe_blank(st.session_state.get("wizard_structure_path"))
-                    structure_upload = st.session_state.get("wizard_structure_upload")
-                    journal_name = maybe_blank(st.session_state.get("wizard_journal_name"))
-                    article_title = maybe_blank(st.session_state.get("wizard_article_title"))
-                    publication_year = maybe_blank(st.session_state.get("wizard_publication_year"))
-                    volume = maybe_blank(st.session_state.get("wizard_volume"))
-                    issue = maybe_blank(st.session_state.get("wizard_issue"))
-                    pages = maybe_blank(st.session_state.get("wizard_pages"))
-                    doi = maybe_blank(st.session_state.get("wizard_doi"))
-                    ccdc_number = maybe_blank(st.session_state.get("wizard_ccdc_number"))
-                    molecular_weight_text = maybe_blank(st.session_state.get("wizard_molecular_weight"))
-                    hrms_data = maybe_blank(st.session_state.get("wizard_hrms_data"))
-                    data_source = maybe_blank(st.session_state.get("wizard_data_source_custom")) or maybe_blank(st.session_state.get("wizard_data_source_select"))
-                    note = maybe_blank(st.session_state.get("wizard_note"))
-                    uploaded_spectra = st.session_state.get("wizard_submission_spectra_uploads") or []
-                    uploaded_spectrum_type = maybe_blank(st.session_state.get("wizard_submission_spectrum_type_custom")) or maybe_blank(st.session_state.get("wizard_submission_spectrum_type_select")) or "Supporting Data"
-                    uploaded_spectrum_note = maybe_blank(st.session_state.get("wizard_submission_spectra_note"))
+                    persist_wizard_inputs()
+                    trivial_name = maybe_blank(get_wizard_value("wizard_trivial_name"))
+                    iupac_name = maybe_blank(get_wizard_value("wizard_iupac_name"))
+                    molecular_formula = maybe_blank(get_wizard_value("wizard_formula"))
+                    smiles = maybe_blank(get_wizard_value("wizard_smiles"))
+                    inchi = maybe_blank(get_wizard_value("wizard_inchi"))
+                    inchikey = maybe_blank(get_wizard_value("wizard_inchikey"))
+                    compound_class = maybe_blank(get_wizard_value("wizard_compound_class_custom")) or maybe_blank(get_wizard_value("wizard_compound_class_select"))
+                    compound_subclass = maybe_blank(get_wizard_value("wizard_compound_subclass_custom")) or maybe_blank(get_wizard_value("wizard_compound_subclass_select"))
+                    source_category = maybe_blank(get_wizard_value("wizard_source_category_custom")) or maybe_blank(get_wizard_value("wizard_source_category_select"))
+                    source_organism = maybe_blank(get_wizard_value("wizard_source_organism"))
+                    _, _, source_material = infer_source_fields(source_category, source_organism, "")
+                    sample_code = maybe_blank(get_wizard_value("wizard_sample_code"))
+                    collection_location = maybe_blank(get_wizard_value("wizard_collection_location"))
+                    gps_coordinates = maybe_blank(get_wizard_value("wizard_gps_coordinates"))
+                    depth_m_text = maybe_blank(get_wizard_value("wizard_depth_m"))
+                    uv_data = maybe_blank(get_wizard_value("wizard_uv_data"))
+                    ftir_data = maybe_blank(get_wizard_value("wizard_ftir_data"))
+                    cd_data = maybe_blank(get_wizard_value("wizard_cd_data"))
+                    optical_rotation = maybe_blank(get_wizard_value("wizard_optical_rotation"))
+                    melting_point = maybe_blank(get_wizard_value("wizard_melting_point"))
+                    crystallization_method = maybe_blank(get_wizard_value("wizard_crystallization_method"))
+                    structure_image_path = maybe_blank(get_wizard_value("wizard_structure_path"))
+                    structure_upload = get_wizard_value("wizard_structure_upload")
+                    journal_name = maybe_blank(get_wizard_value("wizard_journal_name"))
+                    article_title = maybe_blank(get_wizard_value("wizard_article_title"))
+                    publication_year = maybe_blank(get_wizard_value("wizard_publication_year"))
+                    volume = maybe_blank(get_wizard_value("wizard_volume"))
+                    issue = maybe_blank(get_wizard_value("wizard_issue"))
+                    pages = maybe_blank(get_wizard_value("wizard_pages"))
+                    doi = maybe_blank(get_wizard_value("wizard_doi"))
+                    ccdc_number = maybe_blank(get_wizard_value("wizard_ccdc_number"))
+                    molecular_weight_text = maybe_blank(get_wizard_value("wizard_molecular_weight"))
+                    hrms_data = maybe_blank(get_wizard_value("wizard_hrms_data"))
+                    data_source = maybe_blank(get_wizard_value("wizard_data_source_custom")) or maybe_blank(get_wizard_value("wizard_data_source_select"))
+                    note = maybe_blank(get_wizard_value("wizard_note"))
+                    uploaded_spectra = get_wizard_value("wizard_submission_spectra_uploads") or []
+                    uploaded_spectrum_type = maybe_blank(get_wizard_value("wizard_submission_spectrum_type_custom")) or maybe_blank(get_wizard_value("wizard_submission_spectrum_type_select")) or "Supporting Data"
+                    uploaded_spectrum_note = maybe_blank(get_wizard_value("wizard_submission_spectra_note"))
 
                     if not trivial_name:
                         st.error("Trivial Name is required.")
@@ -4957,6 +5495,8 @@ def show_compound_pages():
                         smiles=smiles,
                         inchi=inchi,
                         inchikey=inchikey,
+                        source_category=source_category,
+                        source_organism=source_organism,
                         source_material=source_material,
                         sample_code=sample_code,
                         collection_location=collection_location,
@@ -4964,6 +5504,7 @@ def show_compound_pages():
                         depth_m=depth_value,
                         uv_data=uv_data,
                         ftir_data=ftir_data,
+                        cd_data=cd_data,
                         optical_rotation=optical_rotation,
                         melting_point=melting_point,
                         crystallization_method=crystallization_method,
@@ -5054,6 +5595,7 @@ def show_compound_pages():
                             build_existing_options(compounds_df, "compound_class", DEFAULT_CLASS_OPTIONS),
                             f"edit_compound_class_{edit_compound_id}",
                             value=maybe_blank(row["compound_class"]),
+                            help_text="Choose an existing class or use Custom... to add a new compound class.",
                         )
                         compound_subclass = select_or_custom(
                             "Compound Subclass",
@@ -5061,11 +5603,16 @@ def show_compound_pages():
                             f"edit_compound_subclass_{edit_compound_id}",
                             value=maybe_blank(row["compound_subclass"]),
                         )
-                        source_material = select_or_custom(
-                            "Source Material",
-                            build_existing_options(compounds_df, "source_material", DEFAULT_SOURCE_OPTIONS),
-                            f"edit_source_material_{edit_compound_id}",
-                            value=maybe_blank(row["source_material"]),
+                        source_category = select_or_custom(
+                            "Source Category",
+                            build_existing_options(compounds_df, "source_category", DEFAULT_SOURCE_OPTIONS),
+                            f"edit_source_category_{edit_compound_id}",
+                            value=maybe_blank(row.get("source_category")),
+                            help_text="Choose an existing source category or use Custom... to add a new one.",
+                        )
+                        source_organism = st.text_input(
+                            "Source Organism / Species (optional)",
+                            value=maybe_blank(row.get("source_organism")),
                         )
                         sample_code = st.text_input("Sample Code", value=maybe_blank(row["sample_code"]))
                         collection_location = st.text_input("Collection Location", value=maybe_blank(row["collection_location"]))
@@ -5075,6 +5622,7 @@ def show_compound_pages():
                     with col2:
                         uv_data = st.text_input("UV Data", value=maybe_blank(row["uv_data"]))
                         ftir_data = st.text_input("FTIR Data", value=maybe_blank(row["ftir_data"]))
+                        cd_data = st.text_area("Circular Dichroism (CD / ECD)", value=maybe_blank(row.get("cd_data")))
                         optical_rotation = st.text_input("Optical Rotation", value=maybe_blank(row["optical_rotation"]))
                         melting_point = st.text_input("Melting Point", value=maybe_blank(row["melting_point"]))
                         crystallization_method = st.text_input("Crystallization Method", value=maybe_blank(row["crystallization_method"]))
@@ -5131,6 +5679,12 @@ def show_compound_pages():
                                 f"{trivial_name}_{sample_code or edit_compound_id}_structure",
                             )
 
+                        source_category, source_organism, source_material = infer_source_fields(
+                            source_category.strip(),
+                            source_organism.strip(),
+                            row.get("source_material"),
+                        )
+
                         update_compound_record(
                             compound_id=edit_compound_id,
                             trivial_name=trivial_name.strip(),
@@ -5141,6 +5695,8 @@ def show_compound_pages():
                             smiles=smiles.strip(),
                             inchi=inchi.strip(),
                             inchikey=inchikey.strip(),
+                            source_category=source_category.strip(),
+                            source_organism=source_organism.strip(),
                             source_material=source_material.strip(),
                             sample_code=sample_code.strip(),
                             collection_location=collection_location.strip(),
@@ -5148,6 +5704,7 @@ def show_compound_pages():
                             depth_m=depth_value,
                             uv_data=uv_data.strip(),
                             ftir_data=ftir_data.strip(),
+                            cd_data=cd_data.strip(),
                             optical_rotation=optical_rotation.strip(),
                             melting_point=melting_point.strip(),
                             crystallization_method=crystallization_method.strip(),
@@ -6020,3 +6577,5 @@ elif main_section == "Spectra Library":
 
 elif main_section == "Guide":
     show_guide_page()
+
+render_app_credit_footer()
