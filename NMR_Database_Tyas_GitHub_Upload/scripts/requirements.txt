@@ -1,5 +1,5 @@
 streamlit>=1.40
 pandas>=2.2
 plotly>=6.0
-rdkit>=2025.3
+rdkit-pypi==2022.9.5
 openpyxl>=3.1
