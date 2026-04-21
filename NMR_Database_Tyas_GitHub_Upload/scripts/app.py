@@ -1327,6 +1327,13 @@ def get_connection():
     return connection
 
 
+def invalidate_cached_views():
+    try:
+        st.cache_data.clear()
+    except Exception:
+        pass
+
+
 def table_exists(table_name: str) -> bool:
     conn = get_connection()
     try:
@@ -1498,6 +1505,7 @@ def ensure_database_schema():
             "CREATE INDEX IF NOT EXISTS idx_bioactivity_target_category ON bioactivity_records(target_category)"
         )
         conn.commit()
+        invalidate_cached_views()
     finally:
         conn.close()
 
@@ -1532,6 +1540,7 @@ def ensure_compounds_schema():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_compounds_inchikey ON compounds(inchikey)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_compounds_smiles ON compounds(smiles)")
         conn.commit()
+        invalidate_cached_views()
     finally:
         conn.close()
 
@@ -1570,6 +1579,7 @@ def ensure_bioactivity_schema():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_bioactivity_compound ON bioactivity_records(compound_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_bioactivity_target_category ON bioactivity_records(target_category)")
         conn.commit()
+        invalidate_cached_views()
     finally:
         conn.close()
 
@@ -1776,17 +1786,17 @@ def select_or_custom(label: str, options: list[str], key: str, value: str = "", 
         key=f"{key}_select",
         help=help_text,
     )
-    custom_value = st.text_input(
-        f"{label} (Custom, optional)",
-        value=custom_default,
-        key=f"{key}_custom",
-        placeholder=f"Type a new {label.lower()} here if it is not in the list.",
-    )
-
-    custom_text = maybe_blank(custom_value)
-    if custom_text:
-        return custom_text
-    if selected == "Custom...":
+    show_custom_input = selected == "Custom..." or bool(custom_default)
+    if show_custom_input:
+        custom_value = st.text_input(
+            f"{label} (Custom, optional)",
+            value=custom_default,
+            key=f"{key}_custom",
+            placeholder=f"Type a new {label.lower()} here if it is not in the list.",
+        )
+        custom_text = maybe_blank(custom_value)
+        if custom_text:
+            return custom_text
         return ""
     return selected
 
@@ -2002,7 +2012,7 @@ def search_by_structure(
         return [], "Please draw or paste a query structure first."
 
     if not is_structure_backend_available():
-        return [], "Structure search requires RDKit. Add `rdkit` to requirements.txt before using this feature."
+        return [], "Structure search requires RDKit. Install `rdkit-pypi==2022.9.5` in both requirements.txt files before using this feature."
 
     query_mol = structure_text_to_mol(query_text)
     if query_mol is None:
@@ -2894,6 +2904,7 @@ def show_app_header():
 # =========================
 # Data loading
 # =========================
+@st.cache_data(show_spinner=False)
 def load_all_compounds():
     conn = get_connection()
     query = """
@@ -2915,6 +2926,7 @@ def load_all_compounds():
     conn.close()
     return enrich_compounds_dataframe(df)
 
+@st.cache_data(show_spinner=False)
 def load_compound_row(compound_id):
     conn = get_connection()
     query = """
@@ -2936,6 +2948,7 @@ def load_compound_row(compound_id):
     conn.close()
     return enrich_compounds_dataframe(df)
 
+@st.cache_data(show_spinner=False)
 def load_proton_data(compound_id):
     conn = get_connection()
     query = """
@@ -2949,6 +2962,7 @@ def load_proton_data(compound_id):
     conn.close()
     return df
 
+@st.cache_data(show_spinner=False)
 def load_all_proton_data():
     conn = get_connection()
     query = """
@@ -2963,6 +2977,7 @@ def load_all_proton_data():
     conn.close()
     return df
 
+@st.cache_data(show_spinner=False)
 def load_proton_row(proton_id):
     conn = get_connection()
     query = """
@@ -2975,6 +2990,7 @@ def load_proton_row(proton_id):
     conn.close()
     return df
 
+@st.cache_data(show_spinner=False)
 def load_carbon_data(compound_id):
     conn = get_connection()
     query = """
@@ -2988,6 +3004,7 @@ def load_carbon_data(compound_id):
     conn.close()
     return df
 
+@st.cache_data(show_spinner=False)
 def load_all_carbon_data():
     conn = get_connection()
     query = """
@@ -3002,6 +3019,7 @@ def load_all_carbon_data():
     conn.close()
     return df
 
+@st.cache_data(show_spinner=False)
 def load_carbon_row(carbon_id):
     conn = get_connection()
     query = """
@@ -3014,6 +3032,7 @@ def load_carbon_row(carbon_id):
     conn.close()
     return df
 
+@st.cache_data(show_spinner=False)
 def load_spectra_files(compound_id):
     conn = get_connection()
     query = """
@@ -3026,6 +3045,7 @@ def load_spectra_files(compound_id):
     conn.close()
     return df
 
+@st.cache_data(show_spinner=False)
 def load_all_spectra_files():
     conn = get_connection()
     query = """
@@ -3039,6 +3059,7 @@ def load_all_spectra_files():
     conn.close()
     return df
 
+@st.cache_data(show_spinner=False)
 def load_spectrum_file_row(file_id):
     conn = get_connection()
     query = """
@@ -3051,6 +3072,7 @@ def load_spectrum_file_row(file_id):
     return df
 
 
+@st.cache_data(show_spinner=False)
 def load_bioactivity_data(compound_id):
     conn = get_connection()
     query = """
@@ -3066,6 +3088,7 @@ def load_bioactivity_data(compound_id):
     return df
 
 
+@st.cache_data(show_spinner=False)
 def load_all_bioactivity_data():
     conn = get_connection()
     query = """
@@ -3082,6 +3105,7 @@ def load_all_bioactivity_data():
     return df
 
 
+@st.cache_data(show_spinner=False)
 def load_bioactivity_row(bioactivity_id):
     conn = get_connection()
     query = """
@@ -3213,6 +3237,7 @@ def insert_compound_record(
 
     new_id = cursor.lastrowid
     conn.commit()
+    invalidate_cached_views()
     conn.close()
     return new_id
 
@@ -3333,6 +3358,8 @@ def update_compound_record(
     ))
 
     conn.commit()
+
+    invalidate_cached_views()
     conn.close()
 
 def delete_compound_record(compound_id):
@@ -3345,6 +3372,7 @@ def delete_compound_record(compound_id):
         cursor.execute("DELETE FROM spectra_files WHERE compound_id = ?", (compound_id,))
         cursor.execute("DELETE FROM compounds WHERE id = ?", (compound_id,))
         conn.commit()
+        invalidate_cached_views()
     finally:
         conn.close()
 
@@ -3388,6 +3416,7 @@ def insert_proton_record(
 
     new_id = cursor.lastrowid
     conn.commit()
+    invalidate_cached_views()
     conn.close()
     return new_id
 
@@ -3432,6 +3461,8 @@ def update_proton_record(
     ))
 
     conn.commit()
+
+    invalidate_cached_views()
     conn.close()
 
 def delete_proton_record_by_id(proton_id):
@@ -3439,6 +3470,7 @@ def delete_proton_record_by_id(proton_id):
     cursor = conn.cursor()
     cursor.execute("DELETE FROM proton_nmr WHERE id = ?", (proton_id,))
     conn.commit()
+    invalidate_cached_views()
     conn.close()
 
 def insert_carbon_record(
@@ -3475,6 +3507,7 @@ def insert_carbon_record(
 
     new_id = cursor.lastrowid
     conn.commit()
+    invalidate_cached_views()
     conn.close()
     return new_id
 
@@ -3513,6 +3546,8 @@ def update_carbon_record(
     ))
 
     conn.commit()
+
+    invalidate_cached_views()
     conn.close()
 
 def delete_carbon_record_by_id(carbon_id):
@@ -3520,6 +3555,7 @@ def delete_carbon_record_by_id(carbon_id):
     cursor = conn.cursor()
     cursor.execute("DELETE FROM carbon_nmr WHERE id = ?", (carbon_id,))
     conn.commit()
+    invalidate_cached_views()
     conn.close()
 
 def insert_spectrum_file_record(
@@ -3547,6 +3583,7 @@ def insert_spectrum_file_record(
 
     new_id = cursor.lastrowid
     conn.commit()
+    invalidate_cached_views()
     conn.close()
     return new_id
 
@@ -3576,6 +3613,8 @@ def update_spectrum_file_record(
     ))
 
     conn.commit()
+
+    invalidate_cached_views()
     conn.close()
 
 def delete_spectrum_file_record_by_id(file_id):
@@ -3583,6 +3622,7 @@ def delete_spectrum_file_record_by_id(file_id):
     cursor = conn.cursor()
     cursor.execute("DELETE FROM spectra_files WHERE id = ?", (file_id,))
     conn.commit()
+    invalidate_cached_views()
     conn.close()
 
 
@@ -3631,6 +3671,7 @@ def insert_bioactivity_record(
     )
     new_id = cursor.lastrowid
     conn.commit()
+    invalidate_cached_views()
     conn.close()
     return new_id
 
@@ -3692,6 +3733,7 @@ def update_bioactivity_record(
         ),
     )
     conn.commit()
+    invalidate_cached_views()
     conn.close()
 
 
@@ -3700,6 +3742,7 @@ def delete_bioactivity_record_by_id(bioactivity_id):
     cursor = conn.cursor()
     cursor.execute("DELETE FROM bioactivity_records WHERE id = ?", (bioactivity_id,))
     conn.commit()
+    invalidate_cached_views()
     conn.close()
 
 
@@ -6267,77 +6310,77 @@ def show_compound_pages():
             else:
                 row = row_df.iloc[0]
 
-                with st.form("edit_compound_form", clear_on_submit=False):
-                    col1, col2 = st.columns(2)
 
-                    with col1:
-                        trivial_name = st.text_input("Trivial Name", value=maybe_blank(row["trivial_name"]))
-                        iupac_name = st.text_area("IUPAC Name", value=maybe_blank(row["iupac_name"]))
-                        molecular_formula = st.text_input("Molecular Formula", value=maybe_blank(row["molecular_formula"]))
-                        smiles = st.text_area("SMILES", value=maybe_blank(row.get("smiles")))
-                        inchi = st.text_area("InChI", value=maybe_blank(row.get("inchi")))
-                        inchikey = st.text_input("InChIKey", value=maybe_blank(row.get("inchikey")))
-                        compound_class = select_or_custom(
-                            "Compound Class",
-                            build_existing_options(compounds_df, "compound_class", DEFAULT_CLASS_OPTIONS),
-                            f"edit_compound_class_{edit_compound_id}",
-                            value=maybe_blank(row["compound_class"]),
-                            help_text="Choose an existing class or use Custom... to add a new compound class.",
-                        )
-                        compound_subclass = select_or_custom(
-                            "Compound Subclass",
-                            build_existing_options(compounds_df, "compound_subclass"),
-                            f"edit_compound_subclass_{edit_compound_id}",
-                            value=maybe_blank(row["compound_subclass"]),
-                        )
-                        source_category = select_or_custom(
-                            "Source Category",
-                            build_existing_options(compounds_df, "source_category", DEFAULT_SOURCE_OPTIONS),
-                            f"edit_source_category_{edit_compound_id}",
-                            value=maybe_blank(row.get("source_category")),
-                            help_text="Choose an existing source category or use Custom... to add a new one.",
-                        )
-                        source_organism = st.text_input(
-                            "Source Organism / Species (optional)",
-                            value=maybe_blank(row.get("source_organism")),
-                        )
-                        sample_code = st.text_input("Sample Code", value=maybe_blank(row["sample_code"]))
-                        collection_location = st.text_input("Collection Location", value=maybe_blank(row["collection_location"]))
-                        gps_coordinates = st.text_input("GPS Coordinates", value=maybe_blank(row["gps_coordinates"]))
-                        depth_m_text = st.text_input("Depth (m)", value=maybe_blank(row["depth_m"]))
+                col1, col2 = st.columns(2)
 
-                    with col2:
-                        uv_data = st.text_input("UV Data", value=maybe_blank(row["uv_data"]))
-                        ftir_data = st.text_input("FTIR Data", value=maybe_blank(row["ftir_data"]))
-                        cd_data = st.text_area("Circular Dichroism (CD / ECD)", value=maybe_blank(row.get("cd_data")))
-                        optical_rotation = st.text_input("Optical Rotation", value=maybe_blank(row["optical_rotation"]))
-                        melting_point = st.text_input("Melting Point", value=maybe_blank(row["melting_point"]))
-                        crystallization_method = st.text_input("Crystallization Method", value=maybe_blank(row["crystallization_method"]))
-                        structure_image_path = st.text_input("Structure Image Path", value=maybe_blank(row["structure_image_path"]))
-                        structure_upload = st.file_uploader(
-                            "Replace Structure Image",
-                            type=["png", "jpg", "jpeg", "webp"],
-                            key=f"edit_structure_upload_{edit_compound_id}",
-                        )
-                        journal_name = st.text_input("Journal Name", value=maybe_blank(row["journal_name"]))
-                        article_title = st.text_area("Article Title", value=maybe_blank(row["article_title"]))
-                        publication_year = st.text_input("Publication Year", value=maybe_blank(row["publication_year"]))
-                        volume = st.text_input("Volume", value=maybe_blank(row["volume"]))
-                        issue = st.text_input("Issue / Journal Number", value=maybe_blank(row["issue"]))
-                        pages = st.text_input("Pages", value=maybe_blank(row["pages"]))
-                        doi = st.text_input("DOI", value=maybe_blank(row["doi"]))
-                        ccdc_number = st.text_input("CCDC", value=maybe_blank(row["ccdc_number"]))
-                        molecular_weight_text = st.text_input("Mr", value=maybe_blank(row["molecular_weight"]))
-                        hrms_data = st.text_area("HRMS Data", value=maybe_blank(row["hrms_data"]))
-                        data_source = select_or_custom(
-                            "Data Source",
-                            build_existing_options(compounds_df, "data_source", DEFAULT_DATA_SOURCE_OPTIONS),
-                            f"edit_data_source_{edit_compound_id}",
-                            value=maybe_blank(row["data_source"]),
-                        )
+                with col1:
+                    trivial_name = st.text_input("Trivial Name", value=maybe_blank(row["trivial_name"]))
+                    iupac_name = st.text_area("IUPAC Name", value=maybe_blank(row["iupac_name"]))
+                    molecular_formula = st.text_input("Molecular Formula", value=maybe_blank(row["molecular_formula"]))
+                    smiles = st.text_area("SMILES", value=maybe_blank(row.get("smiles")))
+                    inchi = st.text_area("InChI", value=maybe_blank(row.get("inchi")))
+                    inchikey = st.text_input("InChIKey", value=maybe_blank(row.get("inchikey")))
+                    compound_class = select_or_custom(
+                        "Compound Class",
+                        build_existing_options(compounds_df, "compound_class", DEFAULT_CLASS_OPTIONS),
+                        f"edit_compound_class_{edit_compound_id}",
+                        value=maybe_blank(row["compound_class"]),
+                        help_text="Choose an existing class or use Custom... to add a new compound class.",
+                    )
+                    compound_subclass = select_or_custom(
+                        "Compound Subclass",
+                        build_existing_options(compounds_df, "compound_subclass"),
+                        f"edit_compound_subclass_{edit_compound_id}",
+                        value=maybe_blank(row["compound_subclass"]),
+                    )
+                    source_category = select_or_custom(
+                        "Source Category",
+                        build_existing_options(compounds_df, "source_category", DEFAULT_SOURCE_OPTIONS),
+                        f"edit_source_category_{edit_compound_id}",
+                        value=maybe_blank(row.get("source_category")),
+                        help_text="Choose an existing source category or use Custom... to add a new one.",
+                    )
+                    source_organism = st.text_input(
+                        "Source Organism / Species (optional)",
+                        value=maybe_blank(row.get("source_organism")),
+                    )
+                    sample_code = st.text_input("Sample Code", value=maybe_blank(row["sample_code"]))
+                    collection_location = st.text_input("Collection Location", value=maybe_blank(row["collection_location"]))
+                    gps_coordinates = st.text_input("GPS Coordinates", value=maybe_blank(row["gps_coordinates"]))
+                    depth_m_text = st.text_input("Depth (m)", value=maybe_blank(row["depth_m"]))
 
-                    note = st.text_area("Note", value=maybe_blank(row["note"]))
-                    submitted_edit = st.form_submit_button("Save Changes")
+                with col2:
+                    uv_data = st.text_input("UV Data", value=maybe_blank(row["uv_data"]))
+                    ftir_data = st.text_input("FTIR Data", value=maybe_blank(row["ftir_data"]))
+                    cd_data = st.text_area("Circular Dichroism (CD / ECD)", value=maybe_blank(row.get("cd_data")))
+                    optical_rotation = st.text_input("Optical Rotation", value=maybe_blank(row["optical_rotation"]))
+                    melting_point = st.text_input("Melting Point", value=maybe_blank(row["melting_point"]))
+                    crystallization_method = st.text_input("Crystallization Method", value=maybe_blank(row["crystallization_method"]))
+                    structure_image_path = st.text_input("Structure Image Path", value=maybe_blank(row["structure_image_path"]))
+                    structure_upload = st.file_uploader(
+                        "Replace Structure Image",
+                        type=["png", "jpg", "jpeg", "webp"],
+                        key=f"edit_structure_upload_{edit_compound_id}",
+                    )
+                    journal_name = st.text_input("Journal Name", value=maybe_blank(row["journal_name"]))
+                    article_title = st.text_area("Article Title", value=maybe_blank(row["article_title"]))
+                    publication_year = st.text_input("Publication Year", value=maybe_blank(row["publication_year"]))
+                    volume = st.text_input("Volume", value=maybe_blank(row["volume"]))
+                    issue = st.text_input("Issue / Journal Number", value=maybe_blank(row["issue"]))
+                    pages = st.text_input("Pages", value=maybe_blank(row["pages"]))
+                    doi = st.text_input("DOI", value=maybe_blank(row["doi"]))
+                    ccdc_number = st.text_input("CCDC", value=maybe_blank(row["ccdc_number"]))
+                    molecular_weight_text = st.text_input("Mr", value=maybe_blank(row["molecular_weight"]))
+                    hrms_data = st.text_area("HRMS Data", value=maybe_blank(row["hrms_data"]))
+                    data_source = select_or_custom(
+                        "Data Source",
+                        build_existing_options(compounds_df, "data_source", DEFAULT_DATA_SOURCE_OPTIONS),
+                        f"edit_data_source_{edit_compound_id}",
+                        value=maybe_blank(row["data_source"]),
+                    )
+
+                note = st.text_area("Note", value=maybe_blank(row["note"]))
+                submitted_edit = st.button("Save Changes", key="edit_compound_submit")
 
                 if submitted_edit:
                     if not trivial_name.strip():
@@ -7137,42 +7180,42 @@ def show_bioactivity_pages():
         if selected_id is not None and selected_id in options["id"].tolist():
             default_index = options.index[options["id"] == selected_id][0]
 
-        with st.form("add_bioactivity_form", clear_on_submit=False):
-            selected_compound_label = st.selectbox("Select Compound", label_list, index=default_index, key="add_bioactivity_compound")
-            c1, c2 = st.columns(2)
-            with c1:
-                activity_label = select_or_custom(
-                    "Activity",
-                    build_existing_options(bioactivity_df, "activity_label", DEFAULT_BIOACTIVITY_CATEGORIES),
-                    "add_bioactivity_activity",
-                    help_text="Choose an existing broad activity label or use Custom... for a new one.",
-                )
-                target_name = st.text_input("Target Name", placeholder="e.g. HCT-116, MRSA, PTP1B")
-                target_category = select_or_custom(
-                    "Target Category",
-                    build_existing_options(bioactivity_df, "target_category", DEFAULT_TARGET_CATEGORIES),
-                    "add_bioactivity_target_category",
-                )
-                assay_type = st.text_input("Assay Type", placeholder="e.g. cytotoxicity assay, antimicrobial assay")
-                potency_type = select_or_custom(
-                    "Potency Metric",
-                    build_existing_options(bioactivity_df, "potency_type", DEFAULT_POTENCY_TYPES),
-                    "add_bioactivity_metric",
-                )
-                potency_relation = st.selectbox("Relation", ["=", "<", "<=", ">", ">=", "~"], index=0)
-                potency_value_text = st.text_input("Potency Value", placeholder="e.g. 1.2")
-            with c2:
-                potency_unit = select_or_custom(
-                    "Potency Unit",
-                    build_existing_options(bioactivity_df, "potency_unit", DEFAULT_POTENCY_UNITS),
-                    "add_bioactivity_unit",
-                )
-                outcome = st.text_input("Outcome", placeholder="e.g. active, inactive, moderate, selective")
-                assay_medium = st.text_input("Assay Medium / Test System", placeholder="e.g. in vitro, broth microdilution")
-                selectivity = st.text_input("Selectivity", placeholder="e.g. selective vs normal Vero cells")
-                assay_source = st.text_input("Assay Source", placeholder="e.g. J. Am. Chem. Soc. 2006")
-                note = st.text_area("Note", placeholder="Any caveat, mechanism note, replicate information, or assay context")
-            submitted = st.form_submit_button("Save Bioactivity Record")
+
+        selected_compound_label = st.selectbox("Select Compound", label_list, index=default_index, key="add_bioactivity_compound")
+        c1, c2 = st.columns(2)
+        with c1:
+            activity_label = select_or_custom(
+                "Activity",
+                build_existing_options(bioactivity_df, "activity_label", DEFAULT_BIOACTIVITY_CATEGORIES),
+                "add_bioactivity_activity",
+                help_text="Choose an existing broad activity label or use Custom... for a new one.",
+            )
+            target_name = st.text_input("Target Name", placeholder="e.g. HCT-116, MRSA, PTP1B")
+            target_category = select_or_custom(
+                "Target Category",
+                build_existing_options(bioactivity_df, "target_category", DEFAULT_TARGET_CATEGORIES),
+                "add_bioactivity_target_category",
+            )
+            assay_type = st.text_input("Assay Type", placeholder="e.g. cytotoxicity assay, antimicrobial assay")
+            potency_type = select_or_custom(
+                "Potency Metric",
+                build_existing_options(bioactivity_df, "potency_type", DEFAULT_POTENCY_TYPES),
+                "add_bioactivity_metric",
+            )
+            potency_relation = st.selectbox("Relation", ["=", "<", "<=", ">", ">=", "~"], index=0)
+            potency_value_text = st.text_input("Potency Value", placeholder="e.g. 1.2")
+        with c2:
+            potency_unit = select_or_custom(
+                "Potency Unit",
+                build_existing_options(bioactivity_df, "potency_unit", DEFAULT_POTENCY_UNITS),
+                "add_bioactivity_unit",
+            )
+            outcome = st.text_input("Outcome", placeholder="e.g. active, inactive, moderate, selective")
+            assay_medium = st.text_input("Assay Medium / Test System", placeholder="e.g. in vitro, broth microdilution")
+            selectivity = st.text_input("Selectivity", placeholder="e.g. selective vs normal Vero cells")
+            assay_source = st.text_input("Assay Source", placeholder="e.g. J. Am. Chem. Soc. 2006")
+            note = st.text_area("Note", placeholder="Any caveat, mechanism note, replicate information, or assay context")
+        submitted = st.button("Save Bioactivity Record", key="add_bioactivity_submit")
 
         if submitted:
             if not activity_label.strip():
@@ -7232,47 +7275,47 @@ def show_bioactivity_pages():
         if row["compound_id"] in options["id"].tolist():
             default_index = options.index[options["id"] == row["compound_id"]][0]
 
-        with st.form("edit_bioactivity_form", clear_on_submit=False):
-            selected_compound_label = st.selectbox("Select Compound", label_list, index=default_index, key="edit_bioactivity_compound")
-            c1, c2 = st.columns(2)
-            with c1:
-                activity_label = select_or_custom(
-                    "Activity",
-                    build_existing_options(bioactivity_df, "activity_label", DEFAULT_BIOACTIVITY_CATEGORIES),
-                    f"edit_bioactivity_activity_{bioactivity_id}",
-                    value=maybe_blank(row["activity_label"]),
-                )
-                target_name = st.text_input("Target Name", value=maybe_blank(row["target_name"]))
-                target_category = select_or_custom(
-                    "Target Category",
-                    build_existing_options(bioactivity_df, "target_category", DEFAULT_TARGET_CATEGORIES),
-                    f"edit_bioactivity_target_category_{bioactivity_id}",
-                    value=maybe_blank(row["target_category"]),
-                )
-                assay_type = st.text_input("Assay Type", value=maybe_blank(row["assay_type"]))
-                potency_type = select_or_custom(
-                    "Potency Metric",
-                    build_existing_options(bioactivity_df, "potency_type", DEFAULT_POTENCY_TYPES),
-                    f"edit_bioactivity_metric_{bioactivity_id}",
-                    value=maybe_blank(row["potency_type"]),
-                )
-                relation_options = ["=", "<", "<=", ">", ">=", "~"]
-                relation_value = maybe_blank(row["potency_relation"]) or "="
-                potency_relation = st.selectbox("Relation", relation_options, index=relation_options.index(relation_value) if relation_value in relation_options else 0)
-                potency_value_text = st.text_input("Potency Value", value=maybe_blank(row["potency_value"]))
-            with c2:
-                potency_unit = select_or_custom(
-                    "Potency Unit",
-                    build_existing_options(bioactivity_df, "potency_unit", DEFAULT_POTENCY_UNITS),
-                    f"edit_bioactivity_unit_{bioactivity_id}",
-                    value=maybe_blank(row["potency_unit"]),
-                )
-                outcome = st.text_input("Outcome", value=maybe_blank(row["outcome"]))
-                assay_medium = st.text_input("Assay Medium / Test System", value=maybe_blank(row["assay_medium"]))
-                selectivity = st.text_input("Selectivity", value=maybe_blank(row["selectivity"]))
-                assay_source = st.text_input("Assay Source", value=maybe_blank(row["assay_source"]))
-                note = st.text_area("Note", value=maybe_blank(row["note"]))
-            submitted = st.form_submit_button("Save Changes")
+
+        selected_compound_label = st.selectbox("Select Compound", label_list, index=default_index, key="edit_bioactivity_compound")
+        c1, c2 = st.columns(2)
+        with c1:
+            activity_label = select_or_custom(
+                "Activity",
+                build_existing_options(bioactivity_df, "activity_label", DEFAULT_BIOACTIVITY_CATEGORIES),
+                f"edit_bioactivity_activity_{bioactivity_id}",
+                value=maybe_blank(row["activity_label"]),
+            )
+            target_name = st.text_input("Target Name", value=maybe_blank(row["target_name"]))
+            target_category = select_or_custom(
+                "Target Category",
+                build_existing_options(bioactivity_df, "target_category", DEFAULT_TARGET_CATEGORIES),
+                f"edit_bioactivity_target_category_{bioactivity_id}",
+                value=maybe_blank(row["target_category"]),
+            )
+            assay_type = st.text_input("Assay Type", value=maybe_blank(row["assay_type"]))
+            potency_type = select_or_custom(
+                "Potency Metric",
+                build_existing_options(bioactivity_df, "potency_type", DEFAULT_POTENCY_TYPES),
+                f"edit_bioactivity_metric_{bioactivity_id}",
+                value=maybe_blank(row["potency_type"]),
+            )
+            relation_options = ["=", "<", "<=", ">", ">=", "~"]
+            relation_value = maybe_blank(row["potency_relation"]) or "="
+            potency_relation = st.selectbox("Relation", relation_options, index=relation_options.index(relation_value) if relation_value in relation_options else 0)
+            potency_value_text = st.text_input("Potency Value", value=maybe_blank(row["potency_value"]))
+        with c2:
+            potency_unit = select_or_custom(
+                "Potency Unit",
+                build_existing_options(bioactivity_df, "potency_unit", DEFAULT_POTENCY_UNITS),
+                f"edit_bioactivity_unit_{bioactivity_id}",
+                value=maybe_blank(row["potency_unit"]),
+            )
+            outcome = st.text_input("Outcome", value=maybe_blank(row["outcome"]))
+            assay_medium = st.text_input("Assay Medium / Test System", value=maybe_blank(row["assay_medium"]))
+            selectivity = st.text_input("Selectivity", value=maybe_blank(row["selectivity"]))
+            assay_source = st.text_input("Assay Source", value=maybe_blank(row["assay_source"]))
+            note = st.text_area("Note", value=maybe_blank(row["note"]))
+        submitted = st.button("Save Changes", key="edit_bioactivity_submit")
 
         if submitted:
             if not activity_label.strip():
@@ -7438,23 +7481,23 @@ def show_spectra_pages():
 
             selected_compound_id = int(selected_compound_label.split(" - ")[0])
 
-            with st.form("add_spectra_form", clear_on_submit=False):
-                spectrum_type = select_or_custom(
-                    "Spectrum Type",
-                    build_existing_options(spectra_df, "spectrum_type", DEFAULT_SPECTRUM_TYPES),
-                    "add_spectrum_type",
-                    value="Supporting Data",
-                )
-                file_path = st.text_input("File Path or External URL (optional if uploading)", placeholder="e.g. data/spectra/RU207-C1_1H.png or https://drive.google.com/...")
-                uploaded_files = st.file_uploader(
-                    "Upload Spectra Files",
-                    accept_multiple_files=True,
-                    key="add_spectra_uploads",
-                )
-                note = st.text_area("Note", key="add_spectra_note")
-                st.caption("Recommended: raw data types such as 1H Raw Data, 13C Raw Data, JCAMP-DX, and MNova should use Google Drive links.")
 
-                submitted_spectra = st.form_submit_button("Save Spectra File")
+            spectrum_type = select_or_custom(
+                "Spectrum Type",
+                build_existing_options(spectra_df, "spectrum_type", DEFAULT_SPECTRUM_TYPES),
+                "add_spectrum_type",
+                value="Supporting Data",
+            )
+            file_path = st.text_input("File Path or External URL (optional if uploading)", placeholder="e.g. data/spectra/RU207-C1_1H.png or https://drive.google.com/...")
+            uploaded_files = st.file_uploader(
+                "Upload Spectra Files",
+                accept_multiple_files=True,
+                key="add_spectra_uploads",
+            )
+            note = st.text_area("Note", key="add_spectra_note")
+            st.caption("Recommended: raw data types such as 1H Raw Data, 13C Raw Data, JCAMP-DX, and MNova should use Google Drive links.")
+
+            submitted_spectra = st.button("Save Spectra File", key="add_spectra_submit")
 
             if submitted_spectra:
                 if not spectrum_type.strip():
@@ -7546,28 +7589,28 @@ def show_spectra_pages():
                 if row["compound_id"] in options["id"].tolist():
                     default_index = options.index[options["id"] == row["compound_id"]][0]
 
-                with st.form("edit_spectra_form", clear_on_submit=False):
-                    selected_compound_label = st.selectbox(
-                        "Select Compound",
-                        label_list,
-                        index=default_index,
-                        key="edit_spectra_compound"
-                    )
 
-                    spectrum_type = select_or_custom(
-                        "Spectrum Type",
-                        build_existing_options(spectra_df, "spectrum_type", DEFAULT_SPECTRUM_TYPES),
-                        f"edit_spectrum_type_{file_id}",
-                        value=maybe_blank(row["spectrum_type"]),
-                    )
-                    file_path = st.text_input("File Path or External URL", value=maybe_blank(row["file_path"]))
-                    replacement_upload = st.file_uploader(
-                        "Replace File by Upload",
-                        key=f"edit_spectrum_upload_{file_id}",
-                    )
-                    note = st.text_area("Note", value=maybe_blank(row["note"]))
+                selected_compound_label = st.selectbox(
+                    "Select Compound",
+                    label_list,
+                    index=default_index,
+                    key="edit_spectra_compound"
+                )
 
-                    submitted_edit_spectra = st.form_submit_button("Save Changes")
+                spectrum_type = select_or_custom(
+                    "Spectrum Type",
+                    build_existing_options(spectra_df, "spectrum_type", DEFAULT_SPECTRUM_TYPES),
+                    f"edit_spectrum_type_{file_id}",
+                    value=maybe_blank(row["spectrum_type"]),
+                )
+                file_path = st.text_input("File Path or External URL", value=maybe_blank(row["file_path"]))
+                replacement_upload = st.file_uploader(
+                    "Replace File by Upload",
+                    key=f"edit_spectrum_upload_{file_id}",
+                )
+                note = st.text_area("Note", value=maybe_blank(row["note"]))
+
+                submitted_edit_spectra = st.button("Save Changes", key="edit_spectra_submit")
 
                 if submitted_edit_spectra:
                     if not spectrum_type.strip():
