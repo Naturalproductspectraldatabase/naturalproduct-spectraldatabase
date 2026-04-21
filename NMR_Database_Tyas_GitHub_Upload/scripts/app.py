@@ -141,11 +141,53 @@ DEFAULT_SPECTRUM_TYPES = [
     "HRMS",
     "Supporting Data",
 ]
+DEFAULT_BIOACTIVITY_CATEGORIES = [
+    "Cytotoxicity",
+    "Antibacterial",
+    "Antifungal",
+    "Antiviral",
+    "Anti-inflammatory",
+    "Antiparasitic",
+    "Enzyme Inhibition",
+    "Receptor Binding",
+    "Antioxidant",
+    "Ecological Activity",
+]
+DEFAULT_TARGET_CATEGORIES = [
+    "Cell Line",
+    "Bacterium",
+    "Fungus",
+    "Virus",
+    "Parasite",
+    "Enzyme",
+    "Receptor",
+    "In Vivo",
+    "General",
+]
+DEFAULT_POTENCY_TYPES = [
+    "IC50",
+    "EC50",
+    "MIC",
+    "GI50",
+    "LC50",
+    "ED50",
+    "% Inhibition",
+    "Zone of Inhibition",
+]
+DEFAULT_POTENCY_UNITS = [
+    "uM",
+    "nM",
+    "ug/mL",
+    "mg/mL",
+    "%",
+    "mm",
+]
 
 NAV_OPTIONS = [
     "Dashboard",
     "Search & Match",
     "Compound Workspace",
+    "Bioactivity",
     "1H Peaks",
     "13C Peaks",
     "Spectra Library",
@@ -191,6 +233,10 @@ NAV_SECTION_COPY = {
     "Compound Workspace": {
         "title": "Compound Workspace",
         "summary": "Browse, submit, import, and revise records.",
+    },
+    "Bioactivity": {
+        "title": "Bioactivity",
+        "summary": "Track assay outcomes, targets, potency values, and literature-reported activity profiles.",
     },
     "1H Peaks": {
         "title": "1H Peaks",
@@ -552,7 +598,7 @@ st.markdown("""
 
 .block-container {
     padding-top: 1.1rem;
-    padding-bottom: 5.5rem;
+    padding-bottom: 6.75rem;
     max-width: 1500px;
 }
 
@@ -700,18 +746,21 @@ st.markdown("""
 
 .app-credit-footer {
     position: fixed;
-    right: 18px;
-    bottom: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: 16px;
     z-index: 9999;
-    padding: 0.45rem 0.8rem;
+    padding: 0.42rem 0.95rem;
     border-radius: 999px;
     background: rgba(8, 17, 30, 0.82);
     border: 1px solid rgba(255,255,255,0.08);
     box-shadow: 0 10px 28px rgba(0,0,0,0.22);
     color: rgba(245, 248, 253, 0.92);
-    font-size: 0.78rem;
+    font-size: 0.76rem;
     letter-spacing: 0.01em;
     backdrop-filter: blur(8px);
+    pointer-events: none;
+    white-space: nowrap;
 }
 
 .section-subtitle {
@@ -1059,6 +1108,14 @@ header[data-testid="stHeader"] {
     .sidebar-stats {
         grid-template-columns: 1fr;
     }
+
+    .app-credit-footer {
+        left: 14px;
+        right: 14px;
+        transform: none;
+        text-align: center;
+        white-space: normal;
+    }
 }
 
 </style>
@@ -1211,6 +1268,28 @@ def ensure_database_schema():
             """
         )
         cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS bioactivity_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                compound_id INTEGER NOT NULL,
+                activity_label TEXT NOT NULL,
+                target_name TEXT,
+                target_category TEXT,
+                assay_type TEXT,
+                potency_type TEXT,
+                potency_relation TEXT,
+                potency_value REAL,
+                potency_unit TEXT,
+                outcome TEXT,
+                assay_medium TEXT,
+                selectivity TEXT,
+                assay_source TEXT,
+                note TEXT,
+                FOREIGN KEY (compound_id) REFERENCES compounds(id) ON DELETE CASCADE
+            )
+            """
+        )
+        cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_compounds_trivial_name ON compounds(trivial_name)"
         )
         cursor.execute(
@@ -1233,6 +1312,12 @@ def ensure_database_schema():
         )
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_spectra_compound ON spectra_files(compound_id)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_bioactivity_compound ON bioactivity_records(compound_id)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_bioactivity_target_category ON bioactivity_records(target_category)"
         )
         conn.commit()
     finally:
@@ -1273,8 +1358,47 @@ def ensure_compounds_schema():
         conn.close()
 
 
+def ensure_bioactivity_schema():
+    required_columns = {
+        "activity_label": "TEXT",
+        "target_name": "TEXT",
+        "target_category": "TEXT",
+        "assay_type": "TEXT",
+        "potency_type": "TEXT",
+        "potency_relation": "TEXT",
+        "potency_value": "REAL",
+        "potency_unit": "TEXT",
+        "outcome": "TEXT",
+        "assay_medium": "TEXT",
+        "selectivity": "TEXT",
+        "assay_source": "TEXT",
+        "note": "TEXT",
+    }
+
+    if not table_exists("bioactivity_records"):
+        ensure_database_schema()
+        return
+
+    existing = get_table_columns("bioactivity_records")
+    missing = {name: dtype for name, dtype in required_columns.items() if name not in existing}
+    if not missing:
+        return
+
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        for column_name, data_type in missing.items():
+            cursor.execute(f"ALTER TABLE bioactivity_records ADD COLUMN {column_name} {data_type}")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_bioactivity_compound ON bioactivity_records(compound_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_bioactivity_target_category ON bioactivity_records(target_category)")
+        conn.commit()
+    finally:
+        conn.close()
+
+
 ensure_database_schema()
 ensure_compounds_schema()
+ensure_bioactivity_schema()
 
 # =========================
 # Generic helpers
@@ -1650,8 +1774,25 @@ def smiles_to_mol(smiles_value: str):
         return None
 
 
+def structure_text_to_mol(structure_value: str):
+    if not is_structure_backend_available():
+        return None
+    structure_text = maybe_blank(structure_value)
+    if not structure_text:
+        return None
+
+    mol = smiles_to_mol(structure_text)
+    if mol is not None:
+        return mol
+
+    try:
+        return Chem.MolFromMolBlock(structure_text, sanitize=True, removeHs=True)
+    except Exception:
+        return None
+
+
 def canonicalize_smiles(smiles_value: str) -> str:
-    mol = smiles_to_mol(smiles_value)
+    mol = structure_text_to_mol(smiles_value)
     if mol is None:
         return ""
     try:
@@ -1681,9 +1822,9 @@ def search_by_structure(
     if not is_structure_backend_available():
         return [], "Structure search requires RDKit. Add `rdkit` to requirements.txt before using this feature."
 
-    query_mol = smiles_to_mol(query_text)
+    query_mol = structure_text_to_mol(query_text)
     if query_mol is None:
-        return [], "The structure could not be parsed. Please use a valid SMILES string or redraw the query."
+        return [], "The structure could not be parsed. Please redraw the query or paste a valid SMILES / Molfile structure."
 
     query_canonical = canonicalize_smiles(query_text)
     results = []
@@ -2091,23 +2232,27 @@ def render_app_credit_footer():
     )
 
 
-def render_structure_preview(smiles_text: str, caption: str | None = None):
+def render_structure_preview(smiles_text: str, caption: str | None = None, empty_message: bool = True):
     if Chem is None or Draw is None:
-        st.info("Structure preview becomes available when RDKit drawing support is active.")
+        if empty_message:
+            st.info("Structure preview becomes available when RDKit drawing support is active.")
         return
     smiles_value = maybe_blank(smiles_text)
     if not smiles_value:
-        st.info("No SMILES preview available for this record.")
+        if empty_message:
+            st.info("No structure preview available for this record.")
         return
     try:
-        mol = Chem.MolFromSmiles(smiles_value)
+        mol = structure_text_to_mol(smiles_value)
         if mol is None:
-            st.info("Stored structure could not be rendered from the available SMILES string.")
+            if empty_message:
+                st.info("Stored structure could not be rendered from the available structure string.")
             return
         image = Draw.MolToImage(mol, size=(520, 360))
         st.image(image, caption=caption, width="stretch")
     except Exception:
-        st.info("Structure preview could not be rendered for this record.")
+        if empty_message:
+            st.info("Structure preview could not be rendered for this record.")
 
 def get_backup_bytes():
     with open(DB_PATH, "rb") as f:
@@ -2134,6 +2279,18 @@ def count_related_records(filtered_ids):
     return proton_count, carbon_count, spectra_count
 
 
+def count_bioactivity_records(filtered_ids):
+    if not filtered_ids:
+        return 0
+    conn = get_connection()
+    try:
+        placeholders = ",".join("?" * len(filtered_ids))
+        query = f"SELECT COUNT(*) AS n FROM bioactivity_records WHERE compound_id IN ({placeholders})"
+        return int(pd.read_sql_query(query, conn, params=filtered_ids)["n"][0])
+    finally:
+        conn.close()
+
+
 def calculate_workspace_health(compounds_df: pd.DataFrame):
     if compounds_df.empty:
         return {
@@ -2157,6 +2314,8 @@ def calculate_workspace_health(compounds_df: pd.DataFrame):
     external_ready_ids = set(
         spectra_df[spectra_df["file_path"].fillna("").astype(str).apply(is_external_url)]["compound_id"].tolist()
     )
+    bioactivity_df = load_all_bioactivity_data()
+    bioactivity_ready_ids = set(bioactivity_df["compound_id"].tolist()) if not bioactivity_df.empty else set()
     submission_ready = compounds_df[
         compounds_df["trivial_name"].fillna("").astype(str).str.strip().ne("")
         & compounds_df["compound_class"].fillna("").astype(str).str.strip().ne("")
@@ -2172,6 +2331,7 @@ def calculate_workspace_health(compounds_df: pd.DataFrame):
         "reference_ready": int(len(reference_ready)),
         "external_ready": int(len(external_ready_ids)),
         "submission_ready": int(len(submission_ready)),
+        "bioactivity_ready": int(len(bioactivity_ready_ids)),
     }
 
 # =========================
@@ -2262,6 +2422,7 @@ def render_dashboard_bar_chart(df: pd.DataFrame, x_col: str, y_col: str, color_h
 def render_sidebar_workspace_summary(active_section: str, all_compounds_df: pd.DataFrame):
     total_compounds = len(all_compounds_df)
     proton_count, carbon_count, spectra_count = count_related_records(all_compounds_df["id"].tolist())
+    bioactivity_count = count_bioactivity_records(all_compounds_df["id"].tolist())
     health = calculate_workspace_health(all_compounds_df)
     active_copy = NAV_SECTION_COPY.get(active_section, {"title": active_section, "summary": ""})
 
@@ -2323,6 +2484,7 @@ def render_sidebar_workspace_summary(active_section: str, all_compounds_df: pd.D
         f"Structure-ready: {health['structure_ready']} | Reference-ready: {health['reference_ready']} | "
         f"Drive-linked: {health['external_ready']} | Submission-ready: {health['submission_ready']}"
     )
+    st.caption(f"Bioactivity records: {bioactivity_count} | Bioactivity-linked compounds: {health['bioactivity_ready']}")
 
 
 def show_section_banner(image_path: Path, caption: str | None = None):
@@ -2459,10 +2621,17 @@ def render_compound_card(row):
     subclass = clean_text(row["compound_subclass"])
     source_summary = clean_text(source_summary_from_record(row))
     sample_code = clean_text(row["sample_code"])
-
-    st.markdown(
-        f"""
-        <div class="compound-card">
+    st.markdown('<div class="compound-card">', unsafe_allow_html=True)
+    preview_col, info_col = st.columns([1, 3.7])
+    with preview_col:
+        structure_path = get_full_file_path(row.get("structure_image_path"))
+        if structure_path and structure_path.exists() and is_image_file(structure_path):
+            st.image(str(structure_path), width="stretch")
+        else:
+            render_structure_preview(row.get("smiles"), caption=None, empty_message=False)
+    with info_col:
+        st.markdown(
+            f"""
             <div class="result-title">{title}</div>
             <div class="result-subtitle">{formula}</div>
             <div class="info-chip-row">
@@ -2471,10 +2640,10 @@ def render_compound_card(row):
                 <span class="info-chip">Source: {source_summary}</span>
                 <span class="info-chip">Sample: {sample_code}</span>
             </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+            """,
+            unsafe_allow_html=True,
+        )
+    st.markdown('</div>', unsafe_allow_html=True)
 
 def show_app_header():
     st.markdown('<div class="hero-shell">', unsafe_allow_html=True)
@@ -2662,6 +2831,51 @@ def load_spectrum_file_row(file_id):
         WHERE id = ?
     """
     df = pd.read_sql_query(query, conn, params=(file_id,))
+    conn.close()
+    return df
+
+
+def load_bioactivity_data(compound_id):
+    conn = get_connection()
+    query = """
+        SELECT id, compound_id, activity_label, target_name, target_category, assay_type,
+               potency_type, potency_relation, potency_value, potency_unit, outcome,
+               assay_medium, selectivity, assay_source, note
+        FROM bioactivity_records
+        WHERE compound_id = ?
+        ORDER BY id ASC
+    """
+    df = pd.read_sql_query(query, conn, params=(compound_id,))
+    conn.close()
+    return df
+
+
+def load_all_bioactivity_data():
+    conn = get_connection()
+    query = """
+        SELECT b.id, b.compound_id, c.trivial_name,
+               b.activity_label, b.target_name, b.target_category, b.assay_type,
+               b.potency_type, b.potency_relation, b.potency_value, b.potency_unit, b.outcome,
+               b.assay_medium, b.selectivity, b.assay_source, b.note
+        FROM bioactivity_records b
+        LEFT JOIN compounds c ON b.compound_id = c.id
+        ORDER BY b.id ASC
+    """
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    return df
+
+
+def load_bioactivity_row(bioactivity_id):
+    conn = get_connection()
+    query = """
+        SELECT id, compound_id, activity_label, target_name, target_category, assay_type,
+               potency_type, potency_relation, potency_value, potency_unit, outcome,
+               assay_medium, selectivity, assay_source, note
+        FROM bioactivity_records
+        WHERE id = ?
+    """
+    df = pd.read_sql_query(query, conn, params=(bioactivity_id,))
     conn.close()
     return df
 
@@ -2909,6 +3123,7 @@ def delete_compound_record(compound_id):
     conn = get_connection()
     cursor = conn.cursor()
     try:
+        cursor.execute("DELETE FROM bioactivity_records WHERE compound_id = ?", (compound_id,))
         cursor.execute("DELETE FROM proton_nmr WHERE compound_id = ?", (compound_id,))
         cursor.execute("DELETE FROM carbon_nmr WHERE compound_id = ?", (compound_id,))
         cursor.execute("DELETE FROM spectra_files WHERE compound_id = ?", (compound_id,))
@@ -3151,6 +3366,123 @@ def delete_spectrum_file_record_by_id(file_id):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM spectra_files WHERE id = ?", (file_id,))
+    conn.commit()
+    conn.close()
+
+
+def insert_bioactivity_record(
+    compound_id,
+    activity_label,
+    target_name,
+    target_category,
+    assay_type,
+    potency_type,
+    potency_relation,
+    potency_value,
+    potency_unit,
+    outcome,
+    assay_medium,
+    selectivity,
+    assay_source,
+    note,
+):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO bioactivity_records (
+            compound_id, activity_label, target_name, target_category, assay_type,
+            potency_type, potency_relation, potency_value, potency_unit, outcome,
+            assay_medium, selectivity, assay_source, note
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            compound_id,
+            activity_label,
+            target_name,
+            target_category,
+            assay_type,
+            potency_type,
+            potency_relation,
+            potency_value,
+            potency_unit,
+            outcome,
+            assay_medium,
+            selectivity,
+            assay_source,
+            note,
+        ),
+    )
+    new_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return new_id
+
+
+def update_bioactivity_record(
+    bioactivity_id,
+    compound_id,
+    activity_label,
+    target_name,
+    target_category,
+    assay_type,
+    potency_type,
+    potency_relation,
+    potency_value,
+    potency_unit,
+    outcome,
+    assay_medium,
+    selectivity,
+    assay_source,
+    note,
+):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE bioactivity_records
+        SET compound_id = ?,
+            activity_label = ?,
+            target_name = ?,
+            target_category = ?,
+            assay_type = ?,
+            potency_type = ?,
+            potency_relation = ?,
+            potency_value = ?,
+            potency_unit = ?,
+            outcome = ?,
+            assay_medium = ?,
+            selectivity = ?,
+            assay_source = ?,
+            note = ?
+        WHERE id = ?
+        """,
+        (
+            compound_id,
+            activity_label,
+            target_name,
+            target_category,
+            assay_type,
+            potency_type,
+            potency_relation,
+            potency_value,
+            potency_unit,
+            outcome,
+            assay_medium,
+            selectivity,
+            assay_source,
+            note,
+            bioactivity_id,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def delete_bioactivity_record_by_id(bioactivity_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM bioactivity_records WHERE id = ?", (bioactivity_id,))
     conn.commit()
     conn.close()
 
@@ -3913,6 +4245,7 @@ def export_similarity_results_combined(results: list) -> pd.DataFrame:
 
 def build_compound_summary_text(compound_row, proton_df, carbon_df, spectra_df):
     row = compound_row.iloc[0]
+    bioactivity_df = load_bioactivity_data(int(row["id"]))
 
     summary = f"""Natural Products Spectral Database
 Compound Summary
@@ -3962,8 +4295,96 @@ Data Coverage
 1H NMR Peaks: {len(proton_df)}
 13C NMR Peaks: {len(carbon_df)}
 Spectra Files: {len(spectra_df)}
+Bioactivity Records: {len(bioactivity_df)}
 """
     return add_credit_to_text_bytes(summary.encode("utf-8"))
+
+# =========================
+# Bioactivity helpers
+# =========================
+def export_bioactivity_results(bioactivity_df: pd.DataFrame) -> pd.DataFrame:
+    if bioactivity_df.empty:
+        return pd.DataFrame(
+            columns=[
+                "ID",
+                "Compound ID",
+                "Trivial Name",
+                "Activity",
+                "Target",
+                "Target Category",
+                "Assay Type",
+                "Metric",
+                "Relation",
+                "Value",
+                "Unit",
+                "Outcome",
+                "Assay Medium",
+                "Selectivity",
+                "Assay Source",
+                "Note",
+            ]
+        )
+    export_df = bioactivity_df.copy()
+    return export_df.rename(
+        columns={
+            "id": "ID",
+            "compound_id": "Compound ID",
+            "trivial_name": "Trivial Name",
+            "activity_label": "Activity",
+            "target_name": "Target",
+            "target_category": "Target Category",
+            "assay_type": "Assay Type",
+            "potency_type": "Metric",
+            "potency_relation": "Relation",
+            "potency_value": "Value",
+            "potency_unit": "Unit",
+            "outcome": "Outcome",
+            "assay_medium": "Assay Medium",
+            "selectivity": "Selectivity",
+            "assay_source": "Assay Source",
+            "note": "Note",
+        }
+    )
+
+
+def render_bioactivity_table(compound_id: int):
+    bioactivity_df = load_bioactivity_data(compound_id)
+    section_header(
+        "Bioactivity",
+        "Reported assay outcomes, targets, potency values, and screening notes linked to this compound.",
+    )
+    if bioactivity_df.empty:
+        st.info("No bioactivity records available for this compound yet.")
+        return
+
+    display_df = bioactivity_df.rename(
+        columns={
+            "id": "ID",
+            "activity_label": "Activity",
+            "target_name": "Target",
+            "target_category": "Target Category",
+            "assay_type": "Assay Type",
+            "potency_type": "Metric",
+            "potency_relation": "Relation",
+            "potency_value": "Value",
+            "potency_unit": "Unit",
+            "outcome": "Outcome",
+            "assay_medium": "Assay Medium",
+            "selectivity": "Selectivity",
+            "assay_source": "Assay Source",
+            "note": "Note",
+        }
+    )
+    st.dataframe(display_df, width="stretch", hide_index=True)
+
+    export_df = export_bioactivity_results(load_all_bioactivity_data().query("compound_id == @compound_id"))
+    download_dataframe_button(
+        label="Download Bioactivity Table as Excel",
+        df=export_df,
+        file_name=f"compound_{compound_id}_bioactivity.xlsx",
+        key=f"download_bioactivity_{compound_id}",
+        sheet_name="Bioactivity",
+    )
 
 # =========================
 # Spectra preview
@@ -4061,6 +4482,7 @@ def show_compound_detail(compound_id):
     proton_df_raw = load_proton_data(compound_id)
     carbon_df_raw = load_carbon_data(compound_id)
     spectra_df_raw = load_spectra_files(compound_id)
+    bioactivity_df_raw = load_bioactivity_data(compound_id)
     row_data = row.iloc[0]
 
     section_header(
@@ -4102,11 +4524,12 @@ def show_compound_detail(compound_id):
 
     completeness_score = calculate_completeness_score(row, proton_df_raw, carbon_df_raw, spectra_df_raw)
 
-    m1, m2, m3, m4 = st.columns(4)
+    m1, m2, m3, m4, m5 = st.columns(5)
     render_metric_card("1H NMR Peaks", len(proton_df_raw), m1)
     render_metric_card("13C NMR Peaks", len(carbon_df_raw), m2)
     render_metric_card("Spectra Files", len(spectra_df_raw), m3)
-    render_metric_card("Completeness", f"{completeness_score}%", m4)
+    render_metric_card("Bioactivity Records", len(bioactivity_df_raw), m4)
+    render_metric_card("Completeness", f"{completeness_score}%", m5)
     st.markdown(
         f"""
         <div class="record-badge-strip">
@@ -4119,8 +4542,8 @@ def show_compound_detail(compound_id):
         unsafe_allow_html=True,
     )
 
-    overview_tab, proton_tab, carbon_tab, spectra_tab = st.tabs(
-        ["Overview", "1H NMR", "13C NMR", "Spectra & Files"]
+    overview_tab, proton_tab, carbon_tab, spectra_tab, bioactivity_tab = st.tabs(
+        ["Overview", "1H NMR", "13C NMR", "Spectra & Files", "Bioactivity"]
     )
 
     with overview_tab:
@@ -4232,6 +4655,9 @@ def show_compound_detail(compound_id):
 
     with spectra_tab:
         render_spectra_section(compound_id)
+
+    with bioactivity_tab:
+        render_bioactivity_table(compound_id)
 
 def render_best_match_summary(item, mode_label):
     source_summary = clean_text(source_summary_from_record(item))
@@ -4426,93 +4852,76 @@ def show_search_page(all_compounds_df):
             data_source_filter=search_data_source_filter
         )
 
-        structure_search_type = st.radio(
-            "Structure Search Type",
-            ["Identity Search", "Substructure Search", "Similarity Search"],
-            horizontal=True,
-            key="structure_search_type",
-        )
-
         query_smiles = maybe_blank(st.session_state.get("structure_query_smiles"))
         editor_is_active = False
+        editor_left, editor_right = st.columns([1.65, 1])
 
-        st.markdown('<div class="panel-card">', unsafe_allow_html=True)
-        st.markdown("**Structure Editor**")
-        if streamlit_ketchersa is not None:
-            drawn_structure = streamlit_ketchersa(height="700px", key="structure_search_editor_full")
-            drawn_structure_text = "" if drawn_structure in {None, 0, "0"} else maybe_blank(drawn_structure)
-            previous_query_smiles = maybe_blank(st.session_state.get("structure_query_smiles"))
-            if drawn_structure_text != previous_query_smiles:
-                st.session_state["structure_query_smiles"] = drawn_structure_text
-            query_smiles = drawn_structure_text
-            editor_is_active = True
-            st.caption("Full Ketcher editor is active. Draw the structure directly in the web app, then choose identity, substructure, or similarity mode.")
-        elif st_ketcher is not None:
-            drawn_smiles = st_ketcher(
-                value=maybe_blank(st.session_state.get("structure_query_smiles")),
-                height=650,
-                molecule_format="SMILES",
-                key="structure_search_editor_fallback",
-            )
-            drawn_smiles_text = maybe_blank(drawn_smiles)
-            previous_query_smiles = maybe_blank(st.session_state.get("structure_query_smiles"))
-            if drawn_smiles_text != previous_query_smiles:
-                st.session_state["structure_query_smiles"] = drawn_smiles_text
-            query_smiles = drawn_smiles_text
-            editor_is_active = True
-            st.caption("A simplified drawing editor is active. For the full nmrshiftdb-style toolbar, keep `streamlit-ketchersa` available during deployment.")
-        else:
-            st.warning("The full Ketcher editor is not active in this deployment yet.")
-            st.caption(f"Editor status: {KETCHER_STATUS}")
-            st.markdown(
-                """
-                Use this checklist:
-                1. Upload both `requirements.txt` files.
-                2. Reboot the Streamlit app.
-                3. Check logs for `streamlit-ketchersa` installation errors.
-                4. If install still fails, we should switch to an iframe-based Ketcher embed.
-                """
-            )
-            query_smiles = st.text_area(
-                "Query Structure (SMILES)",
-                key="structure_query_smiles",
-                height=180,
-                placeholder="Example: C1=CC=CC=C1",
-            )
-            st.text_input(
-                "Starting SMILES (optional)",
-                key="structure_seed_smiles",
-                placeholder="Paste a known scaffold here if you want to seed the editor in a future run.",
-            )
-            st.caption("You can still use structure search right now by pasting a valid SMILES string below.")
-        st.markdown('</div>', unsafe_allow_html=True)
-
-        control_left, control_right = st.columns([1.35, 1])
-
-        with control_left:
+        with editor_left:
             st.markdown('<div class="panel-card">', unsafe_allow_html=True)
-            if editor_is_active:
-                st.caption("The structure drawn in the editor will be used directly for searching.")
-                if query_smiles:
-                    with st.expander("Technical preview of the drawn structure (SMILES)", expanded=False):
-                        st.code(query_smiles)
-                else:
-                    st.caption("Draw a structure in the editor area above to prepare the query.")
+            st.markdown("**Search by Structure**")
+            if streamlit_ketchersa is not None:
+                drawn_structure = streamlit_ketchersa(height="700px", key="structure_search_editor_full")
+                drawn_structure_text = "" if drawn_structure in {None, 0, "0"} else maybe_blank(drawn_structure)
+                previous_query_smiles = maybe_blank(st.session_state.get("structure_query_smiles"))
+                if drawn_structure_text != previous_query_smiles:
+                    st.session_state["structure_query_smiles"] = drawn_structure_text
+                query_smiles = drawn_structure_text
+                editor_is_active = True
+                st.caption("Full Ketcher editor is active. Draw directly in the canvas, then run identity, substructure, or similarity search.")
+            elif st_ketcher is not None:
+                drawn_smiles = st_ketcher(
+                    value=maybe_blank(st.session_state.get("structure_query_smiles")),
+                    height=650,
+                    molecule_format="SMILES",
+                    key="structure_search_editor_fallback",
+                )
+                drawn_smiles_text = maybe_blank(drawn_smiles)
+                previous_query_smiles = maybe_blank(st.session_state.get("structure_query_smiles"))
+                if drawn_smiles_text != previous_query_smiles:
+                    st.session_state["structure_query_smiles"] = drawn_smiles_text
+                query_smiles = drawn_smiles_text
+                editor_is_active = True
+                st.caption("A simplified drawing editor is active. The full nmrshiftdb-style toolbar still depends on the complete Ketcher build loading in deployment.")
             else:
-                st.caption("Paste a valid SMILES string here until the drawing editor is active in deployment.")
+                st.warning("The full Ketcher editor is not active in this deployment yet.")
+                st.caption(f"Editor status: {KETCHER_STATUS}")
+                query_smiles = st.text_area(
+                    "Query Structure (SMILES or Molfile)",
+                    key="structure_query_smiles",
+                    height=220,
+                    placeholder="Example: C1=CC=CC=C1",
+                )
+                st.text_input(
+                    "Starting SMILES (optional)",
+                    key="structure_seed_smiles",
+                    placeholder="Paste a known scaffold here if you want to seed the editor in a future run.",
+                )
+                st.caption("Fallback mode is active. You can still search by pasting a valid SMILES or Molfile query.")
             st.markdown('</div>', unsafe_allow_html=True)
 
-        with control_right:
+        with editor_right:
             st.markdown('<div class="panel-card">', unsafe_allow_html=True)
+            structure_search_type = st.radio(
+                "Structure Search Type",
+                ["Identity Search", "Substructure Search", "Similarity Search"],
+                horizontal=False,
+                key="structure_search_type",
+            )
+            if query_smiles:
+                render_structure_preview(query_smiles, caption="Current query", empty_message=False)
+            else:
+                st.caption("Draw or paste a structure to prepare the current query.")
             if structure_search_type == "Similarity Search":
                 st.caption(f"Minimum similarity score: {min_similarity_score}%")
-                st.caption("Similarity mode compares molecular fingerprints and returns the closest structures first.")
+                st.caption("Similarity mode compares molecular fingerprints and ranks the closest structures first.")
             elif structure_search_type == "Substructure Search":
-                st.caption("Substructure mode checks whether the query fragment is contained inside each stored compound.")
+                st.caption("Substructure mode checks whether your query fragment is present inside stored candidate structures.")
             else:
-                st.caption("Identity mode compares the canonicalized structure of your query against the structures stored in the database.")
-
-            run_structure_search = st.button("Run Structure Search", use_container_width=True, key="run_structure_search")
+                st.caption("Identity mode compares the canonicalized query structure against stored compounds.")
+            run_structure_search = st.button("Search by Structure", use_container_width=True, key="run_structure_search")
+            if query_smiles:
+                with st.expander("Technical query preview", expanded=False):
+                    st.code(query_smiles)
             st.markdown('</div>', unsafe_allow_html=True)
 
         if run_structure_search:
@@ -4789,6 +5198,7 @@ def show_overview_page(all_compounds_df):
 
     filtered_ids = filtered_df["id"].tolist()
     proton_count, carbon_count, spectra_count = count_related_records(filtered_ids)
+    bioactivity_count = count_bioactivity_records(filtered_ids)
     health = calculate_workspace_health(filtered_df)
     spectra_df = load_all_spectra_files()
     linked_spectra_ids = set(spectra_df["compound_id"].tolist()) if not spectra_df.empty else set()
@@ -4809,17 +5219,19 @@ def show_overview_page(all_compounds_df):
     ]
     missing_spectra_df = filtered_df[~filtered_df["id"].isin(linked_spectra_ids)]
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns(5)
     render_metric_card("Compounds", len(filtered_df), c1)
     render_metric_card("1H Peaks", proton_count, c2)
     render_metric_card("13C Peaks", carbon_count, c3)
     render_metric_card("Spectra Files", spectra_count, c4)
+    render_metric_card("Bioactivity Records", bioactivity_count, c5)
 
-    h1, h2, h3, h4 = st.columns(4)
+    h1, h2, h3, h4, h5 = st.columns(5)
     render_metric_card("Structure IDs Ready", health["structure_ready"], h1)
     render_metric_card("Reference Ready", health["reference_ready"], h2)
     render_metric_card("Drive-linked Records", health["external_ready"], h3)
     render_metric_card("Submission-ready Metadata", health["submission_ready"], h4)
+    render_metric_card("Bioactivity-linked Compounds", health["bioactivity_ready"], h5)
 
     section_header("Metadata Gaps", "This section helps you see which records should be curated next.")
     g1, g2, g3, g4 = st.columns(4)
@@ -5048,8 +5460,9 @@ def show_guide_page():
                 """
                 1. Open `Dashboard` to see coverage, quick browsing, and backup.
                 2. Use `Search & Match` for keyword lookup or 1H/13C spectral matching.
-                3. Open `Compound Workspace` to inspect full records, references, and linked files.
-            4. Use `1H Peaks`, `13C Peaks`, and `Spectra Library` when you want to manage sub-records directly.
+                3. Open `Compound Workspace` to inspect full records, references, linked files, and bioactivity tabs.
+                4. Use `Bioactivity` to curate assay outcomes, potency values, and target annotations separately from the core compound metadata.
+                5. Use `1H Peaks`, `13C Peaks`, and `Spectra Library` when you want to manage sub-records directly.
             """
         )
 
@@ -5060,7 +5473,7 @@ def show_guide_page():
             2. Fill the core identity fields first: trivial name, formula, SMILES/InChI/InChIKey, class, subclass, source category/organism, and structure.
             3. Add publication information, notes, and reference fields.
             4. Save the compound record.
-            5. Add 1H peaks, 13C peaks, preview images, PDFs, and raw-data links from the dedicated sections if needed.
+            5. Add 1H peaks, 13C peaks, preview images, PDFs, raw-data links, and bioactivity records from their dedicated sections if needed.
             """
         )
 
@@ -6262,16 +6675,394 @@ def show_carbon_pages():
 
 
 # =========================
+# Bioactivity pages
+# =========================
+def show_bioactivity_pages():
+    bioactivity_page = st.radio(
+        "Bioactivity Tools",
+        ["Browse Assays", "Add Assay", "Edit Assay", "Delete Assay"],
+        horizontal=True,
+    )
+
+    bioactivity_df = load_all_bioactivity_data()
+    compounds_df = load_all_compounds()
+
+    if bioactivity_page == "Browse Assays":
+        section_header(
+            "Bioactivity Browser",
+            "Review assay records by activity class, target, potency metric, and linked compound.",
+        )
+        if bioactivity_df.empty:
+            st.info("No bioactivity records available yet.")
+            return
+
+        with st.expander("Bioactivity Filters", expanded=True):
+            activity_filter = st.selectbox(
+                "Activity",
+                ["All"] + sorted(set(bioactivity_df["activity_label"].fillna("").astype(str).str.strip()) - {""}),
+                key="bioactivity_activity_filter",
+            )
+            target_category_filter = st.selectbox(
+                "Target Category",
+                ["All"] + sorted(set(bioactivity_df["target_category"].fillna("").astype(str).str.strip()) - {""}),
+                key="bioactivity_target_filter",
+            )
+            potency_filter = st.selectbox(
+                "Potency Metric",
+                ["All"] + sorted(set(bioactivity_df["potency_type"].fillna("").astype(str).str.strip()) - {""}),
+                key="bioactivity_metric_filter",
+            )
+            keyword_filter = st.text_input(
+                "Keyword",
+                key="bioactivity_keyword_filter",
+                placeholder="target, organism, compound, assay source...",
+            )
+
+        filtered_df = bioactivity_df.copy()
+        if activity_filter != "All":
+            filtered_df = filtered_df[filtered_df["activity_label"].fillna("").astype(str).str.strip() == activity_filter]
+        if target_category_filter != "All":
+            filtered_df = filtered_df[filtered_df["target_category"].fillna("").astype(str).str.strip() == target_category_filter]
+        if potency_filter != "All":
+            filtered_df = filtered_df[filtered_df["potency_type"].fillna("").astype(str).str.strip() == potency_filter]
+        if keyword_filter.strip():
+            keyword = keyword_filter.strip().lower()
+            searchable = filtered_df[
+                [
+                    "trivial_name",
+                    "activity_label",
+                    "target_name",
+                    "target_category",
+                    "assay_type",
+                    "assay_source",
+                    "note",
+                ]
+            ].fillna("").astype(str).agg(" ".join, axis=1).str.lower()
+            filtered_df = filtered_df[searchable.str.contains(re.escape(keyword), regex=True)]
+
+        top1, top2, top3 = st.columns(3)
+        render_metric_card("Assay Records", len(filtered_df), top1)
+        render_metric_card("Linked Compounds", filtered_df["compound_id"].nunique(), top2)
+        active_hits = filtered_df[filtered_df["outcome"].fillna("").astype(str).str.lower().str.contains("active|potent|strong")]
+        render_metric_card("Marked Active/Potent", len(active_hits), top3)
+
+        export_df = export_bioactivity_results(filtered_df)
+        download_dataframe_button(
+            label="Download Bioactivity Browser as Excel",
+            df=export_df,
+            file_name="bioactivity_browser.xlsx",
+            key="download_bioactivity_browser",
+            sheet_name="Bioactivity Browser",
+        )
+        st.dataframe(export_df, width="stretch", hide_index=True)
+
+        section_header("Highlighted Assays")
+        for _, row in filtered_df.head(8).iterrows():
+            st.markdown('<div class="panel-card">', unsafe_allow_html=True)
+            left, right = st.columns([4.5, 1])
+            with left:
+                st.markdown(f"**{clean_text(row['trivial_name'])}**")
+                st.caption(
+                    f"{clean_text(row['activity_label'])} | {clean_text(row['target_name'])} | "
+                    f"{clean_text(row['potency_type'])} {clean_text(row['potency_relation'])} "
+                    f"{clean_text(row['potency_value'])} {clean_text(row['potency_unit'])}"
+                )
+                st.write(clean_text(row["note"]))
+            with right:
+                if st.button("Open Record", key=f"bioactivity_open_{row['id']}"):
+                    open_compound_detail(int(row["compound_id"]))
+                    st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    elif bioactivity_page == "Add Assay":
+        section_header(
+            "Add Bioactivity Record",
+            "Capture reported assay outcomes from marine natural product papers in a flexible but structured format.",
+        )
+        render_helper_card(
+            "Suggested data model",
+            "Use Activity for the broad phenotype, Target for the exact cell line / microbe / enzyme, Metric for IC50 or MIC, and Outcome/Note for context such as selectivity or partial inhibition.",
+        )
+
+        if compounds_df.empty:
+            st.info("No compounds available. Please add a compound first.")
+            return
+
+        options = compounds_df[["id", "trivial_name"]].copy()
+        options["label"] = options["id"].astype(str) + " - " + options["trivial_name"].fillna("")
+        label_list = options["label"].tolist()
+        default_index = 0
+        selected_id = st.session_state.get("selected_compound_id")
+        if selected_id is not None and selected_id in options["id"].tolist():
+            default_index = options.index[options["id"] == selected_id][0]
+
+        with st.form("add_bioactivity_form", clear_on_submit=False):
+            selected_compound_label = st.selectbox("Select Compound", label_list, index=default_index, key="add_bioactivity_compound")
+            c1, c2 = st.columns(2)
+            with c1:
+                activity_label = select_or_custom(
+                    "Activity",
+                    build_existing_options(bioactivity_df, "activity_label", DEFAULT_BIOACTIVITY_CATEGORIES),
+                    "add_bioactivity_activity",
+                    help_text="Choose an existing broad activity label or use Custom... for a new one.",
+                )
+                target_name = st.text_input("Target Name", placeholder="e.g. HCT-116, MRSA, PTP1B")
+                target_category = select_or_custom(
+                    "Target Category",
+                    build_existing_options(bioactivity_df, "target_category", DEFAULT_TARGET_CATEGORIES),
+                    "add_bioactivity_target_category",
+                )
+                assay_type = st.text_input("Assay Type", placeholder="e.g. cytotoxicity assay, antimicrobial assay")
+                potency_type = select_or_custom(
+                    "Potency Metric",
+                    build_existing_options(bioactivity_df, "potency_type", DEFAULT_POTENCY_TYPES),
+                    "add_bioactivity_metric",
+                )
+                potency_relation = st.selectbox("Relation", ["=", "<", "<=", ">", ">=", "~"], index=0)
+                potency_value_text = st.text_input("Potency Value", placeholder="e.g. 1.2")
+            with c2:
+                potency_unit = select_or_custom(
+                    "Potency Unit",
+                    build_existing_options(bioactivity_df, "potency_unit", DEFAULT_POTENCY_UNITS),
+                    "add_bioactivity_unit",
+                )
+                outcome = st.text_input("Outcome", placeholder="e.g. active, inactive, moderate, selective")
+                assay_medium = st.text_input("Assay Medium / Test System", placeholder="e.g. in vitro, broth microdilution")
+                selectivity = st.text_input("Selectivity", placeholder="e.g. selective vs normal Vero cells")
+                assay_source = st.text_input("Assay Source", placeholder="e.g. J. Am. Chem. Soc. 2006")
+                note = st.text_area("Note", placeholder="Any caveat, mechanism note, replicate information, or assay context")
+            submitted = st.form_submit_button("Save Bioactivity Record")
+
+        if submitted:
+            if not activity_label.strip():
+                st.error("Activity is required.")
+            else:
+                potency_value = safe_float_or_none(potency_value_text)
+                if potency_value_text.strip() and potency_value is None:
+                    st.error("Potency Value must be a valid number.")
+                else:
+                    selected_compound_id = int(selected_compound_label.split(" - ")[0])
+                    new_id = insert_bioactivity_record(
+                        compound_id=selected_compound_id,
+                        activity_label=activity_label.strip(),
+                        target_name=target_name.strip(),
+                        target_category=target_category.strip(),
+                        assay_type=assay_type.strip(),
+                        potency_type=potency_type.strip(),
+                        potency_relation=potency_relation.strip(),
+                        potency_value=potency_value,
+                        potency_unit=potency_unit.strip(),
+                        outcome=outcome.strip(),
+                        assay_medium=assay_medium.strip(),
+                        selectivity=selectivity.strip(),
+                        assay_source=assay_source.strip(),
+                        note=note.strip(),
+                    )
+                    st.success(f"Bioactivity record saved successfully. New Assay ID: {new_id}")
+
+    elif bioactivity_page == "Edit Assay":
+        section_header("Edit Bioactivity Record", "Update an existing assay entry without touching the parent compound metadata.")
+        if bioactivity_df.empty:
+            st.info("No bioactivity records available.")
+            return
+
+        bioactivity_df["label"] = (
+            bioactivity_df["id"].astype(str)
+            + " | "
+            + bioactivity_df["trivial_name"].fillna("-").astype(str)
+            + " | "
+            + bioactivity_df["activity_label"].fillna("-").astype(str)
+            + " | "
+            + bioactivity_df["target_name"].fillna("-").astype(str)
+        )
+        selected_label = st.selectbox("Select Bioactivity Record", bioactivity_df["label"].tolist(), key="edit_bioactivity_select")
+        bioactivity_id = int(selected_label.split(" | ")[0])
+        row_df = load_bioactivity_row(bioactivity_id)
+
+        if row_df.empty:
+            st.error("Bioactivity record not found.")
+            return
+
+        row = row_df.iloc[0]
+        options = compounds_df[["id", "trivial_name"]].copy()
+        options["label"] = options["id"].astype(str) + " - " + options["trivial_name"].fillna("")
+        label_list = options["label"].tolist()
+        default_index = 0
+        if row["compound_id"] in options["id"].tolist():
+            default_index = options.index[options["id"] == row["compound_id"]][0]
+
+        with st.form("edit_bioactivity_form", clear_on_submit=False):
+            selected_compound_label = st.selectbox("Select Compound", label_list, index=default_index, key="edit_bioactivity_compound")
+            c1, c2 = st.columns(2)
+            with c1:
+                activity_label = select_or_custom(
+                    "Activity",
+                    build_existing_options(bioactivity_df, "activity_label", DEFAULT_BIOACTIVITY_CATEGORIES),
+                    f"edit_bioactivity_activity_{bioactivity_id}",
+                    value=maybe_blank(row["activity_label"]),
+                )
+                target_name = st.text_input("Target Name", value=maybe_blank(row["target_name"]))
+                target_category = select_or_custom(
+                    "Target Category",
+                    build_existing_options(bioactivity_df, "target_category", DEFAULT_TARGET_CATEGORIES),
+                    f"edit_bioactivity_target_category_{bioactivity_id}",
+                    value=maybe_blank(row["target_category"]),
+                )
+                assay_type = st.text_input("Assay Type", value=maybe_blank(row["assay_type"]))
+                potency_type = select_or_custom(
+                    "Potency Metric",
+                    build_existing_options(bioactivity_df, "potency_type", DEFAULT_POTENCY_TYPES),
+                    f"edit_bioactivity_metric_{bioactivity_id}",
+                    value=maybe_blank(row["potency_type"]),
+                )
+                relation_options = ["=", "<", "<=", ">", ">=", "~"]
+                relation_value = maybe_blank(row["potency_relation"]) or "="
+                potency_relation = st.selectbox("Relation", relation_options, index=relation_options.index(relation_value) if relation_value in relation_options else 0)
+                potency_value_text = st.text_input("Potency Value", value=maybe_blank(row["potency_value"]))
+            with c2:
+                potency_unit = select_or_custom(
+                    "Potency Unit",
+                    build_existing_options(bioactivity_df, "potency_unit", DEFAULT_POTENCY_UNITS),
+                    f"edit_bioactivity_unit_{bioactivity_id}",
+                    value=maybe_blank(row["potency_unit"]),
+                )
+                outcome = st.text_input("Outcome", value=maybe_blank(row["outcome"]))
+                assay_medium = st.text_input("Assay Medium / Test System", value=maybe_blank(row["assay_medium"]))
+                selectivity = st.text_input("Selectivity", value=maybe_blank(row["selectivity"]))
+                assay_source = st.text_input("Assay Source", value=maybe_blank(row["assay_source"]))
+                note = st.text_area("Note", value=maybe_blank(row["note"]))
+            submitted = st.form_submit_button("Save Changes")
+
+        if submitted:
+            if not activity_label.strip():
+                st.error("Activity is required.")
+            else:
+                potency_value = safe_float_or_none(potency_value_text)
+                if potency_value_text.strip() and potency_value is None:
+                    st.error("Potency Value must be a valid number.")
+                else:
+                    selected_compound_id = int(selected_compound_label.split(" - ")[0])
+                    update_bioactivity_record(
+                        bioactivity_id=bioactivity_id,
+                        compound_id=selected_compound_id,
+                        activity_label=activity_label.strip(),
+                        target_name=target_name.strip(),
+                        target_category=target_category.strip(),
+                        assay_type=assay_type.strip(),
+                        potency_type=potency_type.strip(),
+                        potency_relation=potency_relation.strip(),
+                        potency_value=potency_value,
+                        potency_unit=potency_unit.strip(),
+                        outcome=outcome.strip(),
+                        assay_medium=assay_medium.strip(),
+                        selectivity=selectivity.strip(),
+                        assay_source=assay_source.strip(),
+                        note=note.strip(),
+                    )
+                    st.success(f"Bioactivity record ID {bioactivity_id} updated successfully.")
+
+    else:
+        section_header("Delete Bioactivity Record", "Remove one assay record without deleting the parent compound.")
+        if bioactivity_df.empty:
+            st.info("No bioactivity records available.")
+            return
+        bioactivity_df["label"] = (
+            bioactivity_df["id"].astype(str)
+            + " | "
+            + bioactivity_df["trivial_name"].fillna("-").astype(str)
+            + " | "
+            + bioactivity_df["activity_label"].fillna("-").astype(str)
+            + " | "
+            + bioactivity_df["target_name"].fillna("-").astype(str)
+        )
+        selected_label = st.selectbox("Select Bioactivity Record to Delete", bioactivity_df["label"].tolist(), key="delete_bioactivity_select")
+        bioactivity_id = int(selected_label.split(" | ")[0])
+        row_df = load_bioactivity_row(bioactivity_id)
+        if not row_df.empty:
+            row = row_df.iloc[0]
+            st.warning("This action cannot be undone.")
+            st.markdown('<div class="panel-card">', unsafe_allow_html=True)
+            st.write(f"**Assay ID:** {bioactivity_id}")
+            st.write(f"**Activity:** {clean_text(row['activity_label'])}")
+            st.write(f"**Target:** {clean_text(row['target_name'])}")
+            st.write(f"**Metric:** {clean_text(row['potency_type'])} {clean_text(row['potency_relation'])} {clean_text(row['potency_value'])} {clean_text(row['potency_unit'])}")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+            with st.form("delete_bioactivity_form"):
+                confirm = st.checkbox("I understand that this will permanently delete this bioactivity record.")
+                submitted_delete = st.form_submit_button("Delete Bioactivity Record")
+
+            if submitted_delete:
+                if not confirm:
+                    st.error("Please confirm deletion first.")
+                else:
+                    delete_bioactivity_record_by_id(bioactivity_id)
+                    st.success(f"Bioactivity record ID {bioactivity_id} was deleted.")
+
+
+# =========================
 # Spectra pages
 # =========================
+def show_spectra_library_overview():
+    spectra_df = load_all_spectra_files()
+    section_header(
+        "Spectra Library Overview",
+        "Review coverage, storage quality, and quick-access previews before editing individual file records.",
+    )
+    if spectra_df.empty:
+        st.info("No spectra file records available.")
+        return
+
+    spectra_df = spectra_df.copy()
+    spectra_df["storage_type"] = spectra_df["file_path"].fillna("").astype(str).apply(classify_storage_type)
+    spectra_df["is_remote"] = spectra_df["file_path"].fillna("").astype(str).apply(is_external_url)
+    spectra_df["exists_locally"] = spectra_df["file_path"].fillna("").astype(str).apply(
+        lambda value: True if is_external_url(value) else bool(get_full_file_path(value) and get_full_file_path(value).exists())
+    )
+
+    m1, m2, m3, m4 = st.columns(4)
+    render_metric_card("Library Records", len(spectra_df), m1)
+    render_metric_card("Remote Links", int(spectra_df["is_remote"].sum()), m2)
+    render_metric_card("Local Existing Files", int((~spectra_df["is_remote"] & spectra_df["exists_locally"]).sum()), m3)
+    render_metric_card("Missing Local Files", int((~spectra_df["is_remote"] & ~spectra_df["exists_locally"]).sum()), m4)
+
+    spectrum_counts = (
+        spectra_df["spectrum_type"]
+        .fillna("Uncategorized")
+        .replace("", "Uncategorized")
+        .value_counts()
+        .reset_index()
+    )
+    spectrum_counts.columns = ["Spectrum Type", "Count"]
+    render_dashboard_bar_chart(spectrum_counts, x_col="Spectrum Type", y_col="Count", color_hex="#FF7F6D")
+
+    st.markdown("**Recent Library Entries**")
+    preview_df = spectra_df[
+        ["id", "trivial_name", "spectrum_type", "storage_type", "file_path", "note"]
+    ].rename(
+        columns={
+            "id": "ID",
+            "trivial_name": "Compound",
+            "spectrum_type": "Spectrum Type",
+            "storage_type": "Storage",
+            "file_path": "Path",
+            "note": "Note",
+        }
+    )
+    st.dataframe(preview_df.head(20), width="stretch", hide_index=True)
+
+
 def show_spectra_pages():
     spectra_page = st.radio(
         "Spectra Tools",
-        ["Add Files", "Edit Files", "Delete Files"],
+        ["Library Overview", "Add Files", "Edit Files", "Delete Files"],
         horizontal=True
     )
 
-    if spectra_page == "Add Files":
+    if spectra_page == "Library Overview":
+        show_spectra_library_overview()
+
+    elif spectra_page == "Add Files":
         section_header("Add Spectra Files", "Upload files directly or register an existing file path for a selected compound.")
         render_helper_card(
             "Tip",
@@ -6565,6 +7356,9 @@ elif main_section == "Search & Match":
 
 elif main_section == "Compound Workspace":
     show_compound_pages()
+
+elif main_section == "Bioactivity":
+    show_bioactivity_pages()
 
 elif main_section == "1H Peaks":
     show_proton_pages()

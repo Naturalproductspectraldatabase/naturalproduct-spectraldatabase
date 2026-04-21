@@ -14,7 +14,7 @@ else:
   _component_func = components.declare_component("streamlit_ketchersa", path=build_dir)
 
 def streamlit_ketchersa(height='50%', key=None):
-  component_value = _component_func(heigth=height, key=key, default=0)
+  component_value = _component_func(height=height, key=key, default="")
   return component_value
 
 if not _RELEASE:
