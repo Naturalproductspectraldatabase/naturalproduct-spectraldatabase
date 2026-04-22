@@ -1,3 +1,4 @@
+import base64
 import hmac
 import io
 import json
@@ -9,12 +10,17 @@ import ssl
 import sys
 import urllib.error
 import urllib.request
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote, urlencode, urlparse
 
 import pandas as pd
 import streamlit as st
+try:
+    import plotly.express as px
+except Exception:
+    px = None
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
@@ -125,6 +131,53 @@ SIDEBAR_LOGO_PATH = pick_branding_asset(
     "logo_header_web.png",
 )
 HEADER_LOGO_PATH = pick_branding_asset("logo_header_web.png", "header1_web.png", "logo_header.png", "header1.png", "header.png")
+HERO_BANNER_PATH = pick_branding_asset("background1.png", "background.png", "header_main_web.png", "logo_header_web.png")
+LOGIN_BACKGROUND_PATH = pick_branding_asset("background for login.png", "background1.png", "background.png")
+LOGIN_LEFT_ART_PATH = pick_branding_asset("Onnamide A.png", "NCO cmp.png", "structures.png")
+LOGIN_RIGHT_ART_PATH = pick_branding_asset("NCO cmp 1.png", "NCO cmp.png", "bioactivity1.png")
+WORKSPACE_ART_PATH = pick_branding_asset("compound workspace.png", "updated.png", "structures.png")
+COMPOUNDS_ART_PATH = pick_branding_asset("compounds.png", "structures.png")
+SPECTRA_ART_PATH = pick_branding_asset("spectra.png", "updated.png")
+STRUCTURES_ART_PATH = pick_branding_asset("structures.png", "updated.png")
+BIOACTIVITY_ART_PATH = pick_branding_asset("bioactivity1.png", "updated.png")
+UPDATED_ART_PATH = pick_branding_asset("updated.png", "compound workspace.png")
+
+DASHBOARD_WORKFLOW_STEPS = [
+    ("Browse Record", "Explore curated records, structures, spectra previews, and linked bioactivity in one place."),
+    ("New Submission", "Submit a new natural product through a guided curation-first workflow."),
+    ("Batch Import", "Import standardized CSV templates when many compounds or spectra need to land together."),
+    ("Update Metadata", "Refine references, structure IDs, source details, and file links without losing consistency."),
+]
+
+DASHBOARD_HIGHLIGHTS = [
+    ("Curation-first", "Only npdb_tyas can submit or revise records, so the public database stays tidy and consistent."),
+    ("Cloud-ready", "Supabase is treated as the durable home for metadata, while local SQLite remains a working safety copy."),
+    ("Searchable", "Keyword lookup, peak matching, and structure-aware workflows keep discovery practical for daily research."),
+    ("Visual depth", "Gradient layering, branded artwork, and higher-contrast cards make the workspace feel more premium."),
+    ("Research useful", "Compounds, spectra, structures, references, and bioactivity stay connected as one reviewable dossier."),
+]
+
+SIDEBAR_NAV_GROUPS = [
+    ("Main Menu", [
+        {"label": "Home", "section": "Dashboard"},
+        {"label": "Search Spectra", "section": "Search & Match"},
+        {"label": "Browse Record", "section": "Compound Workspace", "compound_page": "Browse Record"},
+        {"label": "Start Submission", "section": "Compound Workspace", "compound_page": "New Submission"},
+    ]),
+    ("Workflow", [
+        {"label": "New Submission", "section": "Compound Workspace", "compound_page": "New Submission"},
+        {"label": "Batch Import", "section": "Compound Workspace", "compound_page": "Batch Import"},
+        {"label": "Update Metadata", "section": "Compound Workspace", "compound_page": "Update Metadata"},
+        {"label": "Delete Record", "section": "Compound Workspace", "compound_page": "Delete Record"},
+    ]),
+    ("Data Library", [
+        {"label": "Bioactivity", "section": "Bioactivity"},
+        {"label": "1H Peaks", "section": "1H Peaks"},
+        {"label": "13C Peaks", "section": "13C Peaks"},
+        {"label": "Spectra Library", "section": "Spectra Library"},
+        {"label": "Guide", "section": "Guide"},
+    ]),
+]
 
 DEFAULT_CLASS_OPTIONS = [
     "Alkaloid",
@@ -208,6 +261,39 @@ DEFAULT_POTENCY_UNITS = [
     "%",
     "mm",
 ]
+
+SEARCH_FIELD_COLUMN_MAP = {
+    "All searchable fields": [
+        "trivial_name",
+        "iupac_name",
+        "molecular_formula",
+        "sample_code",
+        "source_category",
+        "source_organism",
+        "source_material",
+        "collection_location",
+        "compound_class",
+        "compound_subclass",
+        "journal_name",
+        "article_title",
+        "doi",
+        "inchikey",
+        "note",
+    ],
+    "Trivial Name": ["trivial_name"],
+    "IUPAC Name": ["iupac_name"],
+    "Molecular Formula": ["molecular_formula"],
+    "Sample Code": ["sample_code"],
+    "DOI": ["doi"],
+    "Journal Name": ["journal_name"],
+    "Article Title": ["article_title"],
+    "Source Organism": ["source_organism"],
+    "Source Category": ["source_category"],
+    "InChIKey": ["inchikey"],
+    "Compound Class": ["compound_class", "compound_subclass"],
+}
+
+PEAK_UPLOAD_TYPES = ["txt", "csv", "tsv", "dx", "jdx", "jcamp"]
 
 NAV_OPTIONS = [
     "Dashboard",
@@ -434,6 +520,14 @@ def normalize_login_slug(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", text)
 
 
+def inline_asset_data_uri(path: Path) -> str:
+    if not path.exists():
+        return ""
+    mime_type = mimetypes.guess_type(path.name)[0] or "image/png"
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
+
+
 def is_access_gate_enabled() -> bool:
     return bool(
         get_secret_setting("NPDB_ACCESS_PASSWORD", "access_password")
@@ -455,36 +549,362 @@ def verify_access_gate():
     approved_password = get_secret_setting("NPDB_APPROVED_PASSWORD", "approved_password")
     approved_users = load_approved_users()
     approved_names = load_approved_names()
+    login_background_uri = inline_asset_data_uri(LOGIN_BACKGROUND_PATH)
+    login_logo_uri = inline_asset_data_uri(HEADER_LOGO_PATH if HEADER_LOGO_PATH.exists() else SIDEBAR_LOGO_PATH)
+    login_left_art_uri = inline_asset_data_uri(LOGIN_LEFT_ART_PATH)
+    login_right_art_uri = inline_asset_data_uri(LOGIN_RIGHT_ART_PATH)
+    background_style = (
+        f"background-image: linear-gradient(115deg, rgba(2, 9, 24, 0.90), rgba(3, 8, 22, 0.72)), url('{login_background_uri}');"
+        if login_background_uri
+        else "background: radial-gradient(circle at 20% 30%, rgba(0, 170, 255, 0.16), transparent 30%), radial-gradient(circle at 80% 32%, rgba(182, 72, 255, 0.16), transparent 28%), linear-gradient(180deg, rgba(3, 8, 22, 1), rgba(4, 8, 18, 1));"
+    )
+    logo_markup = f'<img class="login-brand-logo" src="{login_logo_uri}" alt="NPDB logo" />' if login_logo_uri else ""
+    left_art_markup = f'<img class="login-ambient-art login-ambient-art-left" src="{login_left_art_uri}" alt="Natural product structure" />' if login_left_art_uri else ""
+    right_art_markup = f'<img class="login-ambient-art login-ambient-art-right" src="{login_right_art_uri}" alt="Natural product structure" />' if login_right_art_uri else ""
+    shield_markup = """
+        <svg viewBox="0 0 64 64" aria-hidden="true" style="width:40px;height:40px;display:block">
+            <defs>
+                <linearGradient id="npdbShield" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stop-color="#18E5FF"/>
+                    <stop offset="55%" stop-color="#4C8EFF"/>
+                    <stop offset="100%" stop-color="#B34EFF"/>
+                </linearGradient>
+            </defs>
+            <path d="M32 6l18 6v14c0 12.3-7.1 23.7-18 29-10.9-5.3-18-16.7-18-29V12l18-6z" fill="none" stroke="url(#npdbShield)" stroke-width="2.6"/>
+            <path d="M24 31.5l5.8 5.8L41.8 24.8" fill="none" stroke="#DBF8FF" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+    """
 
     st.markdown(
-        """
+        f"""
         <style>
-        .auth-wrap {
-            max-width: 560px;
-            margin: 5rem auto 0 auto;
-            padding: 1.35rem;
-            border-radius: 28px;
-            background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
-            border: 1px solid rgba(255,255,255,0.08);
-            box-shadow: 0 18px 44px rgba(0,0,0,0.24);
-        }
-        .auth-title {
+        [data-testid="stAppViewContainer"] {{
+            {background_style}
+            background-size: cover;
+            background-position: center;
+            background-attachment: fixed;
+        }}
+        [data-testid="stHeader"] {{
+            background: rgba(4, 10, 24, 0.08);
+        }}
+        [data-testid="stToolbar"] {{
+            right: 1rem;
+            top: 1rem;
+        }}
+        .login-shell {{
+            position: relative;
+            min-height: 100vh;
+            padding: 2rem 0 3rem 0;
+            overflow: hidden;
+        }}
+        .login-shell::before {{
+            content: "";
+            position: absolute;
+            inset: 0;
+            background:
+                radial-gradient(circle at 18% 72%, rgba(33, 203, 255, 0.16), transparent 26%),
+                radial-gradient(circle at 82% 72%, rgba(196, 52, 255, 0.18), transparent 26%);
+            pointer-events: none;
+        }}
+        .login-topbar {{
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 1rem;
+            max-width: 1220px;
+            margin: 0 auto 1.8rem auto;
+            padding: 0 1.25rem;
+        }}
+        .login-brand {{
+            display: flex;
+            align-items: flex-start;
+            gap: 1.1rem;
+        }}
+        .login-brand-logo {{
+            width: 118px;
+            height: 118px;
+            object-fit: contain;
+            filter: drop-shadow(0 18px 30px rgba(0,0,0,0.28));
+        }}
+        .login-brand-copy {{
+            padding-top: 0.15rem;
+        }}
+        .login-brand-title {{
+            color: #F7FBFF;
+            font-size: clamp(2rem, 3.3vw, 3.9rem);
+            line-height: 0.94;
+            font-weight: 820;
+            letter-spacing: -0.05em;
+            margin-bottom: 0.35rem;
+        }}
+        .login-brand-title .accent {{
+            background: linear-gradient(90deg, #1DE6FF, #3898FF 42%, #8C66FF 70%, #D74DFF 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }}
+        .login-help {{
+            display: inline-flex;
+            align-items: center;
+            gap: 0.55rem;
+            color: rgba(241, 246, 255, 0.92);
+            font-size: 0.98rem;
+            white-space: nowrap;
+            padding-top: 0.55rem;
+            text-decoration: none;
+        }}
+        .login-help-badge {{
+            width: 2rem;
+            height: 2rem;
+            border-radius: 999px;
+            display: inline-grid;
+            place-items: center;
+            border: 1px solid rgba(255,255,255,0.36);
+            background: rgba(255,255,255,0.04);
+            font-size: 1rem;
+        }}
+        .login-center {{
+            position: relative;
+            max-width: 1220px;
+            margin: 0 auto;
+            padding: 0 1.25rem;
+            z-index: 1;
+        }}
+        .login-ambient-art {{
+            position: absolute;
+            pointer-events: none;
+            opacity: 0.24;
+            filter: drop-shadow(0 24px 40px rgba(20, 32, 80, 0.24));
+        }}
+        .login-ambient-art-left {{
+            left: -3rem;
+            bottom: 5rem;
+            width: min(34vw, 520px);
+        }}
+        .login-ambient-art-right {{
+            right: -2rem;
+            top: 1rem;
+            width: min(28vw, 440px);
+        }}
+        .auth-card-wrap {{
+            max-width: 620px;
+            margin: 1.8rem auto 0 auto;
+        }}
+        .login-wave {{
+            position: absolute;
+            pointer-events: none;
+            opacity: 0.82;
+            mix-blend-mode: screen;
+        }}
+        .login-wave-left {{
+            left: -4vw;
+            bottom: 6.5rem;
+            width: min(44vw, 620px);
+            height: 220px;
+            background:
+                radial-gradient(circle at 22% 72%, rgba(46, 218, 255, 0.85), transparent 8%),
+                radial-gradient(circle at 44% 44%, rgba(45, 162, 255, 0.88), transparent 7%),
+                radial-gradient(circle at 64% 64%, rgba(0, 119, 255, 0.82), transparent 7%);
+            filter: blur(1px) drop-shadow(0 0 12px rgba(31, 189, 255, 0.46));
+            border-bottom: 2px solid rgba(47, 205, 255, 0.9);
+            clip-path: polygon(0 78%, 8% 76%, 12% 68%, 18% 72%, 23% 46%, 29% 78%, 36% 74%, 43% 32%, 49% 86%, 57% 82%, 65% 55%, 72% 88%, 80% 84%, 88% 79%, 100% 80%, 100% 100%, 0 100%);
+        }}
+        .login-wave-right {{
+            right: -3vw;
+            bottom: 6.5rem;
+            width: min(42vw, 580px);
+            height: 220px;
+            background:
+                radial-gradient(circle at 22% 68%, rgba(203, 57, 255, 0.86), transparent 8%),
+                radial-gradient(circle at 48% 48%, rgba(255, 116, 244, 0.84), transparent 7%),
+                radial-gradient(circle at 68% 70%, rgba(138, 69, 255, 0.84), transparent 7%);
+            filter: blur(1px) drop-shadow(0 0 14px rgba(215, 79, 255, 0.42));
+            border-bottom: 2px solid rgba(213, 84, 255, 0.88);
+            clip-path: polygon(0 80%, 10% 78%, 16% 48%, 23% 86%, 31% 74%, 39% 84%, 45% 62%, 52% 24%, 58% 84%, 66% 68%, 73% 82%, 80% 62%, 88% 74%, 94% 80%, 100% 82%, 100% 100%, 0 100%);
+        }}
+        .auth-card {{
+            padding: 1.5rem 1.55rem 1.3rem 1.55rem;
+            border-radius: 30px;
+            background: linear-gradient(145deg, rgba(6, 20, 38, 0.82), rgba(18, 19, 42, 0.86));
+            border: 1px solid rgba(94, 222, 255, 0.34);
+            box-shadow: 0 28px 68px rgba(0, 0, 0, 0.32);
+            backdrop-filter: blur(14px);
+        }}
+        .auth-card-badge {{
+            width: 84px;
+            height: 84px;
+            margin: 0 auto 0.9rem auto;
+            border-radius: 999px;
+            display: grid;
+            place-items: center;
+            background: linear-gradient(180deg, rgba(18, 44, 82, 0.82), rgba(44, 19, 78, 0.76));
+            border: 1px solid rgba(97, 216, 237, 0.34);
+            color: #8CEDFF;
+            font-size: 2rem;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+        }}
+        .auth-title {{
             color: #F5F8FD;
-            font-size: 1.7rem;
-            font-weight: 780;
-            letter-spacing: -0.02em;
-            margin-bottom: 0.25rem;
-        }
-        .auth-subtitle {
-            color: #AEB8C6;
-            line-height: 1.6;
-            margin-bottom: 1rem;
-        }
+            font-size: clamp(2rem, 3vw, 3.2rem);
+            text-align: center;
+            font-weight: 800;
+            letter-spacing: -0.04em;
+            margin-bottom: 0.35rem;
+        }}
+        .auth-subtitle {{
+            color: rgba(214, 223, 238, 0.86);
+            line-height: 1.58;
+            text-align: center;
+            font-size: 1rem;
+            margin: 0 auto 1.3rem auto;
+            max-width: 28rem;
+        }}
+        div[data-testid="stForm"] {{
+            border: none !important;
+            background: transparent !important;
+            padding: 0 !important;
+            box-shadow: none !important;
+        }}
+        div[data-testid="stForm"] label p {{
+            color: #F7FBFF !important;
+            font-size: 1rem !important;
+            font-weight: 620 !important;
+        }}
+        div[data-testid="stTextInput"] input {{
+            min-height: 56px;
+            border-radius: 16px !important;
+            border: 1px solid rgba(150, 168, 206, 0.28) !important;
+            background: rgba(19, 27, 48, 0.82) !important;
+            color: #F7FBFF !important;
+            font-size: 1rem !important;
+        }}
+        div[data-testid="stTextInput"] input::placeholder {{
+            color: rgba(180, 192, 214, 0.62) !important;
+        }}
+        div[data-testid="stCheckbox"] label {{
+            color: #DCE6F5 !important;
+            font-size: 0.94rem !important;
+        }}
+        div[data-testid="stCheckbox"] input + div {{
+            border-radius: 6px !important;
+        }}
+        div[data-testid="stButton"] button,
+        div[data-testid="stFormSubmitButton"] button {{
+            min-height: 58px;
+            border-radius: 18px !important;
+            border: 1px solid rgba(122, 89, 255, 0.28) !important;
+            background: linear-gradient(90deg, #1EAFFF, #2D7FFF 42%, #8246FF 73%, #CB3EFF 100%) !important;
+            color: #F8FBFF !important;
+            font-size: 1.1rem !important;
+            font-weight: 720 !important;
+            box-shadow: 0 18px 34px rgba(92, 85, 255, 0.24);
+        }}
+        .auth-meta {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            margin: 0.25rem 0 0.7rem 0;
+        }}
+        .auth-meta-note {{
+            color: rgba(165, 183, 222, 0.88);
+            font-size: 0.92rem;
+        }}
+        .auth-meta-link {{
+            color: #9FA6FF;
+            font-size: 0.92rem;
+        }}
+        .auth-help-panel {{
+            margin: 1rem auto 0 auto;
+            max-width: 620px;
+            padding: 1rem 1.05rem;
+            border-radius: 22px;
+            border: 1px solid rgba(255,255,255,0.08);
+            background: linear-gradient(180deg, rgba(9, 16, 34, 0.72), rgba(14, 18, 42, 0.7));
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.22);
+            backdrop-filter: blur(10px);
+        }}
+        .auth-help-title {{
+            color: #F5F8FD;
+            font-size: 1rem;
+            font-weight: 730;
+            margin-bottom: 0.45rem;
+        }}
+        .auth-help-copy {{
+            color: rgba(210, 221, 239, 0.84);
+            font-size: 0.92rem;
+            line-height: 1.58;
+        }}
+        .auth-help-copy strong {{
+            color: #F6FBFF;
+        }}
+        .auth-footer {{
+            margin-top: 0.95rem;
+            color: rgba(169, 183, 208, 0.84);
+            font-size: 0.84rem;
+            text-align: center;
+        }}
+        @media (max-width: 900px) {{
+            .login-topbar {{
+                flex-direction: column;
+            }}
+            .login-brand {{
+                gap: 0.8rem;
+            }}
+            .login-brand-logo {{
+                width: 86px;
+                height: 86px;
+            }}
+            .login-ambient-art {{
+                display: none;
+            }}
+            .login-wave {{
+                opacity: 0.5;
+            }}
+            .auth-card-wrap {{
+                margin-top: 1rem;
+            }}
+        }}
+        @media (max-width: 640px) {{
+            .login-shell {{
+                padding-top: 1rem;
+            }}
+            .auth-card {{
+                padding: 1.15rem 1rem 1rem 1rem;
+            }}
+            .auth-meta {{
+                flex-direction: column;
+                align-items: flex-start;
+            }}
+        }}
         </style>
-        <div class="auth-wrap">
-            <div class="auth-title">Protected Database</div>
-            <div class="auth-subtitle">
-                This workspace is configured with an access gate. Enter an approved username and password to continue.
+        <div class="login-shell">
+            <div class="login-topbar">
+                <div class="login-brand">
+                    {logo_markup}
+                    <div class="login-brand-copy">
+                        <div class="login-brand-title">Natural Products<br><span class="accent">Spectral Database</span></div>
+                    </div>
+                </div>
+                <a class="login-help" href="#login-access-help">
+                    <span class="login-help-badge">?</span>
+                    <span>Help</span>
+                </a>
+            </div>
+            <div class="login-center">
+                {left_art_markup}
+                {right_art_markup}
+                <div class="login-wave login-wave-left"></div>
+                <div class="login-wave login-wave-right"></div>
+                <div class="auth-card-wrap">
+                    <div class="auth-card">
+                        <div class="auth-card-badge">{shield_markup}</div>
+                        <div class="auth-title">Welcome Back</div>
+                        <div class="auth-subtitle">
+                            This workspace is protected. Please enter your credentials to access the database.
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
         """,
@@ -492,9 +912,39 @@ def verify_access_gate():
     )
 
     with st.form("npdb_access_gate"):
-        username = st.text_input("Username", value="")
-        password = st.text_input("Password", value="", type="password")
+        username = st.text_input("Username", value="", placeholder="Enter your username")
+        password = st.text_input("Password", value="", type="password", placeholder="Enter your password")
+        remember_me = st.checkbox("Remember me", value=False)
+        st.markdown(
+            """
+            <div class="auth-meta">
+                <div class="auth-meta-note">Approved users only. Contact the database owner if you need access.</div>
+                <div class="auth-meta-link"><a href="#login-access-help" style="color:inherit;text-decoration:none;">Access guide</a></div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         submitted = st.form_submit_button("Open Database", use_container_width=True)
+        st.markdown(
+            """
+            <div class="auth-footer">This access gate protects the curated NPDB workspace and its editing tools.</div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.markdown(
+        """
+        <div id="login-access-help" class="auth-help-panel">
+            <div class="auth-help-title">Access Guide</div>
+            <div class="auth-help-copy">
+                Sign in with an approved NPDB account. If your workspace uses the approved-name pattern, enter the username as
+                <strong>npdb_yourname</strong>. Only the owner account can edit or submit records; other approved users can browse,
+                search, and download curated data.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     if submitted:
         authenticated = False
@@ -526,6 +976,7 @@ def verify_access_gate():
             st.session_state["npdb_authenticated"] = True
             st.session_state["npdb_username"] = username.strip()
             st.session_state["npdb_role"] = matched_role
+            st.session_state["npdb_remember_requested"] = bool(remember_me)
             st.rerun()
         st.error("Access denied. Please check the approved credentials.")
 
@@ -541,10 +992,25 @@ def is_owner_editor() -> bool:
 
 
 def can_edit_database() -> bool:
-    return is_owner_editor()
+    if not is_owner_editor():
+        return False
+    if use_supabase_backend() and not use_supabase_write_backend():
+        return False
+    return True
+
+
+def cloud_write_is_blocked() -> bool:
+    return is_owner_editor() and use_supabase_backend() and not use_supabase_write_backend()
 
 
 def render_read_only_notice(feature_label: str):
+    if cloud_write_is_blocked():
+        st.warning(
+            "Cloud write mode is not active in this deployment yet. "
+            "To prevent data divergence, editing is temporarily disabled until "
+            "`SUPABASE_SERVICE_ROLE_KEY` is configured in secure server-side secrets."
+        )
+        return
     st.info(
         f"Read-only access. Only `{OWNER_EDITOR_USERNAME}` can {feature_label}. "
         "Other approved users can still browse records, search structures, and review spectra."
@@ -1105,6 +1571,43 @@ st.markdown("""
     gap: 0.7rem;
 }
 
+.structure-search-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1.32fr) minmax(280px, 0.82fr);
+    gap: 1rem;
+    align-items: start;
+}
+
+.structure-editor-note {
+    margin-top: 0.55rem;
+    color: var(--text-soft);
+    font-size: 0.88rem;
+    line-height: 1.5;
+}
+
+.search-preset-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.7rem;
+}
+
+.search-preset-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.42rem;
+    padding: 0.5rem 0.72rem;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.015));
+    color: var(--text-main);
+    font-size: 0.82rem;
+}
+
+.search-preset-pill strong {
+    color: var(--text-strong);
+}
+
 .query-summary-card {
     border-radius: 18px;
     padding: 0.95rem 1rem;
@@ -1258,6 +1761,400 @@ div[data-testid="stRadio"] label:has(input:checked) {
     text-align: center;
 }
 
+.app-masthead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1rem 1.15rem;
+    margin-bottom: 1rem;
+    border-radius: 24px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: linear-gradient(135deg, rgba(12,24,40,0.82), rgba(9,18,34,0.92));
+    box-shadow: var(--shadow-soft);
+}
+
+.app-masthead-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+}
+
+.app-masthead-logo {
+    width: 58px;
+    height: 58px;
+    border-radius: 18px;
+    object-fit: cover;
+    background: linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.02));
+    border: 1px solid rgba(255,255,255,0.08);
+    padding: 0.32rem;
+}
+
+.app-masthead-title {
+    margin: 0;
+    color: var(--text-strong);
+    font-size: 1.12rem;
+    font-weight: 780;
+    letter-spacing: -0.02em;
+}
+
+.app-masthead-subtitle {
+    margin: 0.12rem 0 0 0;
+    color: var(--text-soft);
+    font-size: 0.9rem;
+    line-height: 1.45;
+}
+
+.app-masthead-status {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.45rem 0.82rem;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: linear-gradient(90deg, rgba(97,216,237,0.14), rgba(156,99,241,0.14));
+    color: var(--text-main);
+    font-size: 0.8rem;
+    white-space: nowrap;
+}
+
+.sidebar-menu-caption {
+    color: rgba(174,184,198,0.8);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-top: 0.2rem;
+    margin-bottom: 0.38rem;
+}
+
+.dashboard-hero-card {
+    position: relative;
+    min-height: 320px;
+    border-radius: 30px;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,0.08);
+    background:
+        linear-gradient(115deg, rgba(5, 11, 26, 0.92), rgba(8, 18, 34, 0.72)),
+        radial-gradient(circle at 82% 22%, rgba(197, 94, 255, 0.18), transparent 28%),
+        radial-gradient(circle at 20% 18%, rgba(97, 216, 237, 0.12), transparent 24%);
+    box-shadow: var(--shadow-deep);
+}
+
+.dashboard-hero-card.has-image {
+    background-size: cover;
+    background-position: center;
+}
+
+.dashboard-hero-overlay {
+    position: absolute;
+    inset: 0;
+    background:
+        linear-gradient(90deg, rgba(4, 10, 20, 0.9) 0%, rgba(4, 10, 20, 0.62) 48%, rgba(4, 10, 20, 0.18) 100%);
+}
+
+.dashboard-hero-content {
+    position: relative;
+    z-index: 1;
+    max-width: 920px;
+    padding: 1.8rem 2rem 1.35rem 2rem;
+}
+
+.dashboard-hero-kicker {
+    color: rgba(174,184,198,0.88);
+    font-size: 0.76rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin-bottom: 0.5rem;
+}
+
+.dashboard-hero-title {
+    margin: 0;
+    color: #F7FBFF;
+    font-size: clamp(2.25rem, 5vw, 4.1rem);
+    line-height: 0.97;
+    font-weight: 830;
+    letter-spacing: -0.04em;
+    text-wrap: balance;
+}
+
+.dashboard-hero-title .accent {
+    background: linear-gradient(90deg, #60dfec, #4d8fff 46%, #ae5df4 78%, #f497d8);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+
+.dashboard-hero-subtitle {
+    margin: 0.9rem 0 1.2rem 0;
+    color: rgba(230, 237, 247, 0.8);
+    font-size: 1.05rem;
+    line-height: 1.6;
+    max-width: 34rem;
+}
+
+.dashboard-stat-strip {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.75rem;
+    margin-top: 1.15rem;
+}
+
+.dashboard-stat-tile {
+    border-radius: 18px;
+    padding: 0.9rem 0.95rem;
+    background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
+    border: 1px solid rgba(255,255,255,0.1);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+}
+
+.dashboard-stat-value {
+    color: var(--text-strong);
+    font-size: 1.45rem;
+    font-weight: 780;
+    letter-spacing: -0.03em;
+}
+
+.dashboard-stat-label {
+    color: var(--text-soft);
+    font-size: 0.8rem;
+    margin-top: 0.2rem;
+}
+
+.dashboard-cta-card,
+.dashboard-workspace-card,
+.workflow-card,
+.highlight-card {
+    border-radius: 26px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.018));
+    box-shadow: var(--shadow-soft);
+}
+
+.dashboard-cta-card {
+    padding: 1.2rem 1.25rem;
+    min-height: 170px;
+}
+
+.dashboard-cta-kicker {
+    color: rgba(174,184,198,0.84);
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 0.45rem;
+}
+
+.dashboard-cta-title {
+    color: var(--text-strong);
+    font-size: 1.58rem;
+    font-weight: 760;
+    letter-spacing: -0.03em;
+    margin-bottom: 0.3rem;
+}
+
+.dashboard-cta-copy {
+    color: var(--text-soft);
+    font-size: 0.96rem;
+    line-height: 1.6;
+    max-width: 34rem;
+}
+
+.dashboard-workspace-card {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 100%;
+    padding: 1.15rem;
+    overflow: hidden;
+}
+
+.dashboard-workspace-title {
+    color: var(--text-strong);
+    font-size: 1.32rem;
+    font-weight: 750;
+    margin-bottom: 0.3rem;
+}
+
+.dashboard-workspace-copy {
+    color: var(--text-soft);
+    font-size: 0.94rem;
+    line-height: 1.6;
+    margin-bottom: 1rem;
+}
+
+.dashboard-workspace-art {
+    width: 100%;
+    max-height: 240px;
+    object-fit: contain;
+    align-self: center;
+}
+
+.workflow-card {
+    padding: 1rem;
+    min-height: 210px;
+}
+
+.workflow-step {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.3rem;
+    height: 2.3rem;
+    border-radius: 999px;
+    margin-bottom: 0.9rem;
+    background: linear-gradient(90deg, rgba(97,216,237,0.26), rgba(156,99,241,0.3));
+    border: 1px solid rgba(97,216,237,0.28);
+    color: var(--text-strong);
+    font-weight: 760;
+}
+
+.workflow-title {
+    color: var(--text-strong);
+    font-size: 1.02rem;
+    font-weight: 720;
+    margin-bottom: 0.3rem;
+}
+
+.workflow-copy {
+    color: var(--text-soft);
+    font-size: 0.92rem;
+    line-height: 1.58;
+}
+
+.highlight-card {
+    height: 100%;
+    padding: 1rem 1.05rem;
+}
+
+.highlight-title {
+    color: var(--text-strong);
+    font-size: 0.98rem;
+    font-weight: 730;
+    margin-bottom: 0.32rem;
+}
+
+.highlight-copy {
+    color: var(--text-soft);
+    font-size: 0.9rem;
+    line-height: 1.55;
+}
+
+.dashboard-hero-header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.dashboard-hero-logo {
+    width: 92px;
+    height: 92px;
+    border-radius: 24px;
+    object-fit: contain;
+    background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.018));
+    border: 1px solid rgba(255,255,255,0.08);
+    padding: 0.45rem;
+    box-shadow: 0 16px 34px rgba(0,0,0,0.28);
+}
+
+.dashboard-hero-text {
+    flex: 1 1 auto;
+}
+
+.dashboard-tagline {
+    margin: 0.75rem 0 0 0;
+    color: rgba(230, 237, 247, 0.78);
+    font-size: 1.02rem;
+    line-height: 1.55;
+}
+
+.dashboard-stat-board {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.35rem;
+    margin-top: 1.4rem;
+    max-width: 58rem;
+}
+
+.dashboard-stat-board-item {
+    position: relative;
+    padding: 0.35rem 1rem 0.15rem 1rem;
+}
+
+.dashboard-stat-board-item + .dashboard-stat-board-item::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.45rem;
+    bottom: 0.45rem;
+    width: 1px;
+    background: linear-gradient(180deg, rgba(255,255,255,0), rgba(255,255,255,0.24), rgba(255,255,255,0));
+}
+
+.dashboard-stat-board-head {
+    display: flex;
+    align-items: center;
+    gap: 0.72rem;
+    margin-bottom: 0.25rem;
+}
+
+.dashboard-stat-board-icon {
+    width: 42px;
+    height: 42px;
+    border-radius: 14px;
+    object-fit: contain;
+    background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
+    border: 1px solid rgba(255,255,255,0.08);
+    padding: 0.36rem;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+}
+
+.dashboard-stat-board-copy {
+    min-width: 0;
+}
+
+.dashboard-stat-board-value {
+    color: var(--text-strong);
+    font-size: clamp(1.7rem, 3vw, 2.2rem);
+    font-weight: 780;
+    line-height: 1;
+    letter-spacing: -0.04em;
+    margin-bottom: 0.22rem;
+}
+
+.dashboard-stat-board-label {
+    color: rgba(230, 237, 247, 0.88);
+    font-size: 0.88rem;
+    line-height: 1.35;
+}
+
+.dashboard-search-strip {
+    margin-top: 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1rem 1.15rem;
+    border-radius: 22px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: linear-gradient(90deg, rgba(11, 22, 40, 0.88), rgba(21, 24, 52, 0.9));
+    box-shadow: var(--shadow-soft);
+}
+
+.dashboard-search-strip-title {
+    color: var(--text-strong);
+    font-size: 1.14rem;
+    font-weight: 760;
+    margin-bottom: 0.22rem;
+}
+
+.dashboard-search-strip-copy {
+    color: var(--text-soft);
+    font-size: 0.92rem;
+    line-height: 1.55;
+}
+
 [data-testid="stDataFrame"] {
     border-radius: 18px;
     overflow: hidden;
@@ -1326,6 +2223,11 @@ header[data-testid="stHeader"] {
 }
 
 @media (max-width: 900px) {
+    .app-masthead {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
     .section-title {
         font-size: 1.28rem;
     }
@@ -1338,10 +2240,54 @@ header[data-testid="stHeader"] {
         grid-template-columns: 1fr;
     }
 
+    .dashboard-stat-strip {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .dashboard-stat-board {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .dashboard-hero-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
     .app-credit-footer {
         display: flex;
         text-align: center;
         white-space: normal;
+    }
+
+    .dashboard-search-strip {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}
+
+@media (max-width: 700px) {
+    .dashboard-stat-strip {
+        grid-template-columns: 1fr;
+    }
+
+    .dashboard-stat-board {
+        grid-template-columns: 1fr;
+    }
+
+    .dashboard-stat-board-item {
+        padding-left: 0;
+    }
+
+    .dashboard-stat-board-item + .dashboard-stat-board-item::before {
+        display: none;
+    }
+
+    .dashboard-hero-content {
+        padding: 1.5rem 1.2rem 1.2rem 1.2rem;
+    }
+
+    .structure-search-shell {
+        grid-template-columns: 1fr;
     }
 }
 
@@ -1652,6 +2598,33 @@ def maybe_blank(value):
     if pd.isna(value):
         return ""
     return str(value).strip()
+
+
+@st.cache_data(show_spinner=False)
+def image_to_data_uri(path_value: str) -> str:
+    path = Path(path_value)
+    if not path.exists():
+        return ""
+    mime_type = mimetypes.guess_type(path.name)[0] or "image/png"
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
+
+
+def render_cloud_sync_notice():
+    if not use_supabase_backend():
+        st.warning(
+            "Local-only mode is active. Changes in this session are still being written to the desktop database only. "
+            "Before production use, configure Supabase secrets in local and deployed environments so every submission goes to the same cloud database."
+        )
+    elif cloud_write_is_blocked():
+        st.warning(
+            "Supabase is already the active read backend, but cloud write access is still locked. "
+            "This app is keeping editing disabled so new submissions or metadata changes do not get split between local storage and Supabase."
+        )
+    elif use_supabase_write_backend():
+        st.caption(
+            "Cloud source of truth is active: submissions, edits, imports, and file uploads are written to Supabase first, then mirrored to the local desktop database as a working copy."
+        )
 
 def safe_float_or_none(value):
     text = maybe_blank(value)
@@ -2034,6 +3007,75 @@ def keyword_search_mask(df: pd.DataFrame, keyword: str) -> pd.Series:
     for token in tokens:
         mask &= combined.str.contains(re.escape(token), regex=True)
     return mask
+
+
+def field_search_mask(df: pd.DataFrame, keyword: str, field_label: str, match_mode: str) -> pd.Series:
+    columns = SEARCH_FIELD_COLUMN_MAP.get(field_label, SEARCH_FIELD_COLUMN_MAP["All searchable fields"])
+    combined = df[columns].fillna("").astype(str).agg(" ".join, axis=1).str.lower()
+    query = maybe_blank(keyword).lower()
+    if not query:
+        return pd.Series([True] * len(df), index=df.index)
+
+    if match_mode == "Exact phrase":
+        return combined.str.contains(re.escape(query), regex=True)
+
+    if match_mode == "Starts with":
+        return combined.str.startswith(query)
+
+    tokens = [token.lower() for token in re.split(r"\s+", query.strip()) if token]
+    mask = pd.Series([True] * len(df), index=df.index)
+    for token in tokens:
+        mask &= combined.str.contains(re.escape(token), regex=True)
+    return mask
+
+
+def decode_uploaded_text(uploaded_file) -> str:
+    if uploaded_file is None:
+        return ""
+    raw = uploaded_file.getvalue()
+    for encoding in ["utf-8", "latin-1", "utf-16"]:
+        try:
+            return raw.decode(encoding)
+        except Exception:
+            continue
+    return raw.decode("utf-8", errors="ignore")
+
+
+def parse_peak_upload(uploaded_file) -> tuple[list[float], str]:
+    if uploaded_file is None:
+        return [], ""
+
+    text = decode_uploaded_text(uploaded_file)
+    suffix = Path(uploaded_file.name).suffix.lower()
+    if not text.strip():
+        return [], "Uploaded peak file is empty."
+
+    if suffix in {".dx", ".jdx", ".jcamp"}:
+        in_data_block = False
+        peaks = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            upper = stripped.upper()
+            if upper.startswith("##PEAK TABLE") or upper.startswith("##XYDATA") or upper.startswith("##XYPOINTS"):
+                in_data_block = True
+                continue
+            if upper.startswith("##END"):
+                in_data_block = False
+                continue
+            if upper.startswith("##") or not in_data_block or not stripped:
+                continue
+            values = re.findall(r"[-+]?\d*\.?\d+(?:[Ee][-+]?\d+)?", stripped)
+            if not values:
+                continue
+            numeric = [float(value) for value in values]
+            peaks.extend(numeric[::2] if len(numeric) > 1 else numeric)
+        if peaks:
+            return peaks, f"Read {len(peaks)} peak position(s) from `{uploaded_file.name}`."
+
+    peaks = parse_peak_input(text)
+    if peaks:
+        return peaks, f"Read {len(peaks)} peak value(s) from `{uploaded_file.name}`."
+    return [], f"No usable numeric peak values were detected in `{uploaded_file.name}`."
 
 
 def is_structure_backend_available() -> bool:
@@ -2783,6 +3825,137 @@ def render_dashboard_bar_chart(df: pd.DataFrame, x_col: str, y_col: str, color_h
     st.bar_chart(chart_df[[y_col]], color=color_hex)
 
 
+def render_dashboard_pie_chart(df: pd.DataFrame, names_col: str, values_col: str, color_sequence: list[str] | None = None):
+    if df.empty:
+        st.info("No data available.")
+        return
+    if px is None:
+        st.dataframe(df[[names_col, values_col]], width="stretch", hide_index=True)
+        return
+    chart_df = df[[names_col, values_col]].copy()
+    chart_df[names_col] = chart_df[names_col].fillna("Uncategorized").astype(str).replace("", "Uncategorized")
+    chart_df[values_col] = pd.to_numeric(chart_df[values_col], errors="coerce").fillna(0)
+    chart_df = chart_df[chart_df[values_col] > 0]
+    if chart_df.empty:
+        st.info("No data available.")
+        return
+    figure = px.pie(
+        chart_df,
+        names=names_col,
+        values=values_col,
+        hole=0.45,
+        color_discrete_sequence=color_sequence or ["#61D8ED", "#4C8EFF", "#9C63F1", "#FF7F6D", "#F2C66D", "#7EF0C2"],
+    )
+    figure.update_traces(textposition="inside", textinfo="percent+label")
+    figure.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=10, r=10, t=10, b=10),
+        font=dict(color="#F5F8FD"),
+        legend=dict(orientation="h", yanchor="bottom", y=-0.12, xanchor="left", x=0),
+    )
+    st.plotly_chart(figure, use_container_width=True, config={"displayModeBar": False})
+
+
+def format_latest_update_label(df: pd.DataFrame) -> str:
+    if df.empty or "updated_at" not in df.columns:
+        return "Not available"
+    timestamps = pd.to_datetime(df["updated_at"], errors="coerce", utc=True).dropna()
+    if timestamps.empty:
+        return "Not available"
+    latest = timestamps.max().tz_convert(None)
+    return f"{latest.month}/{latest.day}/{latest.year}"
+
+
+def format_metric_value(value) -> str:
+    if value is None:
+        return "0"
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if isinstance(value, float) and not float(value).is_integer():
+            return f"{value:,.1f}"
+        return f"{int(value):,}"
+    return str(value)
+
+
+def build_dashboard_stat_markup(value, label: str, icon_path: Path | None = None) -> str:
+    icon_uri = image_to_data_uri(str(icon_path)) if icon_path and icon_path.exists() else ""
+    icon_markup = f'<img class="dashboard-stat-board-icon" src="{icon_uri}" alt="{label} icon" />' if icon_uri else ""
+    return f"""
+        <div class="dashboard-stat-board-item">
+            <div class="dashboard-stat-board-head">
+                {icon_markup}
+                <div class="dashboard-stat-board-copy">
+                    <div class="dashboard-stat-board-value">{format_metric_value(value)}</div>
+                    <div class="dashboard-stat-board-label">{label}</div>
+                </div>
+            </div>
+        </div>
+    """
+
+
+def build_snapshot_manifest() -> dict:
+    compounds_df = load_all_compounds()
+    proton_df = load_all_proton_data()
+    carbon_df = load_all_carbon_data()
+    spectra_df = load_all_spectra_files()
+    bioactivity_df = load_all_bioactivity_data()
+    return {
+        "project": "npdb",
+        "created_at_utc": datetime.utcnow().isoformat(),
+        "cloud_backend_active": use_supabase_backend(),
+        "cloud_write_active": use_supabase_write_backend(),
+        "source_of_truth": "Supabase" if use_supabase_write_backend() else "Local SQLite",
+        "counts": {
+            "compounds": int(len(compounds_df)),
+            "proton_nmr": int(len(proton_df)),
+            "carbon_nmr": int(len(carbon_df)),
+            "spectra_files": int(len(spectra_df)),
+            "bioactivity_records": int(len(bioactivity_df)),
+        },
+    }
+
+
+def build_backup_bundle_bytes() -> tuple[bytes, str]:
+    manifest = build_snapshot_manifest()
+    bundle_timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    bundle_name = f"npdb_snapshot_{bundle_timestamp}.zip"
+    tables = {
+        "compounds": load_all_compounds(),
+        "proton_nmr": load_all_proton_data(),
+        "carbon_nmr": load_all_carbon_data(),
+        "spectra_files": load_all_spectra_files(),
+        "bioactivity_records": load_all_bioactivity_data(),
+    }
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("manifest.json", json.dumps(manifest, indent=2))
+        for table_name, df in tables.items():
+            archive.writestr(f"tables/{table_name}.csv", df.to_csv(index=False))
+        if DB_PATH.exists():
+            archive.writestr("database/nmr.db", get_backup_bytes())
+    output.seek(0)
+    return output.getvalue(), bundle_name
+
+
+def save_backup_bundle_locally(bundle_bytes: bytes, file_name: str) -> Path:
+    BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
+    bundle_path = BACKUPS_DIR / file_name
+    bundle_path.write_bytes(bundle_bytes)
+    return bundle_path
+
+
+def upload_backup_bundle_to_cloud(bundle_bytes: bytes, file_name: str) -> str:
+    ensure_write_target_ready()
+    save_backup_bundle_locally(bundle_bytes, file_name)
+    return supabase_upload_bytes(
+        "backups",
+        f"snapshots/{datetime.utcnow().strftime('%Y/%m/%d')}/{file_name}",
+        bundle_bytes,
+        content_type="application/zip",
+        public_bucket=False,
+    )
+
+
 def render_sidebar_workspace_summary(active_section: str, all_compounds_df: pd.DataFrame):
     all_compounds_df = enrich_compounds_dataframe(all_compounds_df)
     total_compounds = len(all_compounds_df)
@@ -2791,6 +3964,7 @@ def render_sidebar_workspace_summary(active_section: str, all_compounds_df: pd.D
     bioactivity_count = count_bioactivity_records(available_ids)
     health = calculate_workspace_health(all_compounds_df)
     active_copy = NAV_SECTION_COPY.get(active_section, {"title": active_section, "summary": ""})
+    latest_update = format_latest_update_label(all_compounds_df)
 
     if SIDEBAR_LOGO_PATH.exists():
         st.markdown('<div class="sidebar-logo-shell">', unsafe_allow_html=True)
@@ -2846,12 +4020,187 @@ def render_sidebar_workspace_summary(active_section: str, all_compounds_df: pd.D
     current_user = maybe_blank(st.session_state.get("npdb_username")) or "Approved user"
     current_role = maybe_blank(st.session_state.get("npdb_role")) or "viewer"
     st.caption(f"Signed in as {current_user} ({current_role})")
-    st.caption(f"Data backend: {'Supabase cloud' if use_supabase_backend() else 'Local SQLite'}")
+    if use_supabase_write_backend():
+        backend_label = "Supabase cloud (read/write)"
+    elif use_supabase_backend():
+        backend_label = "Supabase cloud (read-only)"
+    else:
+        backend_label = "Local SQLite"
+    st.caption(f"Data backend: {backend_label}")
+    st.caption(f"Last update: {latest_update}")
     st.caption(
         f"Structure-ready: {health['structure_ready']} | Reference-ready: {health['reference_ready']} | "
         f"Drive-linked: {health['external_ready']} | Submission-ready: {health['submission_ready']}"
     )
     st.caption(f"Bioactivity records: {bioactivity_count} | Bioactivity-linked compounds: {health.get('bioactivity_ready', 0)}")
+
+
+def render_sidebar_navigation():
+    current_section = st.session_state.get("nav_section", "Dashboard")
+    current_compound_page = st.session_state.get("compound_page", "Browse Record")
+
+    for group_title, items in SIDEBAR_NAV_GROUPS:
+        st.markdown(f'<div class="sidebar-menu-caption">{group_title}</div>', unsafe_allow_html=True)
+        for item in items:
+            target_section = item["section"]
+            target_compound_page = item.get("compound_page")
+            if target_compound_page and not can_edit_database() and target_compound_page != "Browse Record":
+                continue
+            is_active = current_section == target_section
+            if target_compound_page:
+                is_active = is_active and current_compound_page == target_compound_page
+            if st.button(
+                item["label"],
+                key=f"sidebar_nav_{target_section}_{target_compound_page or 'root'}",
+                use_container_width=True,
+                type="primary" if is_active else "secondary",
+            ):
+                set_main_nav(target_section)
+                if target_compound_page:
+                    set_compound_page(target_compound_page if can_edit_database() or target_compound_page == "Browse Record" else "Browse Record")
+                st.rerun()
+
+
+def render_dashboard_showcase(
+    filtered_df: pd.DataFrame,
+    proton_count: int,
+    carbon_count: int,
+    spectra_count: int,
+    bioactivity_count: int,
+    health: dict,
+):
+    hero_uri = image_to_data_uri(str(HERO_BANNER_PATH)) if HERO_BANNER_PATH.exists() else ""
+    logo_uri = image_to_data_uri(str(SIDEBAR_LOGO_PATH)) if SIDEBAR_LOGO_PATH.exists() else ""
+    workspace_uri = image_to_data_uri(str(WORKSPACE_ART_PATH)) if WORKSPACE_ART_PATH.exists() else ""
+    latest_update = format_latest_update_label(filtered_df)
+    hero_class = "dashboard-hero-card has-image" if hero_uri else "dashboard-hero-card"
+    hero_style = f"background-image: linear-gradient(115deg, rgba(5, 11, 26, 0.9), rgba(8, 18, 34, 0.48)), url('{hero_uri}'); background-position: center right;" if hero_uri else ""
+    logo_markup = f'<img class="dashboard-hero-logo" src="{logo_uri}" alt="NPDB logo" />' if logo_uri else ""
+    stat_markup = "".join(
+        [
+            build_dashboard_stat_markup(len(filtered_df), "Compounds", COMPOUNDS_ART_PATH),
+            build_dashboard_stat_markup(spectra_count, "Spectra", SPECTRA_ART_PATH),
+            build_dashboard_stat_markup(bioactivity_count, "Bioactivity", BIOACTIVITY_ART_PATH),
+            build_dashboard_stat_markup(latest_update, "Updated", UPDATED_ART_PATH),
+        ]
+    )
+
+    st.markdown(
+        f"""
+        <div class="{hero_class}" style="{hero_style}">
+            <div class="dashboard-hero-overlay"></div>
+            <div class="dashboard-hero-content">
+                <div class="dashboard-hero-header">
+                    {logo_markup}
+                    <div class="dashboard-hero-text">
+                        <div class="dashboard-hero-kicker">Curated public workspace</div>
+                        <h1 class="dashboard-hero-title">Natural Products<br><span class="accent">Spectral Database</span></h1>
+                        <div class="dashboard-tagline">Explore. Analyze. Discover.</div>
+                    </div>
+                </div>
+                <div class="dashboard-stat-board">
+                    {stat_markup}
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    cta_col, workspace_col = st.columns([1.65, 1], gap="large")
+    with cta_col:
+        st.markdown(
+            """
+            <div class="dashboard-search-strip">
+                <div>
+                    <div class="dashboard-search-strip-title">Search Spectra</div>
+                    <div class="dashboard-search-strip-copy">
+                        Find compounds by keyword, structure, or 1H/13C similarity from the same curated workspace.
+                    </div>
+                </div>
+            </div>
+            <div class="dashboard-cta-card" style="margin-top: 0.9rem;">
+                <div class="dashboard-cta-kicker">Database access model</div>
+                <div class="dashboard-cta-title">Browse freely, curate carefully.</div>
+                <div class="dashboard-cta-copy">
+                    Public users can browse, search, and export data. Submission, editing, and deletion remain reserved for
+                    <strong>npdb_tyas</strong> so the collection stays tidy, traceable, and publication-ready.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        b1, b2, b3 = st.columns(3)
+        with b1:
+            if st.button("Start Searching", key="dashboard_search_cta", use_container_width=True):
+                set_main_nav("Search & Match")
+                st.rerun()
+        with b2:
+            if st.button("Browse Records", key="dashboard_browse_cta", use_container_width=True):
+                set_main_nav("Compound Workspace")
+                set_compound_page("Browse Record")
+                st.rerun()
+        with b3:
+            if st.button("Open Guide", key="dashboard_guide_cta", use_container_width=True):
+                set_main_nav("Guide")
+                st.rerun()
+
+    with workspace_col:
+        art_markup = f'<img class="dashboard-workspace-art" src="{workspace_uri}" alt="Compound workspace visual" />' if workspace_uri else ""
+        st.markdown(
+            f"""
+            <div class="dashboard-workspace-card">
+                <div>
+                    <div class="dashboard-cta-kicker">Compound Workspace</div>
+                    <div class="dashboard-workspace-title">One place to curate structure, spectra, references, and activity.</div>
+                    <div class="dashboard-workspace-copy">
+                        Structure-ready: {health['structure_ready']} records. Bioactivity-linked: {health.get('bioactivity_ready', 0)}.
+                        This keeps browsing and curation connected instead of scattering them across unrelated screens.
+                    </div>
+                </div>
+                {art_markup}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if st.button("Open Workspace", key="dashboard_workspace_cta", use_container_width=True):
+            set_main_nav("Compound Workspace")
+            set_compound_page("Browse Record")
+            st.rerun()
+
+    section_header("Compound Workflow", "A clearer sequence keeps curation easier to follow for both the owner and public visitors.")
+    step_columns = st.columns(len(DASHBOARD_WORKFLOW_STEPS))
+    for idx, (col, (title, copy)) in enumerate(zip(step_columns, DASHBOARD_WORKFLOW_STEPS), start=1):
+        with col:
+            st.markdown(
+                f"""
+                <div class="workflow-card">
+                    <div class="workflow-step">{idx}</div>
+                    <div class="workflow-title">{title}</div>
+                    <div class="workflow-copy">{copy}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    section_header("Design Priorities", "These improvements aim to make NPDB more informative, more stable, and easier to trust.")
+    highlight_columns = st.columns(len(DASHBOARD_HIGHLIGHTS))
+    for col, (title, copy) in zip(highlight_columns, DASHBOARD_HIGHLIGHTS):
+        with col:
+            st.markdown(
+                f"""
+                <div class="highlight-card">
+                    <div class="highlight-title">{title}</div>
+                    <div class="highlight-copy">{copy}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    st.caption(
+        f"Bioactivity records available in the current view: {bioactivity_count}. "
+        f"Submission-ready compounds: {health['submission_ready']}."
+    )
 
 
 def show_section_banner(image_path: Path, caption: str | None = None):
@@ -3020,36 +4369,31 @@ def render_compound_card(row):
     st.markdown('</div>', unsafe_allow_html=True)
 
 def show_app_header():
-    st.markdown('<div class="hero-shell">', unsafe_allow_html=True)
-    st.markdown('<div class="hero-banner-wrap">', unsafe_allow_html=True)
-    if HEADER_LOGO_PATH.exists():
-        st.image(str(HEADER_LOGO_PATH), width="stretch")
+    current_section = st.session_state.get("nav_section", "Dashboard")
+    current_copy = NAV_SECTION_COPY.get(current_section, {"title": current_section, "summary": "Curated natural products workspace."})
+    logo_uri = image_to_data_uri(str(SIDEBAR_LOGO_PATH)) if SIDEBAR_LOGO_PATH.exists() else ""
+    logo_markup = f'<img class="app-masthead-logo" src="{logo_uri}" alt="NPDB logo" />' if logo_uri else ""
+    if use_supabase_write_backend():
+        status_label = "Cloud sync enabled"
+    elif use_supabase_backend():
+        status_label = "Cloud read mode"
     else:
-        st.markdown(
-            """
-            <div class="hero-image-fallback">
-                <div class="result-title">Header image not found</div>
-                <div class="result-subtitle">Place the file at data/branding/logo_header_web.png</div>
+        status_label = "Local draft mode"
+    st.markdown(
+        f"""
+        <div class="app-masthead">
+            <div class="app-masthead-brand">
+                {logo_markup}
+                <div>
+                    <div class="app-masthead-title">NPDB Workspace</div>
+                    <div class="app-masthead-subtitle"><strong>{current_copy['title']}</strong> • {current_copy['summary']}</div>
+                </div>
             </div>
-            """,
-            unsafe_allow_html=True
-        )
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    hero_col1, hero_col2, hero_col3 = st.columns([1.1, 0.9, 0.9])
-    with hero_col1:
-        if st.button("Browse Dashboard", use_container_width=True, key="hero_overview_btn"):
-            set_main_nav("Dashboard")
-            st.rerun()
-    with hero_col2:
-        if st.button("Search Spectra", use_container_width=True, key="hero_search_btn"):
-            set_main_nav("Search & Match")
-            st.rerun()
-    with hero_col3:
-        if st.button("Start Submission", use_container_width=True, key="hero_add_btn"):
-            set_main_nav("Compound Workspace")
-            set_compound_page("New Submission" if can_edit_database() else "Browse Record")
-            st.rerun()
+            <div class="app-masthead-status">{status_label}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 # =========================
 # Data loading
@@ -5210,12 +6554,19 @@ def render_candidate_cards(results, mode="13C", limit=10):
                     st.rerun()
 
             with action_right:
-                if st.button(
-                    f"Update Metadata #{i}",
-                    key=f"edit_compound_{mode}_{item['compound_id']}_{i}"
-                ):
-                    open_compound_editor(item["compound_id"])
-                    st.rerun()
+                if can_edit_database():
+                    if st.button(
+                        f"Update Metadata #{i}",
+                        key=f"edit_compound_{mode}_{item['compound_id']}_{i}"
+                    ):
+                        open_compound_editor(item["compound_id"])
+                        st.rerun()
+                else:
+                    st.button(
+                        f"View Only #{i}",
+                        key=f"view_only_{mode}_{item['compound_id']}_{i}",
+                        disabled=True,
+                    )
 
             if mode == "13C" and item["matches"]:
                 st.markdown("**Matched 13C Peaks**")
@@ -5243,6 +6594,9 @@ def render_candidate_cards(results, mode="13C", limit=10):
 # =========================
 def show_search_page(all_compounds_df):
     section_header("Search & Match", "Switch between keyword lookup and spectral similarity ranking without leaving the same workspace.")
+
+    if "structure_editor_nonce" not in st.session_state:
+        st.session_state["structure_editor_nonce"] = 0
 
     search_mode = st.radio(
         "Search Mode",
@@ -5291,52 +6645,81 @@ def show_search_page(all_compounds_df):
         )
 
         query_smiles = maybe_blank(st.session_state.get("structure_query_smiles"))
-        editor_left, editor_right = st.columns([1.95, 1])
+        st.markdown(
+            """
+            <div class="search-preset-strip">
+                <div class="search-preset-pill"><strong>Reference-style</strong> compact structure workflow</div>
+                <div class="search-preset-pill"><strong>Supported</strong> identity, substructure, similarity</div>
+                <div class="search-preset-pill"><strong>Input</strong> draw, paste SMILES, or paste Molfile</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        editor_left, editor_right = st.columns([1.34, 0.92], gap="large")
 
         with editor_left:
             st.markdown('<div class="panel-card">', unsafe_allow_html=True)
             st.markdown("**Search by Structure**")
             previous_query_smiles = maybe_blank(st.session_state.get("structure_query_smiles"))
             editor_mode_message = ""
-            if st_ketcher is not None:
-                drawn_smiles = st_ketcher(
-                    value=previous_query_smiles,
-                    height=720,
-                    molecule_format="SMILES",
-                    key="structure_search_editor_primary",
+            draw_tab, paste_tab = st.tabs(["Draw Structure", "Paste SMILES / Molfile"])
+            with draw_tab:
+                if st_ketcher is not None:
+                    drawn_smiles = st_ketcher(
+                        value=previous_query_smiles,
+                        height=400,
+                        molecule_format="SMILES",
+                        key=f"structure_search_editor_primary_{st.session_state['structure_editor_nonce']}",
+                    )
+                    drawn_smiles_text = "" if drawn_smiles in {None, 0, "0"} else maybe_blank(drawn_smiles)
+                    if drawn_smiles_text != previous_query_smiles:
+                        st.session_state["structure_query_smiles"] = drawn_smiles_text
+                        clear_structure_search_state()
+                    query_smiles = drawn_smiles_text
+                    editor_mode_message = "Direct drawing editor is active. Draw the structure in the compact canvas, then run identity, substructure, or similarity search."
+                elif streamlit_ketchersa is not None:
+                    drawn_structure = streamlit_ketchersa(height="400px", key=f"structure_search_editor_full_{st.session_state['structure_editor_nonce']}")
+                    drawn_structure_text = "" if drawn_structure in {None, 0, "0"} else maybe_blank(drawn_structure)
+                    if drawn_structure_text != previous_query_smiles:
+                        st.session_state["structure_query_smiles"] = drawn_structure_text
+                        clear_structure_search_state()
+                    query_smiles = drawn_structure_text
+                    editor_mode_message = "Embedded Ketcher build is active. Draw directly in the compact canvas, then run identity, substructure, or similarity search."
+                else:
+                    st.warning("The direct drawing editor is not active in this deployment yet.")
+                    st.caption(f"Editor status: {KETCHER_STATUS}")
+                    query_smiles = st.text_area(
+                        "Query Structure (SMILES or Molfile)",
+                        key="structure_query_smiles",
+                        height=180,
+                        placeholder="Example: C1=CC=CC=C1",
+                    )
+                    editor_mode_message = "Fallback mode is active. You can still search by pasting a valid SMILES or Molfile query."
+                    if maybe_blank(query_smiles) != previous_query_smiles:
+                        clear_structure_search_state()
+            with paste_tab:
+                manual_query = st.text_area(
+                    "Paste or refine the current query",
+                    value=query_smiles or previous_query_smiles,
+                    key="structure_query_paste_area",
+                    height=140,
+                    placeholder="Paste a valid SMILES or Molfile here.",
                 )
-                drawn_smiles_text = "" if drawn_smiles in {None, 0, "0"} else maybe_blank(drawn_smiles)
-                if drawn_smiles_text != previous_query_smiles:
-                    st.session_state["structure_query_smiles"] = drawn_smiles_text
-                    clear_structure_search_state()
-                query_smiles = drawn_smiles_text
-                editor_mode_message = "Direct drawing editor is active. Draw the structure in the canvas, then run identity, substructure, or similarity search."
-            elif streamlit_ketchersa is not None:
-                drawn_structure = streamlit_ketchersa(height="720px", key="structure_search_editor_full")
-                drawn_structure_text = "" if drawn_structure in {None, 0, "0"} else maybe_blank(drawn_structure)
-                if drawn_structure_text != previous_query_smiles:
-                    st.session_state["structure_query_smiles"] = drawn_structure_text
-                    clear_structure_search_state()
-                query_smiles = drawn_structure_text
-                editor_mode_message = "Embedded Ketcher build is active. Draw directly in the canvas, then run identity, substructure, or similarity search."
-            else:
-                st.warning("The direct drawing editor is not active in this deployment yet.")
-                st.caption(f"Editor status: {KETCHER_STATUS}")
-                query_smiles = st.text_area(
-                    "Query Structure (SMILES or Molfile)",
-                    key="structure_query_smiles",
-                    height=220,
-                    placeholder="Example: C1=CC=CC=C1",
-                )
-                st.text_input(
-                    "Starting SMILES (optional)",
-                    key="structure_seed_smiles",
-                    placeholder="Paste a known scaffold here if you want to seed the editor in a future run.",
-                )
-                editor_mode_message = "Fallback mode is active. You can still search by pasting a valid SMILES or Molfile query."
-                if maybe_blank(query_smiles) != previous_query_smiles:
-                    clear_structure_search_state()
-            st.caption(editor_mode_message)
+                paste_col1, paste_col2 = st.columns(2)
+                with paste_col1:
+                    if st.button("Use Pasted Query", use_container_width=True, key="apply_pasted_structure_query"):
+                        st.session_state["structure_query_smiles"] = maybe_blank(manual_query)
+                        query_smiles = maybe_blank(manual_query)
+                        clear_structure_search_state()
+                        st.rerun()
+                with paste_col2:
+                    if st.button("Clear Query", use_container_width=True, key="clear_structure_query"):
+                        st.session_state["structure_query_smiles"] = ""
+                        st.session_state["structure_query_paste_area"] = ""
+                        st.session_state["structure_editor_nonce"] += 1
+                        clear_structure_search_state()
+                        st.rerun()
+            st.markdown(f'<div class="structure-editor-note">{editor_mode_message}</div>', unsafe_allow_html=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
         with editor_right:
@@ -5348,7 +6731,7 @@ def show_search_page(all_compounds_df):
                 key="structure_search_type",
             )
             if query_smiles:
-                render_structure_preview(query_smiles, caption="Current query", empty_message=False, size=(420, 300))
+                render_structure_preview(query_smiles, caption="Current query", empty_message=False, size=(280, 190))
             else:
                 st.caption("Draw a structure in the editor area to prepare the current query.")
             if structure_search_type == "Similarity Search":
@@ -5417,7 +6800,7 @@ def show_search_page(all_compounds_df):
             with query_col:
                 st.markdown('<div class="panel-card">', unsafe_allow_html=True)
                 st.markdown("**Query Structure**")
-                render_structure_preview(query_smiles, caption="Current query", empty_message=False, size=(420, 300))
+                render_structure_preview(query_smiles, caption="Current query", empty_message=False, size=(280, 190))
                 st.markdown('</div>', unsafe_allow_html=True)
             with summary_col:
                 st.markdown('<div class="panel-card">', unsafe_allow_html=True)
@@ -5469,16 +6852,34 @@ def show_search_page(all_compounds_df):
         )
 
         with st.form("search_by_name_form"):
-            st.markdown('<div class="panel-card">', unsafe_allow_html=True)
-            keyword = st.text_input(
-                "Enter compound name, keyword, sample code, source category/organism, journal, or DOI",
-                key="search_name_keyword",
-            )
-            run_name_search = st.form_submit_button("Run Keyword Search", use_container_width=True)
-            st.markdown('</div>', unsafe_allow_html=True)
+            left, right = st.columns([1.55, 1])
+            with left:
+                st.markdown('<div class="panel-card">', unsafe_allow_html=True)
+                keyword = st.text_input(
+                    "Search expression",
+                    key="search_name_keyword",
+                    placeholder="Name, formula, DOI, sample code, source, or other indexed metadata",
+                )
+                st.caption("This is the NPDB equivalent of molecule-property searching: use the field selector and match style to narrow the expression.")
+                st.markdown('</div>', unsafe_allow_html=True)
+            with right:
+                st.markdown('<div class="panel-card">', unsafe_allow_html=True)
+                search_field_label = st.selectbox(
+                    "Search Field",
+                    list(SEARCH_FIELD_COLUMN_MAP.keys()),
+                    key="search_field_label",
+                )
+                search_match_mode = st.selectbox(
+                    "Match Mode",
+                    ["All keywords", "Exact phrase", "Starts with"],
+                    key="search_match_mode",
+                )
+                run_name_search = st.form_submit_button("Run Keyword Search", use_container_width=True)
+                run_name_search = st.form_submit_button("Run Keyword Search", use_container_width=True)
+                st.markdown('</div>', unsafe_allow_html=True)
 
         if keyword.strip():
-            result = filtered_df[keyword_search_mask(filtered_df, keyword)].copy()
+            result = filtered_df[field_search_mask(filtered_df, keyword, search_field_label, search_match_mode)].copy()
             st.write(f"Found {len(result)} compound(s).")
 
             if not result.empty:
@@ -5519,16 +6920,24 @@ def show_search_page(all_compounds_df):
             with left:
                 st.markdown('<div class="panel-card">', unsafe_allow_html=True)
                 carbon_text = st.text_area("Enter 13C peaks (comma, space, or newline separated)", height=140)
+                carbon_file = st.file_uploader(
+                    "Or upload peak text / JCAMP-DX",
+                    type=PEAK_UPLOAD_TYPES,
+                    key="carbon_peak_upload",
+                )
                 st.markdown('</div>', unsafe_allow_html=True)
             with right:
                 st.markdown('<div class="panel-card">', unsafe_allow_html=True)
                 carbon_tol = st.number_input("13C tolerance", min_value=0.0, value=0.5, step=0.1)
                 run_13c = st.form_submit_button("Run 13C Match", use_container_width=True)
-                st.markdown('<div class="small-note">Example: 145.2, 122.8, 77.1, 38.5</div>', unsafe_allow_html=True)
+                st.markdown('<div class="small-note">Example: 145.2, 122.8, 77.1, 38.5. Peak files can also be pasted from text or uploaded as JCAMP-DX.</div>', unsafe_allow_html=True)
                 st.markdown('</div>', unsafe_allow_html=True)
 
         if run_13c:
-            query_carbons = parse_peak_input(carbon_text)
+            uploaded_peaks, upload_message = parse_peak_upload(carbon_file)
+            query_carbons = parse_peak_input(carbon_text) + uploaded_peaks
+            if upload_message:
+                st.caption(upload_message)
             if not query_carbons:
                 st.warning("Please enter at least one valid 13C peak.")
             else:
@@ -5567,16 +6976,24 @@ def show_search_page(all_compounds_df):
             with left:
                 st.markdown('<div class="panel-card">', unsafe_allow_html=True)
                 proton_text = st.text_area("Enter 1H peaks (comma, space, or newline separated)", height=140)
+                proton_file = st.file_uploader(
+                    "Or upload peak text / JCAMP-DX",
+                    type=PEAK_UPLOAD_TYPES,
+                    key="proton_peak_upload",
+                )
                 st.markdown('</div>', unsafe_allow_html=True)
             with right:
                 st.markdown('<div class="panel-card">', unsafe_allow_html=True)
                 proton_tol = st.number_input("1H tolerance", min_value=0.0, value=0.05, step=0.01, format="%.2f")
                 run_1h = st.form_submit_button("Run 1H Match", use_container_width=True)
-                st.markdown('<div class="small-note">Example: 5.82, 5.35, 3.21, 1.22</div>', unsafe_allow_html=True)
+                st.markdown('<div class="small-note">Example: 5.82, 5.35, 3.21, 1.22. Peak files can also be uploaded for quick screening.</div>', unsafe_allow_html=True)
                 st.markdown('</div>', unsafe_allow_html=True)
 
         if run_1h:
-            query_protons = parse_peak_input(proton_text)
+            uploaded_peaks, upload_message = parse_peak_upload(proton_file)
+            query_protons = parse_peak_input(proton_text) + uploaded_peaks
+            if upload_message:
+                st.caption(upload_message)
             if not query_protons:
                 st.warning("Please enter at least one valid 1H peak.")
             else:
@@ -5615,7 +7032,17 @@ def show_search_page(all_compounds_df):
             with left:
                 st.markdown('<div class="panel-card">', unsafe_allow_html=True)
                 proton_text = st.text_area("Enter 1H peaks (comma, space, or newline separated)", height=120, key="combined_proton_text")
+                proton_file = st.file_uploader(
+                    "Optional 1H peak upload",
+                    type=PEAK_UPLOAD_TYPES,
+                    key="combined_proton_file",
+                )
                 carbon_text = st.text_area("Enter 13C peaks (comma, space, or newline separated)", height=120, key="combined_carbon_text")
+                carbon_file = st.file_uploader(
+                    "Optional 13C peak upload",
+                    type=PEAK_UPLOAD_TYPES,
+                    key="combined_carbon_file",
+                )
                 st.markdown('</div>', unsafe_allow_html=True)
             with right:
                 st.markdown('<div class="panel-card">', unsafe_allow_html=True)
@@ -5626,8 +7053,14 @@ def show_search_page(all_compounds_df):
                 st.markdown('</div>', unsafe_allow_html=True)
 
         if run_combined:
-            query_protons = parse_peak_input(proton_text)
-            query_carbons = parse_peak_input(carbon_text)
+            proton_upload_peaks, proton_upload_message = parse_peak_upload(proton_file)
+            carbon_upload_peaks, carbon_upload_message = parse_peak_upload(carbon_file)
+            query_protons = parse_peak_input(proton_text) + proton_upload_peaks
+            query_carbons = parse_peak_input(carbon_text) + carbon_upload_peaks
+            if proton_upload_message:
+                st.caption(proton_upload_message)
+            if carbon_upload_message:
+                st.caption(carbon_upload_message)
 
             if not query_protons and not query_carbons:
                 st.warning("Please enter at least one valid 1H or 13C peak.")
@@ -5666,7 +7099,10 @@ def show_search_page(all_compounds_df):
 # Overview page
 # =========================
 def show_overview_page(all_compounds_df):
-    section_header("Dashboard")
+    overall_ids = all_compounds_df["id"].tolist() if "id" in all_compounds_df.columns else []
+    overall_proton_count, overall_carbon_count, overall_spectra_count = count_related_records(overall_ids)
+    overall_bioactivity_count = count_bioactivity_records(overall_ids)
+    overall_health = calculate_workspace_health(all_compounds_df)
 
     with st.sidebar.expander("Dashboard Filters", expanded=True):
         dashboard_class_filter = st.selectbox(
@@ -5722,6 +7158,16 @@ def show_overview_page(all_compounds_df):
         & filtered_df["source_material"].fillna("").astype(str).str.strip().eq("")
     ]
     missing_spectra_df = filtered_df[~filtered_df["id"].isin(linked_spectra_ids)]
+
+    render_dashboard_showcase(
+        all_compounds_df,
+        overall_proton_count,
+        overall_carbon_count,
+        overall_spectra_count,
+        overall_bioactivity_count,
+        overall_health,
+    )
+    section_header("Collection Overview", "Track current coverage, curation progress, linked files, and dataset readiness from one dashboard.")
 
     c1, c2, c3, c4, c5 = st.columns(5)
     render_metric_card("Compounds", len(filtered_df), c1)
@@ -5836,11 +7282,11 @@ def show_overview_page(all_compounds_df):
                 .reset_index()
             )
             class_counts.columns = ["Compound Class", "Count"]
-            render_dashboard_bar_chart(
+            render_dashboard_pie_chart(
                 class_counts,
-                x_col="Compound Class",
-                y_col="Count",
-                color_hex="#61D8ED",
+                names_col="Compound Class",
+                values_col="Count",
+                color_sequence=["#61D8ED", "#4C8EFF", "#9C63F1", "#7EF0C2", "#F2C66D", "#FF7F6D"],
             )
 
     with right:
@@ -5856,11 +7302,11 @@ def show_overview_page(all_compounds_df):
                 .reset_index()
             )
             source_counts.columns = ["Source Category", "Count"]
-            render_dashboard_bar_chart(
+            render_dashboard_pie_chart(
                 source_counts,
-                x_col="Source Category",
-                y_col="Count",
-                color_hex="#9C63F1",
+                names_col="Source Category",
+                values_col="Count",
+                color_sequence=["#9C63F1", "#61D8ED", "#4C8EFF", "#FF7F6D", "#F2C66D", "#7EF0C2"],
             )
 
     st.markdown('<div class="dashboard-section"></div>', unsafe_allow_html=True)
@@ -5928,8 +7374,8 @@ def show_overview_page(all_compounds_df):
     with utility_col:
         section_header("Backup")
         render_helper_card(
-            "Keep a safe copy",
-            "Download a fresh SQLite backup before major imports, metadata revision, or record deletion.",
+            "Keep the dataset recoverable",
+            "Download a fresh backup before major imports or metadata revision. When cloud write mode is active, you can also package a multi-table snapshot and push it to the private Supabase backups bucket.",
         )
         backup_filename = f"nmr_database_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
         st.download_button(
@@ -5939,6 +7385,24 @@ def show_overview_page(all_compounds_df):
             mime="application/octet-stream",
             key="download_db_backup"
         )
+        if can_edit_database():
+            snapshot_bytes, snapshot_name = build_backup_bundle_bytes()
+            st.download_button(
+                label="Download Cloud Snapshot ZIP",
+                data=snapshot_bytes,
+                file_name=snapshot_name,
+                mime="application/zip",
+                key="download_cloud_snapshot_zip",
+            )
+            if use_supabase_write_backend():
+                if st.button("Upload Snapshot to Supabase Backups", use_container_width=True, key="upload_cloud_snapshot_zip"):
+                    try:
+                        uploaded_url = upload_backup_bundle_to_cloud(snapshot_bytes, snapshot_name)
+                        st.success("Snapshot uploaded to the private Supabase backups bucket.")
+                        st.caption(uploaded_url)
+                    except Exception as exc:
+                        st.error(str(exc))
+                st.caption("Runtime buckets: `structures` and `spectra` are public for viewing, while `exports` and `backups` stay private.")
 
 
 def show_guide_page():
@@ -7607,7 +9071,12 @@ def show_spectra_library_overview():
         .reset_index()
     )
     spectrum_counts.columns = ["Spectrum Type", "Count"]
-    render_dashboard_bar_chart(spectrum_counts, x_col="Spectrum Type", y_col="Count", color_hex="#FF7F6D")
+    render_dashboard_pie_chart(
+        spectrum_counts,
+        names_col="Spectrum Type",
+        values_col="Count",
+        color_sequence=["#FF7F6D", "#61D8ED", "#4C8EFF", "#9C63F1", "#F2C66D", "#7EF0C2"],
+    )
 
     st.markdown("**Recent Library Entries**")
     preview_df = spectra_df[
@@ -7909,10 +9378,21 @@ def use_supabase_backend() -> bool:
     return bool(get_supabase_url() and (get_supabase_service_role_key() or get_supabase_anon_key()))
 
 
+def use_supabase_write_backend() -> bool:
+    return bool(get_supabase_url() and get_supabase_service_role_key())
+
+
 def _supabase_ssl_context():
     if get_secret_setting("NPDB_SKIP_SSL_VERIFY") == "1":
         return ssl._create_unverified_context()
     return None
+
+
+def ensure_write_target_ready():
+    if use_supabase_backend() and not use_supabase_write_backend():
+        raise RuntimeError(
+            "Cloud write mode is not configured. To keep Supabase as the single source of truth, editing is blocked until SUPABASE_SERVICE_ROLE_KEY is available."
+        )
 
 
 def _json_ready(value):
@@ -7929,7 +9409,9 @@ def _json_ready(value):
 
 
 def _supabase_headers(write: bool = False, json_body: bool = True, extra: dict | None = None):
-    api_key = get_supabase_service_role_key() or get_supabase_anon_key()
+    api_key = get_supabase_service_role_key() if write else (get_supabase_service_role_key() or get_supabase_anon_key())
+    if write and not api_key:
+        raise RuntimeError("Supabase writes require SUPABASE_SERVICE_ROLE_KEY in server-side secrets.")
     headers = {
         "apikey": api_key,
         "Authorization": f"Bearer {api_key}",
@@ -7942,6 +9424,8 @@ def _supabase_headers(write: bool = False, json_body: bool = True, extra: dict |
 
 
 def _supabase_request(method: str, path: str, query: dict | None = None, body=None, write: bool = False, json_body: bool = True, extra_headers: dict | None = None, return_json: bool = True):
+    if write and not use_supabase_write_backend():
+        raise RuntimeError("Supabase write mode is disabled because SUPABASE_SERVICE_ROLE_KEY is missing.")
     base = get_supabase_url().rstrip("/")
     url = f"{base}{path}"
     if query:
@@ -8036,7 +9520,7 @@ def supabase_delete_row(table: str, row_id: int):
     )
 
 
-def supabase_upload_bytes(bucket: str, object_path: str, data: bytes, content_type: str = "application/octet-stream") -> str:
+def supabase_upload_bytes(bucket: str, object_path: str, data: bytes, content_type: str = "application/octet-stream", public_bucket: bool = True) -> str:
     _supabase_request(
         "POST",
         f"/storage/v1/object/{bucket}/{quote(object_path, safe='/')}"
@@ -8046,7 +9530,9 @@ def supabase_upload_bytes(bucket: str, object_path: str, data: bytes, content_ty
         extra_headers={"Content-Type": content_type, "x-upsert": "true"},
         return_json=False,
     )
-    return f"{get_supabase_url().rstrip('/')}" + f"/storage/v1/object/public/{bucket}/{quote(object_path, safe='/')}"
+    if public_bucket:
+        return f"{get_supabase_url().rstrip('/')}" + f"/storage/v1/object/public/{bucket}/{quote(object_path, safe='/')}"
+    return f"storage://{bucket}/{object_path}"
 
 
 def _sqlite_dataframe(query: str, params: tuple | list | None = None) -> pd.DataFrame:
@@ -8129,18 +9615,23 @@ def save_uploaded_asset(uploaded_file, target_dir: Path, base_name: str) -> str:
             output_file.write(data)
     except Exception:
         pass
-    if use_supabase_backend():
+    if use_supabase_write_backend():
         bucket = "exports"
+        public_bucket = False
         if target_dir == STRUCTURES_DIR:
             bucket = "structures"
+            public_bucket = True
         elif target_dir == SPECTRA_DIR:
             bucket = "spectra"
+            public_bucket = True
         object_path = f"{datetime.utcnow().strftime('%Y/%m/%d')}/{candidate.name}"
+        content_type = getattr(uploaded_file, "type", None) or mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
         try:
-            content_type = getattr(uploaded_file, "type", None) or mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
-            return supabase_upload_bytes(bucket, object_path, data, content_type=content_type)
-        except Exception:
-            pass
+            return supabase_upload_bytes(bucket, object_path, data, content_type=content_type, public_bucket=public_bucket)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Cloud asset upload failed for '{uploaded_file.name}'. The file was not committed as a cloud-backed record."
+            ) from exc
     return relative_project_path(candidate) if candidate.exists() else str(candidate)
 
 
@@ -8342,6 +9833,7 @@ def _upsert_compound_local(row: dict):
 
 
 def insert_compound_record(trivial_name, iupac_name, molecular_formula, compound_class, compound_subclass, smiles, inchi, inchikey, source_category, source_organism, source_material, sample_code, collection_location, gps_coordinates, depth_m, uv_data, ftir_data, cd_data, optical_rotation, melting_point, crystallization_method, structure_image_path, journal_name, article_title, publication_year, volume, issue, pages, doi, ccdc_number, molecular_weight, hrms_data, data_source, note):
+    ensure_write_target_ready()
     row = {
         "trivial_name": trivial_name,
         "iupac_name": iupac_name,
@@ -8379,20 +9871,22 @@ def insert_compound_record(trivial_name, iupac_name, molecular_formula, compound
         "note": note,
         "updated_at": datetime.utcnow().isoformat(),
     }
-    if use_supabase_backend():
+    if use_supabase_write_backend():
         inserted = supabase_insert_row("compounds", row)
         row_id = int(inserted.get("id")) if inserted and inserted.get("id") is not None else None
-        if row_id is not None:
-            row["id"] = row_id
-            _upsert_compound_local(row)
-            invalidate_cached_views()
-            return row_id
+        if row_id is None:
+            raise RuntimeError("Supabase insert for the compound did not return an ID, so the local mirror was not updated.")
+        row["id"] = row_id
+        _upsert_compound_local(row)
+        invalidate_cached_views()
+        return row_id
     row_id = _sqlite_upsert_row("compounds", row)
     invalidate_cached_views()
     return row_id
 
 
 def update_compound_record(compound_id, trivial_name, iupac_name, molecular_formula, compound_class, compound_subclass, smiles, inchi, inchikey, source_category, source_organism, source_material, sample_code, collection_location, gps_coordinates, depth_m, uv_data, ftir_data, cd_data, optical_rotation, melting_point, crystallization_method, structure_image_path, journal_name, article_title, publication_year, volume, issue, pages, doi, ccdc_number, molecular_weight, hrms_data, data_source, note):
+    ensure_write_target_ready()
     row = {
         "id": compound_id,
         "trivial_name": trivial_name,
@@ -8431,14 +9925,15 @@ def update_compound_record(compound_id, trivial_name, iupac_name, molecular_form
         "note": note,
         "updated_at": datetime.utcnow().isoformat(),
     }
-    if use_supabase_backend():
+    if use_supabase_write_backend():
         supabase_update_row("compounds", compound_id, row)
     _upsert_compound_local(row)
     invalidate_cached_views()
 
 
 def delete_compound_record(compound_id):
-    if use_supabase_backend():
+    ensure_write_target_ready()
+    if use_supabase_write_backend():
         supabase_delete_row("compounds", compound_id)
     conn = get_connection()
     try:
@@ -8455,11 +9950,14 @@ def delete_compound_record(compound_id):
 
 
 def _write_child_row(table: str, row: dict, row_id: int | None = None):
-    if use_supabase_backend():
+    ensure_write_target_ready()
+    if use_supabase_write_backend():
         if row_id is None:
             inserted = supabase_insert_row(table, row)
-            if inserted and inserted.get("id") is not None:
-                row["id"] = int(inserted.get("id"))
+            inserted_id = int(inserted.get("id")) if inserted and inserted.get("id") is not None else None
+            if inserted_id is None:
+                raise RuntimeError(f"Supabase insert for '{table}' did not return an ID, so the local mirror was not updated.")
+            row["id"] = inserted_id
         else:
             supabase_update_row(table, row_id, row)
             row["id"] = row_id
@@ -8480,7 +9978,8 @@ def update_proton_record(proton_id, compound_id, delta_ppm, multiplicity, j_valu
 
 
 def delete_proton_record_by_id(proton_id):
-    if use_supabase_backend():
+    ensure_write_target_ready()
+    if use_supabase_write_backend():
         supabase_delete_row("proton_nmr", proton_id)
     _sqlite_delete_row("proton_nmr", proton_id)
     invalidate_cached_views()
@@ -8500,7 +9999,8 @@ def update_carbon_record(carbon_id, compound_id, delta_ppm, carbon_type, assignm
 
 
 def delete_carbon_record_by_id(carbon_id):
-    if use_supabase_backend():
+    ensure_write_target_ready()
+    if use_supabase_write_backend():
         supabase_delete_row("carbon_nmr", carbon_id)
     _sqlite_delete_row("carbon_nmr", carbon_id)
     invalidate_cached_views()
@@ -8520,7 +10020,8 @@ def update_spectrum_file_record(file_id, compound_id, spectrum_type, file_path, 
 
 
 def delete_spectrum_file_record_by_id(file_id):
-    if use_supabase_backend():
+    ensure_write_target_ready()
+    if use_supabase_write_backend():
         supabase_delete_row("spectra_files", file_id)
     _sqlite_delete_row("spectra_files", file_id)
     invalidate_cached_views()
@@ -8540,7 +10041,8 @@ def update_bioactivity_record(bioactivity_id, compound_id, activity_label, targe
 
 
 def delete_bioactivity_record_by_id(bioactivity_id):
-    if use_supabase_backend():
+    ensure_write_target_ready()
+    if use_supabase_write_backend():
         supabase_delete_row("bioactivity_records", bioactivity_id)
     _sqlite_delete_row("bioactivity_records", bioactivity_id)
     invalidate_cached_views()
@@ -8581,15 +10083,18 @@ def _save_generated_structure_image(compound_id: int, mol) -> str:
             output_file.write(data)
     except Exception:
         pass
-    if use_supabase_backend():
+    if use_supabase_write_backend():
         try:
             return supabase_upload_bytes("structures", f"generated/{candidate.name}", data, content_type="image/png")
-        except Exception:
-            pass
+        except Exception as exc:
+            raise RuntimeError(
+                f"Cloud structure image upload failed for compound ID {compound_id}. The structure metadata was not saved."
+            ) from exc
     return relative_project_path(candidate) if candidate.exists() else ""
 
 
 def save_structure_query_to_compound(compound_id: int, query_text: str) -> tuple[bool, str]:
+    ensure_write_target_ready()
     identifiers = derive_structure_identifiers(query_text)
     if not identifiers:
         return False, "The current query could not be converted into searchable structure identifiers."
@@ -8622,6 +10127,7 @@ def save_structure_query_to_compound(compound_id: int, query_text: str) -> tuple
 # =========================
 show_app_header()
 all_compounds_df = load_all_compounds()
+render_cloud_sync_notice()
 if use_supabase_backend() and all_compounds_df.empty:
     try:
         load_all_compounds.clear()
@@ -8637,25 +10143,9 @@ write_batch_import_templates()
 with st.sidebar:
     active_section = st.session_state.get("main_section_radio", st.session_state.get("nav_section", "Dashboard"))
     render_sidebar_workspace_summary(active_section, all_compounds_df)
+    render_sidebar_navigation()
 
-    st.markdown("### Workspace")
-    st.caption("Choose the area you want to open next.")
-
-    nav_options = NAV_OPTIONS
-    current_index = 0
-    if st.session_state.get("nav_section") in nav_options:
-        current_index = nav_options.index(st.session_state["nav_section"])
-
-    main_radio_kwargs = {
-        "label": "Open workspace",
-        "options": nav_options,
-        "key": "main_section_radio",
-        "label_visibility": "collapsed",
-    }
-    if "main_section_radio" not in st.session_state:
-        main_radio_kwargs["index"] = current_index
-    main_section = st.radio(**main_radio_kwargs)
-    st.session_state["nav_section"] = main_section
+main_section = st.session_state.get("nav_section", "Dashboard")
 # =========================
 # Main routing
 # =========================
@@ -8682,4 +10172,3 @@ elif main_section == "Spectra Library":
 
 elif main_section == "Guide":
     show_guide_page()
-    
