@@ -7234,6 +7234,231 @@ Bioactivity Records: {len(bioactivity_df)}
 """
     return add_credit_to_text_bytes(summary.encode("utf-8"))
 
+
+def _archive_safe_name(value: str, fallback: str = "file") -> str:
+    return slugify_value(value, fallback=fallback).replace(" ", "_")
+
+
+def _asset_bytes_from_source(source_value: str) -> tuple[bytes, str]:
+    source_text = maybe_blank(source_value)
+    if not source_text:
+        return b"", ""
+    try:
+        if is_external_url(source_text):
+            with urllib.request.urlopen(source_text, timeout=30, context=_supabase_ssl_context()) as response:
+                data = response.read()
+                suffix = Path(urlparse(source_text).path).suffix or mimetypes.guess_extension(response.headers.get_content_type()) or ".bin"
+                return data, suffix
+        full_path = get_full_file_path(source_text)
+        if full_path is not None and full_path.exists():
+            return full_path.read_bytes(), full_path.suffix or ".bin"
+    except Exception:
+        return b"", ""
+    return b"", ""
+
+
+def _compound_structure_asset(row_data) -> tuple[bytes, str]:
+    structure_bytes, suffix = _asset_bytes_from_source(row_data.get("structure_image_path"))
+    if structure_bytes:
+        return structure_bytes, suffix or ".png"
+    smiles_value = maybe_blank(row_data.get("smiles"))
+    if smiles_value:
+        generated = structure_smiles_png_bytes(smiles_value, size=(900, 650))
+        if generated:
+            return generated, ".png"
+        fallback_url = structure_smiles_image_url(smiles_value)
+        return _asset_bytes_from_source(fallback_url)
+    return b"", ""
+
+
+def _dataframes_to_record_workbook(sheets: dict[str, pd.DataFrame]) -> bytes:
+    if Alignment is None and Font is None and PatternFill is None:
+        raise ModuleNotFoundError("openpyxl is not available")
+
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        for raw_name, df in sheets.items():
+            sheet_name = raw_name[:31]
+            export_df = df.copy()
+            export_df.to_excel(writer, sheet_name=sheet_name, index=False)
+            worksheet = writer.book[sheet_name]
+            worksheet.freeze_panes = "A2"
+            worksheet.auto_filter.ref = worksheet.dimensions
+            for column_cells in worksheet.columns:
+                max_length = 0
+                column_letter = column_cells[0].column_letter
+                for cell in column_cells:
+                    cell_value = "" if cell.value is None else str(cell.value)
+                    max_length = max(max_length, len(cell_value))
+                worksheet.column_dimensions[column_letter].width = min(max(max_length + 2, 14), 48)
+            footer_row = worksheet.max_row + 2
+            footer_col_end = max(1, worksheet.max_column)
+            worksheet.cell(row=footer_row, column=1, value=OWNER_CREDIT)
+            if footer_col_end > 1:
+                worksheet.merge_cells(start_row=footer_row, start_column=1, end_row=footer_row, end_column=footer_col_end)
+            footer_cell = worksheet.cell(row=footer_row, column=1)
+            if Font is not None:
+                footer_cell.font = Font(italic=True, size=10, color="4F5B6B")
+            if Alignment is not None:
+                footer_cell.alignment = Alignment(horizontal="right")
+            if PatternFill is not None:
+                footer_cell.fill = PatternFill(fill_type="solid", fgColor="F5F8FD")
+    output.seek(0)
+    return output.getvalue()
+
+
+def _select_existing_columns(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame(columns=columns)
+    return df[[column for column in columns if column in df.columns]].copy()
+
+
+def _important_metadata_dataframe(row_data) -> pd.DataFrame:
+    fields = [
+        ("Compound ID", row_data.get("id")),
+        ("Trivial Name", row_data.get("trivial_name")),
+        ("IUPAC Name", row_data.get("iupac_name")),
+        ("Molecular Formula", row_data.get("molecular_formula")),
+        ("Molecular Weight", row_data.get("molecular_weight")),
+        ("SMILES", row_data.get("smiles")),
+        ("InChI", row_data.get("inchi")),
+        ("InChIKey", row_data.get("inchikey")),
+        ("Compound Class", row_data.get("compound_class")),
+        ("Compound Subclass", row_data.get("compound_subclass")),
+        ("Source Category", row_data.get("source_category")),
+        ("Source Organism", row_data.get("source_organism")),
+        ("Source Summary", source_summary_from_record(row_data)),
+        ("Sample Code", row_data.get("sample_code")),
+        ("Collection Location", row_data.get("collection_location")),
+        ("GPS Coordinates", row_data.get("gps_coordinates")),
+        ("Depth (m)", row_data.get("depth_m")),
+        ("UV Data", row_data.get("uv_data")),
+        ("FTIR Data", row_data.get("ftir_data")),
+        ("CD / ECD Data", row_data.get("cd_data")),
+        ("Optical Rotation", row_data.get("optical_rotation")),
+        ("Melting Point", row_data.get("melting_point")),
+        ("HRMS Data", row_data.get("hrms_data")),
+        ("Journal Name", row_data.get("journal_name")),
+        ("Article Title", row_data.get("article_title")),
+        ("Publication Year", row_data.get("publication_year")),
+        ("Volume", row_data.get("volume")),
+        ("Issue", row_data.get("issue")),
+        ("Pages", row_data.get("pages")),
+        ("DOI", row_data.get("doi")),
+        ("Data Source", row_data.get("data_source")),
+        ("Curation Status", clean_text(normalize_curation_status(row_data.get("curation_status"))).title()),
+        ("Structure Image Link", row_data.get("structure_image_path")),
+        ("Note", row_data.get("note")),
+    ]
+    return pd.DataFrame(
+        [{"Field": label, "Value": clean_text(value)} for label, value in fields]
+    )
+
+
+def _important_bioactivity_dataframe(bioactivity_df: pd.DataFrame) -> pd.DataFrame:
+    columns = [
+        "id",
+        "activity_label",
+        "target_name",
+        "target_category",
+        "assay_type",
+        "potency_type",
+        "potency_relation",
+        "potency_value",
+        "potency_unit",
+        "outcome",
+        "assay_source",
+        "note",
+    ]
+    export_df = _select_existing_columns(bioactivity_df, columns)
+    return export_df.rename(
+        columns={
+            "id": "Bioactivity ID",
+            "activity_label": "Activity",
+            "target_name": "Target",
+            "target_category": "Target Category",
+            "assay_type": "Assay Type",
+            "potency_type": "Metric",
+            "potency_relation": "Relation",
+            "potency_value": "Value",
+            "potency_unit": "Unit",
+            "outcome": "Outcome",
+            "assay_source": "Assay Source",
+            "note": "Note",
+        }
+    )
+
+
+def build_compound_record_bundle(compound_row, proton_df, carbon_df, spectra_df, bioactivity_df) -> tuple[bytes, str]:
+    row_data = compound_row.iloc[0]
+    compound_id = int(row_data["id"])
+    record_name = _archive_safe_name(clean_text(row_data["trivial_name"]), fallback=f"compound_{compound_id}")
+    bundle_name = f"NPDB_compound_{compound_id}_{record_name}_full_record.zip"
+    metadata_df = _important_metadata_dataframe(row_data)
+    proton_export_df = _select_existing_columns(
+        proton_df,
+        ["delta_ppm", "multiplicity", "j_value", "proton_count", "assignment", "solvent", "instrument_mhz", "note"],
+    )
+    carbon_export_df = _select_existing_columns(
+        carbon_df,
+        ["delta_ppm", "carbon_type", "assignment", "solvent", "instrument_mhz", "note"],
+    )
+    spectra_export_df = _select_existing_columns(
+        spectra_df,
+        ["id", "spectrum_type", "file_path", "note"],
+    ).rename(
+        columns={
+            "id": "Spectra File ID",
+            "spectrum_type": "Spectrum Type",
+            "file_path": "Cloud Link",
+            "note": "Note",
+        }
+    )
+    bioactivity_export_df = _important_bioactivity_dataframe(bioactivity_df)
+
+    workbook_sheets = {
+        "Metadata": metadata_df,
+        "1H_NMR": proton_export_df,
+        "13C_NMR": carbon_export_df,
+        "Spectra_Files": spectra_export_df,
+        "Bioactivity": bioactivity_export_df,
+    }
+
+    manifest = {
+        "project": "NPDB: Natural Products Spectral Database",
+        "compound_id": compound_id,
+        "trivial_name": clean_text(row_data.get("trivial_name")),
+        "created_at_utc": datetime.now(UTC).isoformat(),
+        "included": {
+            "metadata_rows": int(len(metadata_df)),
+            "proton_nmr_rows": int(len(proton_df)),
+            "carbon_nmr_rows": int(len(carbon_df)),
+            "spectra_file_rows": int(len(spectra_df)),
+            "bioactivity_rows": int(len(bioactivity_df)),
+        },
+        "spectra_policy": "Spectra image/raw files are listed as cloud links only and are not embedded in this download package.",
+    }
+
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("README.txt", build_compound_summary_text(compound_row, proton_df, carbon_df, spectra_df))
+        archive.writestr("manifest.json", json.dumps(manifest, indent=2))
+        archive.writestr("tables/compound_metadata.csv", metadata_df.to_csv(index=False))
+        archive.writestr("tables/1H_NMR_chemical_shifts.csv", proton_export_df.to_csv(index=False))
+        archive.writestr("tables/13C_NMR_chemical_shifts.csv", carbon_export_df.to_csv(index=False))
+        archive.writestr("tables/spectra_files.csv", spectra_export_df.to_csv(index=False))
+        archive.writestr("tables/bioactivity_records.csv", bioactivity_export_df.to_csv(index=False))
+        try:
+            archive.writestr("NPDB_full_record.xlsx", _dataframes_to_record_workbook(workbook_sheets))
+        except Exception:
+            pass
+
+        structure_bytes, structure_suffix = _compound_structure_asset(row_data)
+        if structure_bytes:
+            archive.writestr(f"structure/compound_{compound_id}_structure{structure_suffix or '.png'}", structure_bytes)
+    output.seek(0)
+    return output.getvalue(), bundle_name
+
 # =========================
 # Bioactivity helpers
 # =========================
@@ -7434,13 +7659,19 @@ def show_compound_detail(compound_id):
     is_editor = can_edit_database()
     action_col1, action_col2, action_col3, action_col4, action_col5 = st.columns(5)
     with action_col1:
-        summary_bytes = build_compound_summary_text(row, proton_df_raw, carbon_df_raw, spectra_df_raw)
+        bundle_bytes, bundle_name = build_compound_record_bundle(
+            row,
+            proton_df_raw,
+            carbon_df_raw,
+            spectra_df_raw,
+            bioactivity_df_raw,
+        )
         st.download_button(
-            label="Download Summary",
-            data=summary_bytes,
-            file_name=f"compound_{row_data['id']}_summary.txt",
-            mime="text/plain",
-            key=f"download_summary_{row_data['id']}"
+            label="Download Full Record",
+            data=bundle_bytes,
+            file_name=bundle_name,
+            mime="application/zip",
+            key=f"download_full_record_{row_data['id']}"
         )
     with action_col2:
         if is_editor:
