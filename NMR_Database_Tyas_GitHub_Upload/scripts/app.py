@@ -5436,8 +5436,19 @@ def render_dashboard_showcase(
 
     workflow_col, workspace_col = st.columns([2.05, 0.82], gap="medium")
     with workflow_col:
+        user_can_edit = can_edit_database()
+        workflow_title = "Compound Workflow" if user_can_edit else "Research Workflow"
+        workflow_steps = (
+            DASHBOARD_WORKFLOW_STEPS
+            if user_can_edit
+            else [
+                ("Search Spectra", "Find compounds by name, shift, formula, structure, or source."),
+                ("Browse Record", "Open curated compound dossiers and linked spectra."),
+                ("Download Data", "Export important metadata, NMR tables, and bioactivity summaries."),
+            ]
+        )
         workflow_cards = []
-        for idx, (title, copy) in enumerate(DASHBOARD_WORKFLOW_STEPS, start=1):
+        for idx, (title, copy) in enumerate(workflow_steps, start=1):
             is_primary = idx == 1
             icon_markup = build_workflow_card_icon_markup(title)
             workflow_cards.append(
@@ -5453,7 +5464,7 @@ def render_dashboard_showcase(
         render_raw_html(
             f"""
             <div class="dashboard-workflow-shell">
-                <div class="dashboard-workflow-title">Compound Workflow</div>
+                <div class="dashboard-workflow-title">{workflow_title}</div>
                 <div class="dashboard-workflow-grid">
                     {''.join(workflow_cards)}
                 </div>
@@ -5463,16 +5474,22 @@ def render_dashboard_showcase(
 
     with workspace_col:
         art_markup = f'<img class="dashboard-workspace-art" src="{workspace_uri}" alt="Compound workspace visual" />' if workspace_uri else ""
+        workspace_copy = (
+            ("A unified workspace to manage curated data.", "Browse, create, import, and maintain high-quality spectral records in one place.")
+            if can_edit_database()
+            else ("A read-only workspace for curated records.", "Browse compound dossiers, linked spectra, and downloadable scientific tables.")
+        )
+        workspace_button_label = "Open Workspace" if can_edit_database() else "Browse Records"
         st.markdown(
             f"""
             <div class="dashboard-workspace-card">
                 <div>
                     <div class="dashboard-workspace-title">Compound Workspace</div>
                     <div class="dashboard-workspace-copy">
-                        A unified workspace to manage curated data.
+                        {workspace_copy[0]}
                     </div>
                     <div class="dashboard-workspace-copy">
-                        Browse, create, import, and maintain high-quality spectral records in one place.
+                        {workspace_copy[1]}
                     </div>
                 </div>
                 {art_markup}
@@ -5480,7 +5497,7 @@ def render_dashboard_showcase(
             """,
             unsafe_allow_html=True,
         )
-        if st.button("Open Workspace", key="dashboard_workspace_cta", width="stretch", icon=":material/folder_open:"):
+        if st.button(workspace_button_label, key="dashboard_workspace_cta", width="stretch", icon=":material/folder_open:"):
             navigate_internal("Compound Workspace", "Browse Record")
             st.rerun()
 
