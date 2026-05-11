@@ -4580,33 +4580,49 @@ def normalize_structure_image(image_obj, size=(520, 360)):
 
 
 def pil_image_to_data_uri(image_obj) -> str:
-    if image_obj is None:
+    data = pil_image_to_png_bytes(image_obj)
+    if not data:
         return ""
+    encoded = base64.b64encode(data).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
+def pil_image_to_png_bytes(image_obj) -> bytes:
+    if image_obj is None:
+        return b""
     try:
         output = io.BytesIO()
         image = image_obj.convert("RGBA") if hasattr(image_obj, "convert") else image_obj
         image.save(output, format="PNG", optimize=True)
-        encoded = base64.b64encode(output.getvalue()).decode("ascii")
-        return f"data:image/png;base64,{encoded}"
+        return output.getvalue()
     except Exception:
-        return ""
+        return b""
+
+
+@st.cache_data(show_spinner=False)
+def structure_smiles_png_bytes(smiles_text: str, size=(300, 220)) -> bytes:
+    if Chem is None or Draw is None:
+        return b""
+    smiles_value = maybe_blank(smiles_text)
+    if not smiles_value:
+        return b""
+    try:
+        mol = structure_text_to_mol(smiles_value)
+        if mol is None:
+            return b""
+        image = normalize_structure_image(Draw.MolToImage(mol, size=size), size=size)
+        return pil_image_to_png_bytes(image)
+    except Exception:
+        return b""
 
 
 @st.cache_data(show_spinner=False)
 def structure_smiles_data_uri(smiles_text: str, size=(300, 220)) -> str:
-    if Chem is None or Draw is None:
+    data = structure_smiles_png_bytes(smiles_text, size=size)
+    if not data:
         return ""
-    smiles_value = maybe_blank(smiles_text)
-    if not smiles_value:
-        return ""
-    try:
-        mol = structure_text_to_mol(smiles_value)
-        if mol is None:
-            return ""
-        image = normalize_structure_image(Draw.MolToImage(mol, size=size), size=size)
-        return pil_image_to_data_uri(image)
-    except Exception:
-        return ""
+    encoded = base64.b64encode(data).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
 
 
 def structure_smiles_image_url(smiles_text: str) -> str:
@@ -5511,26 +5527,18 @@ def render_compound_card(row, show_preview: bool = True):
             source_value = row.get("structure_image_path")
             standardized_image = load_standardized_structure_source(source_value, size=(300, 220))
             if standardized_image is not None:
-                structure_uri = pil_image_to_data_uri(standardized_image)
-                if structure_uri:
-                    st.markdown(
-                        f'<div class="compound-thumb-shell"><img src="{structure_uri}" alt="{html.escape(title)} structure"/></div>',
-                        unsafe_allow_html=True,
-                    )
+                st.image(standardized_image, width="stretch")
             elif source_value and is_external_url(str(source_value).strip()):
                 safe_url = str(source_value).strip().replace('"', "&quot;")
-                st.markdown(
-                    f'<div class="compound-thumb-shell"><img src="{safe_url}" alt="{html.escape(title)} structure"/></div>',
-                    unsafe_allow_html=True,
-                )
+                st.image(safe_url, width="stretch")
             else:
-                structure_uri = structure_smiles_data_uri(row.get("smiles"), size=(300, 220))
-                structure_src = structure_uri or structure_smiles_image_url(row.get("smiles"))
-                if structure_src:
-                    st.markdown(
-                        f'<div class="compound-thumb-shell"><img src="{structure_src}" alt="{html.escape(title)} structure"/></div>',
-                        unsafe_allow_html=True,
-                    )
+                structure_png = structure_smiles_png_bytes(row.get("smiles"), size=(300, 220))
+                if structure_png:
+                    st.image(structure_png, width="stretch")
+                else:
+                    structure_url = structure_smiles_image_url(row.get("smiles"))
+                    if structure_url:
+                        st.image(structure_url, width="stretch")
     with info_col:
         st.markdown(
             f"""
@@ -11236,15 +11244,16 @@ def save_structure_query_to_compound(compound_id: int, query_text: str) -> tuple
         payload["structure_image_path"] = structure_image_path
     if use_supabase_write_backend():
         supabase_update_row("compounds", compound_id, payload)
-    conn = get_connection()
-    try:
-        cursor = conn.cursor()
-        assignments = ", ".join(f"{key} = ?" for key in payload.keys())
-        values = list(payload.values()) + [compound_id]
-        cursor.execute(f"UPDATE compounds SET {assignments} WHERE id = ?", values)
-        conn.commit()
-    finally:
-        conn.close()
+    if use_local_read_backend():
+        conn = get_connection()
+        try:
+            cursor = conn.cursor()
+            assignments = ", ".join(f"{key} = ?" for key in payload.keys())
+            values = list(payload.values()) + [compound_id]
+            cursor.execute(f"UPDATE compounds SET {assignments} WHERE id = ?", values)
+            conn.commit()
+        finally:
+            conn.close()
     invalidate_cached_views()
     return True, f"Structure identifiers were saved to compound ID {compound_id}."
 
