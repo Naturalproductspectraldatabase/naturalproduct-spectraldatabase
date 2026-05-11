@@ -8512,7 +8512,7 @@ def show_search_page(all_compounds_df):
                     key="download_name_xlsx",
                     sheet_name="Keyword Search",
                 )
-                st.dataframe(export_df, width="stretch", hide_index=True, height=392)
+                st.dataframe(export_df, width="stretch", hide_index=True, height=336)
 
                 section_header("Quick Browse")
                 for _, row in result.head(candidate_limit).iterrows():
@@ -8531,7 +8531,7 @@ def show_search_page(all_compounds_df):
         elif not filtered_df.empty:
             st.info("Type one or more keywords to search. The filtered dataset preview is shown below.")
             preview_df = export_name_results(filtered_df)
-            st.dataframe(preview_df, width="stretch", hide_index=True, height=392)
+            st.dataframe(preview_df, width="stretch", hide_index=True, height=336)
         else:
             st.info("No compounds available for the selected filters.")
 
