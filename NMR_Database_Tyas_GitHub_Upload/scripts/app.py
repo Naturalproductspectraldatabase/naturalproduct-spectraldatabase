@@ -107,6 +107,7 @@ DB_PATH = PROJECT_DIR / "database" / "nmr.db"
 MAX_PAGE_ICON_BYTES = 5 * 1024 * 1024
 OWNER_CREDIT = "© Trianda Ayuning Tyas_project"
 OWNER_EDITOR_USERNAME = "npdb_tyas"
+SUPABASE_PAGE_SIZE = 1000
 
 
 def pick_branding_asset(*filenames: str) -> Path:
@@ -10425,7 +10426,23 @@ def supabase_select_df(table: str, columns: str = "*", filters: dict | None = No
     query.update(_supabase_filter_query(filters))
     if order:
         query["order"] = order
-    rows = _supabase_request("GET", f"/rest/v1/{table}", query=query, write=False) or []
+    rows = []
+    start = 0
+    while True:
+        end = start + SUPABASE_PAGE_SIZE - 1
+        page_rows = _supabase_request(
+            "GET",
+            f"/rest/v1/{table}",
+            query=query,
+            write=False,
+            extra_headers={"Range-Unit": "items", "Range": f"{start}-{end}"},
+        ) or []
+        if isinstance(page_rows, dict):
+            page_rows = [page_rows]
+        rows.extend(page_rows)
+        if len(page_rows) < SUPABASE_PAGE_SIZE:
+            break
+        start += SUPABASE_PAGE_SIZE
     return pd.DataFrame(rows)
 
 
