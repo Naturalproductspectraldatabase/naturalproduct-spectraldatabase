@@ -373,6 +373,7 @@ MARINE_SOURCE_ORGANISM_HINTS = [
     "oscillatoria",
     "stylissa",
 ]
+SOURCE_NORMALIZATION_CACHE_VERSION = "marine-source-v2"
 DEFAULT_DATA_SOURCE_OPTIONS = ["Experimental", "Literature", "In-house Archive"]
 DEFAULT_SOLVENT_OPTIONS = ["CDCl3", "DMSO-d6", "CD3OD", "Acetone-d6", "Pyridine-d5"]
 DEFAULT_SPECTRUM_TYPES = [
@@ -1960,6 +1961,31 @@ st.markdown("""
 
 .sidebar-credit-wrap .app-credit-footer {
     justify-content: flex-start;
+}
+
+.sidebar-session-summary {
+    margin-top: 1rem;
+    padding: 0.82rem 0.9rem 0.72rem 0.9rem;
+    border-radius: 18px;
+    background: linear-gradient(180deg, rgba(17, 28, 46, 0.72), rgba(9, 18, 31, 0.84));
+    border: 1px solid rgba(255,255,255,0.07);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.035);
+}
+
+.sidebar-session-title {
+    color: rgba(174,184,198,0.78);
+    font-size: 0.7rem;
+    font-weight: 760;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 0.28rem;
+}
+
+.sidebar-session-user {
+    color: var(--text-main);
+    font-size: 0.86rem;
+    line-height: 1.35;
+    font-weight: 650;
 }
 
 .section-subtitle {
@@ -5420,7 +5446,15 @@ def render_sidebar_session_controls():
 
     username = clean_text(st.session_state.get("npdb_username") or "approved user")
     role = clean_text(st.session_state.get("npdb_role") or "viewer").replace("_", " ").title()
-    st.caption(f"Signed in as {username} · {role}")
+    st.markdown(
+        f"""
+        <div class="sidebar-session-summary">
+            <div class="sidebar-session-title">Account</div>
+            <div class="sidebar-session-user">{html.escape(username)} · {html.escape(role)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     if st.button("Log out", key="npdb_logout_button", width="stretch", icon=":material/logout:"):
         clear_npdb_login_session()
         st.rerun()
@@ -8792,9 +8826,6 @@ def show_overview_page(all_compounds_df):
             build_filter_options(all_compounds_df, "data_source"),
             key="dashboard_data_source"
         )
-    with st.sidebar:
-        render_sidebar_credit()
-
     filtered_df = apply_dataframe_filters(
         all_compounds_df,
         class_filter=dashboard_class_filter,
@@ -11248,7 +11279,8 @@ def get_db_signature():
 
 
 @st.cache_data(show_spinner=False)
-def load_all_compounds():
+def load_all_compounds(source_normalization_version: str = SOURCE_NORMALIZATION_CACHE_VERSION):
+    _ = source_normalization_version
     columns = compound_select_columns()
     if use_supabase_backend():
         df = supabase_select_df("compounds", columns=columns, order="id.asc")
@@ -11257,7 +11289,8 @@ def load_all_compounds():
 
 
 @st.cache_data(show_spinner=False)
-def load_compound_row(compound_id):
+def load_compound_row(compound_id, source_normalization_version: str = SOURCE_NORMALIZATION_CACHE_VERSION):
+    _ = source_normalization_version
     columns = compound_select_columns()
     if use_supabase_backend():
         df = supabase_select_df("compounds", columns=columns, filters={"id": ("eq", compound_id)})
@@ -11784,7 +11817,6 @@ with st.sidebar:
     active_section = st.session_state.get("main_section_radio", st.session_state.get("nav_section", "Dashboard"))
     render_sidebar_workspace_summary(active_section, all_compounds_df)
     render_sidebar_navigation()
-    render_sidebar_session_controls()
 
 main_section = st.session_state.get("nav_section", "Dashboard")
 render_workspace_headbar(main_section)
@@ -11814,3 +11846,7 @@ elif main_section == "Spectra Library":
 
 elif main_section == "Guide":
     show_guide_page()
+
+with st.sidebar:
+    render_sidebar_session_controls()
+    render_sidebar_credit()
