@@ -4665,25 +4665,34 @@ def load_standardized_structure_source(source_value, size=(520, 360)):
 
 
 def render_structure_preview(smiles_text: str, caption: str | None = None, empty_message: bool = True, size=(520, 360)):
-    if Chem is None or Draw is None:
-        if empty_message:
-            st.info("Structure preview becomes available when RDKit drawing support is active.")
-        return
     smiles_value = maybe_blank(smiles_text)
     if not smiles_value:
         if empty_message:
             st.info("No structure preview available for this record.")
         return
+    if Chem is None or Draw is None:
+        fallback_url = structure_smiles_image_url(smiles_value)
+        if fallback_url:
+            st.image(fallback_url, caption=caption or "Rendered from SMILES", width="stretch")
+        elif empty_message:
+            st.info("Structure preview becomes available when RDKit drawing support is active.")
+        return
     try:
         mol = structure_text_to_mol(smiles_value)
         if mol is None:
-            if empty_message:
+            fallback_url = structure_smiles_image_url(smiles_value)
+            if fallback_url:
+                st.image(fallback_url, caption=caption or "Rendered from SMILES", width="stretch")
+            elif empty_message:
                 st.info("Stored structure could not be rendered from the available structure string.")
             return
         image = normalize_structure_image(Draw.MolToImage(mol, size=size), size=size)
         st.image(image, caption=caption, width="stretch")
     except Exception:
-        if empty_message:
+        fallback_url = structure_smiles_image_url(smiles_value)
+        if fallback_url:
+            st.image(fallback_url, caption=caption or "Rendered from SMILES", width="stretch")
+        elif empty_message:
             st.info("Structure preview could not be rendered for this record.")
 
 def get_backup_bytes():
