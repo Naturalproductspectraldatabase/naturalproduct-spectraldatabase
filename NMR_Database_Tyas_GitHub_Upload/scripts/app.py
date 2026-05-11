@@ -1,5 +1,6 @@
 import base64
 import hmac
+import html
 import io
 import json
 import mimetypes
@@ -4578,6 +4579,36 @@ def normalize_structure_image(image_obj, size=(520, 360)):
         return image_obj
 
 
+def pil_image_to_data_uri(image_obj) -> str:
+    if image_obj is None:
+        return ""
+    try:
+        output = io.BytesIO()
+        image = image_obj.convert("RGBA") if hasattr(image_obj, "convert") else image_obj
+        image.save(output, format="PNG", optimize=True)
+        encoded = base64.b64encode(output.getvalue()).decode("ascii")
+        return f"data:image/png;base64,{encoded}"
+    except Exception:
+        return ""
+
+
+@st.cache_data(show_spinner=False)
+def structure_smiles_data_uri(smiles_text: str, size=(300, 220)) -> str:
+    if Chem is None or Draw is None:
+        return ""
+    smiles_value = maybe_blank(smiles_text)
+    if not smiles_value:
+        return ""
+    try:
+        mol = structure_text_to_mol(smiles_value)
+        if mol is None:
+            return ""
+        image = normalize_structure_image(Draw.MolToImage(mol, size=size), size=size)
+        return pil_image_to_data_uri(image)
+    except Exception:
+        return ""
+
+
 def load_standardized_structure_image(image_path: Path, size=(520, 360)):
     if Image is None or image_path is None or not image_path.exists():
         return None
@@ -5473,15 +5504,25 @@ def render_compound_card(row, show_preview: bool = True):
             source_value = row.get("structure_image_path")
             standardized_image = load_standardized_structure_source(source_value, size=(300, 220))
             if standardized_image is not None:
-                st.image(standardized_image, width="stretch")
+                structure_uri = pil_image_to_data_uri(standardized_image)
+                if structure_uri:
+                    st.markdown(
+                        f'<div class="compound-thumb-shell"><img src="{structure_uri}" alt="{html.escape(title)} structure"/></div>',
+                        unsafe_allow_html=True,
+                    )
             elif source_value and is_external_url(str(source_value).strip()):
                 safe_url = str(source_value).strip().replace('"', "&quot;")
                 st.markdown(
-                    f'<div class="compound-thumb-shell"><img src="{safe_url}" alt="{title} structure"/></div>',
+                    f'<div class="compound-thumb-shell"><img src="{safe_url}" alt="{html.escape(title)} structure"/></div>',
                     unsafe_allow_html=True,
                 )
             else:
-                render_structure_preview(row.get("smiles"), caption=None, empty_message=False, size=(300, 220))
+                structure_uri = structure_smiles_data_uri(row.get("smiles"), size=(300, 220))
+                if structure_uri:
+                    st.markdown(
+                        f'<div class="compound-thumb-shell"><img src="{structure_uri}" alt="{html.escape(title)} structure"/></div>',
+                        unsafe_allow_html=True,
+                    )
     with info_col:
         st.markdown(
             f"""
