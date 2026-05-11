@@ -3722,6 +3722,11 @@ def clean_text(value):
     text = str(value).strip()
     return text if text else "-"
 
+
+def html_text(value):
+    return html.escape(clean_text(value), quote=True)
+
+
 def maybe_blank(value):
     if value is None:
         return ""
@@ -4443,14 +4448,17 @@ def render_structure_search_results(results: list[dict], search_type: str, limit
     st.caption(f"Results: {len(results)}")
 
     for i, item in enumerate(results[:limit], start=1):
-        title = clean_text(item.get("trivial_name"))
-        formula = clean_text(item.get("molecular_formula"))
-        compound_class = clean_text(item.get("compound_class"))
-        source_summary = clean_text(source_summary_from_record(item))
+        title_text = clean_text(item.get("trivial_name"))
+        title = html_text(title_text)
+        formula = html_text(item.get("molecular_formula"))
+        compound_class = html_text(item.get("compound_class"))
+        source_summary = html_text(source_summary_from_record(item))
         score = float(item.get("structure_score", 0.0))
-        subtitle = f"{item.get('structure_match_type', search_type)} match | Score: {score:.1f}%"
+        subtitle = html_text(f"{item.get('structure_match_type', search_type)} match | Score: {score:.1f}%")
+        compound_id = html_text(item.get("id"))
+        matched_smiles = html_text(item.get("matched_smiles"))
 
-        with st.expander(f"#{i} · {title}", expanded=(i == 1)):
+        with st.expander(f"#{i} · {title_text}", expanded=(i == 1)):
             st.markdown('<div class="result-card">', unsafe_allow_html=True)
             st.markdown(
                 f"""
@@ -4464,11 +4472,11 @@ def render_structure_search_results(results: list[dict], search_type: str, limit
                 render_structure_preview(item.get("matched_smiles"), caption=f"Query candidate #{i}", size=(380, 260))
             with meta_col:
                 st.markdown('<div class="structure-result-meta">', unsafe_allow_html=True)
-                st.markdown(f'<div class="structure-result-stat"><strong>Compound ID:</strong> {item.get("id")}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="structure-result-stat"><strong>Compound ID:</strong> {compound_id}</div>', unsafe_allow_html=True)
                 st.markdown(f'<div class="structure-result-stat"><strong>Molecular Formula:</strong> {formula}</div>', unsafe_allow_html=True)
                 st.markdown(f'<div class="structure-result-stat"><strong>Compound Class:</strong> {compound_class}</div>', unsafe_allow_html=True)
                 st.markdown(f'<div class="structure-result-stat"><strong>Source:</strong> {source_summary}</div>', unsafe_allow_html=True)
-                st.markdown(f'<div class="structure-result-stat"><strong>SMILES:</strong> {clean_text(item.get("matched_smiles"))}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="structure-result-stat"><strong>SMILES:</strong> {matched_smiles}</div>', unsafe_allow_html=True)
                 st.progress(min(max(score / 100.0, 0.0), 1.0))
                 st.markdown('</div>', unsafe_allow_html=True)
 
@@ -5047,17 +5055,17 @@ def calculate_workspace_health(compounds_df: pd.DataFrame):
 # UI helpers
 # =========================
 def section_header(title, subtitle=""):
-    st.markdown(f'<div class="section-title">{title}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="section-title">{html_text(title)}</div>', unsafe_allow_html=True)
     if subtitle:
-        st.markdown(f'<div class="section-subtitle">{subtitle}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="section-subtitle">{html_text(subtitle)}</div>', unsafe_allow_html=True)
 
 def render_metric_card(label, value, col):
     with col:
         st.markdown(
             f"""
             <div class="metric-card">
-                <div class="metric-card-label">{label}</div>
-                <div class="metric-card-value">{value}</div>
+                <div class="metric-card-label">{html_text(label)}</div>
+                <div class="metric-card-value">{html_text(value)}</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -5092,8 +5100,8 @@ def render_clean_stat(label, value, col):
         st.markdown(
             f"""
             <div class="clean-stat">
-                <div class="clean-stat-label">{label}</div>
-                <div class="clean-stat-value">{value}</div>
+                <div class="clean-stat-label">{html_text(label)}</div>
+                <div class="clean-stat-value">{html_text(value)}</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -5104,8 +5112,8 @@ def render_helper_card(title, text):
     st.markdown(
         f"""
         <div class="helper-card">
-            <div class="helper-title">{title}</div>
-            <div class="helper-text">{text}</div>
+            <div class="helper-title">{html_text(title)}</div>
+            <div class="helper-text">{html_text(text)}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -5116,8 +5124,8 @@ def render_selector_card(title, subtitle):
     st.markdown(
         f"""
         <div class="selector-card">
-            <div class="selector-title">{title}</div>
-            <div class="selector-subtitle">{subtitle}</div>
+            <div class="selector-title">{html_text(title)}</div>
+            <div class="selector-subtitle">{html_text(subtitle)}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -5228,7 +5236,7 @@ def render_dashboard_pie_chart(df: pd.DataFrame, names_col: str, values_col: str
     legend_items = []
     for idx, row in chart_df.iterrows():
         color = palette[idx % len(palette)]
-        label = clean_text(row[names_col])
+        label = html_text(row[names_col])
         percent = float(row["_pct"])
         legend_items.append(
             f'<div class="chart-legend-item"><span class="chart-legend-swatch" style="background:{color}"></span>'
@@ -5287,14 +5295,15 @@ def build_dashboard_stat_markup(value, label: str, icon_path: Path | None = None
 
 def build_sidebar_stat_markup(value, label: str, icon_path: Path | None = None) -> str:
     icon_uri = image_to_data_uri(str(icon_path), max_px=88) if icon_path and icon_path.exists() else ""
-    icon_markup = f'<img class="sidebar-stat-icon" src="{icon_uri}" alt="{label} icon" />' if icon_uri else ""
+    safe_label = html_text(label)
+    icon_markup = f'<img class="sidebar-stat-icon" src="{icon_uri}" alt="{safe_label} icon" />' if icon_uri else ""
     return f"""
         <div class="sidebar-stat">
             <div class="sidebar-stat-head">
                 {icon_markup}
-                <div class="sidebar-stat-value">{format_metric_value(value)}</div>
+                <div class="sidebar-stat-value">{html_text(format_metric_value(value))}</div>
             </div>
-            <div class="sidebar-stat-label">{label}</div>
+            <div class="sidebar-stat-label">{safe_label}</div>
         </div>
     """
 
@@ -5766,21 +5775,21 @@ def render_kv(title, value):
     st.markdown(
         f"""
         <div class="kv-card">
-            <div class="kv-title">{title}</div>
-            <div class="kv-value">{clean_text(value)}</div>
+            <div class="kv-title">{html_text(title)}</div>
+            <div class="kv-value">{html_text(value)}</div>
         </div>
         """,
         unsafe_allow_html=True
     )
 
 def render_compound_card(row, show_preview: bool = True):
-    title = clean_text(row["trivial_name"])
-    formula = clean_text(row["molecular_formula"])
-    compound_class = clean_text(row["compound_class"])
-    subclass = clean_text(row["compound_subclass"])
-    source_summary = clean_text(source_summary_from_record(row))
-    sample_code = clean_text(row["sample_code"])
-    curation_status = clean_text(normalize_curation_status(row.get("curation_status"))).title()
+    title = html_text(row["trivial_name"])
+    formula = html_text(row["molecular_formula"])
+    compound_class = html_text(row["compound_class"])
+    subclass = html_text(row["compound_subclass"])
+    source_summary = html_text(source_summary_from_record(row))
+    sample_code = html_text(row["sample_code"])
+    curation_status = html_text(clean_text(normalize_curation_status(row.get("curation_status"))).title())
     st.markdown('<div class="compound-card">', unsafe_allow_html=True)
     if show_preview:
         preview_col, info_col = st.columns([0.92, 4.08])
@@ -7830,10 +7839,10 @@ def render_spectra_section(compound_id):
                 st.markdown(
                     f"""
                     <div class="panel-card">
-                        <div class="result-title">File ID {file_id}</div>
-                        <div class="badge-row"><strong>Storage:</strong> {classify_storage_type(file_path_value)}</div>
-                        <div class="badge-row"><strong>Path:</strong> {clean_text(file_path_value)}</div>
-                        <div class="badge-row"><strong>Note:</strong> {note_value}</div>
+                        <div class="result-title">File ID {html_text(file_id)}</div>
+                        <div class="badge-row"><strong>Storage:</strong> {html_text(classify_storage_type(file_path_value))}</div>
+                        <div class="badge-row"><strong>Path:</strong> {html_text(file_path_value)}</div>
+                        <div class="badge-row"><strong>Note:</strong> {html_text(note_value)}</div>
                     </div>
                     """,
                     unsafe_allow_html=True
@@ -7906,7 +7915,7 @@ def show_compound_detail(compound_id):
     st.markdown(
         f"""
         <div class="record-badge-strip compact">
-            <span class="record-badge">Status: {clean_text(normalize_curation_status(row_data.get('curation_status'))).title()}</span>
+            <span class="record-badge">Status: {html_text(clean_text(normalize_curation_status(row_data.get('curation_status'))).title())}</span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -8080,21 +8089,21 @@ def show_compound_detail(compound_id):
     st.markdown('</div>', unsafe_allow_html=True)
 
 def render_best_match_summary(item, mode_label):
-    source_summary = clean_text(source_summary_from_record(item))
+    source_summary = html_text(source_summary_from_record(item))
     st.markdown("### Best Match Summary")
     st.markdown(
         f"""
         <div class="best-match-card">
-            <div class="result-title">{clean_text(item['trivial_name'])}</div>
-            <div class="result-subtitle">Compound ID: {item['compound_id']}</div>
-            <div class="badge-row"><strong>Mode:</strong> {mode_label}</div>
-            <div class="badge-row"><strong>Molecular Formula:</strong> {clean_text(item.get('molecular_formula'))}</div>
-            <div class="badge-row"><strong>Compound Class:</strong> {clean_text(item.get('compound_class'))}</div>
-            <div class="badge-row"><strong>Compound Subclass:</strong> {clean_text(item.get('compound_subclass'))}</div>
+            <div class="result-title">{html_text(item['trivial_name'])}</div>
+            <div class="result-subtitle">Compound ID: {html_text(item['compound_id'])}</div>
+            <div class="badge-row"><strong>Mode:</strong> {html_text(mode_label)}</div>
+            <div class="badge-row"><strong>Molecular Formula:</strong> {html_text(item.get('molecular_formula'))}</div>
+            <div class="badge-row"><strong>Compound Class:</strong> {html_text(item.get('compound_class'))}</div>
+            <div class="badge-row"><strong>Compound Subclass:</strong> {html_text(item.get('compound_subclass'))}</div>
             <div class="badge-row"><strong>Source:</strong> {source_summary}</div>
-            <div class="badge-row"><strong>Sample Code:</strong> {clean_text(item.get('sample_code'))}</div>
-            <div class="badge-row"><strong>Data Source:</strong> {clean_text(item.get('data_source'))}</div>
-            <div class="badge-row"><strong>Status:</strong> {clean_text(normalize_curation_status(item.get('curation_status'))).title()}</div>
+            <div class="badge-row"><strong>Sample Code:</strong> {html_text(item.get('sample_code'))}</div>
+            <div class="badge-row"><strong>Data Source:</strong> {html_text(item.get('data_source'))}</div>
+            <div class="badge-row"><strong>Status:</strong> {html_text(clean_text(normalize_curation_status(item.get('curation_status'))).title())}</div>
         </div>
         """,
         unsafe_allow_html=True
@@ -8120,13 +8129,14 @@ def render_candidate_cards(results, mode="13C", limit=10):
     )
 
     for i, item in enumerate(results[:limit], start=1):
-        title = clean_text(item["trivial_name"])
-        formula = clean_text(item.get("molecular_formula"))
-        compound_class = clean_text(item.get("compound_class"))
-        subclass = clean_text(item.get("compound_subclass"))
-        source_summary = clean_text(source_summary_from_record(item))
-        sample_code = clean_text(item.get("sample_code"))
-        data_source = clean_text(item.get("data_source"))
+        title_text = clean_text(item["trivial_name"])
+        title = html_text(title_text)
+        formula = html_text(item.get("molecular_formula"))
+        compound_class = html_text(item.get("compound_class"))
+        subclass = html_text(item.get("compound_subclass"))
+        source_summary = html_text(source_summary_from_record(item))
+        sample_code = html_text(item.get("sample_code"))
+        data_source = html_text(item.get("data_source"))
 
         if mode == "13C":
             subtitle = (
@@ -8148,13 +8158,15 @@ def render_candidate_cards(results, mode="13C", limit=10):
             )
             progress_value = item["total_score"] / 100
 
-        with st.expander(f"#{i} · {title}", expanded=(i == 1)):
+        subtitle_html = html_text(subtitle)
+
+        with st.expander(f"#{i} · {title_text}", expanded=(i == 1)):
             st.markdown(
                 f"""
                 <div class="result-card">
                     <div class="result-title">{title}</div>
-                    <div class="result-subtitle">{subtitle}</div>
-                    <div class="badge-row"><strong>Compound ID:</strong> {item['compound_id']}</div>
+                    <div class="result-subtitle">{subtitle_html}</div>
+                    <div class="badge-row"><strong>Compound ID:</strong> {html_text(item['compound_id'])}</div>
                     <div class="badge-row"><strong>Molecular Formula:</strong> {formula}</div>
                     <div class="badge-row"><strong>Compound Class:</strong> {compound_class}</div>
                     <div class="badge-row"><strong>Compound Subclass:</strong> {subclass}</div>
