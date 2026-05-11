@@ -3837,11 +3837,19 @@ def normalize_source_category(value: str) -> str:
 
 
 def infer_source_fields(source_category="", source_organism="", source_material="") -> tuple[str, str, str]:
-    category = normalize_source_category(source_category)
+    raw_category = maybe_blank(source_category)
+    category = normalize_source_category(raw_category)
     organism = maybe_blank(source_organism)
     legacy = maybe_blank(source_material)
+    raw_category_is_source_option = any(raw_category.casefold() == option.casefold() for option in DEFAULT_SOURCE_OPTIONS)
+    raw_category_has_marine_hint = any(token in raw_category.casefold() for token in MARINE_SOURCE_ORGANISM_HINTS)
     legacy_is_source_option = any(legacy.casefold() == option.casefold() for option in DEFAULT_SOURCE_OPTIONS)
     legacy_has_marine_hint = any(token in legacy.casefold() for token in MARINE_SOURCE_ORGANISM_HINTS)
+
+    if raw_category and raw_category_has_marine_hint and not raw_category_is_source_option:
+        category = "Marine"
+        if not organism and "natural product" not in raw_category.casefold():
+            organism = raw_category
 
     if not category and legacy:
         legacy_normalized = normalize_source_category(legacy)
