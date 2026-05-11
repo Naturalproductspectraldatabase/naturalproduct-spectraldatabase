@@ -5195,6 +5195,24 @@ def render_sidebar_nav_link(group_title: str, item: dict, is_active: bool):
         st.rerun()
 
 
+def clear_npdb_login_session():
+    for key in list(st.session_state.keys()):
+        if str(key).startswith("npdb_"):
+            st.session_state.pop(key, None)
+
+
+def render_sidebar_session_controls():
+    if not st.session_state.get("npdb_authenticated"):
+        return
+
+    username = clean_text(st.session_state.get("npdb_username") or "approved user")
+    role = clean_text(st.session_state.get("npdb_role") or "viewer").replace("_", " ").title()
+    st.caption(f"Signed in as {username} · {role}")
+    if st.button("Log out", key="npdb_logout_button", width="stretch", icon=":material/logout:"):
+        clear_npdb_login_session()
+        st.rerun()
+
+
 def build_snapshot_manifest() -> dict:
     compounds_df = load_all_compounds()
     proton_df = load_all_proton_data()
@@ -11597,6 +11615,7 @@ with st.sidebar:
     active_section = st.session_state.get("main_section_radio", st.session_state.get("nav_section", "Dashboard"))
     render_sidebar_workspace_summary(active_section, all_compounds_df)
     render_sidebar_navigation()
+    render_sidebar_session_controls()
 
 main_section = st.session_state.get("nav_section", "Dashboard")
 # =========================
