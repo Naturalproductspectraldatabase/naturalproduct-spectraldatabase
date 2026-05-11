@@ -353,6 +353,7 @@ DEFAULT_CLASS_OPTIONS = [
     "Marine Natural Product",
 ]
 DEFAULT_SOURCE_OPTIONS = [
+    "Marine",
     "Sponge",
     "Soft Coral",
     "Hard Coral",
@@ -364,6 +365,13 @@ DEFAULT_SOURCE_OPTIONS = [
     "Microorganism",
     "Plant",
     "Fungus",
+]
+MARINE_SOURCE_ORGANISM_HINTS = [
+    "adocidae",
+    "haliclona",
+    "marine",
+    "oscillatoria",
+    "stylissa",
 ]
 DEFAULT_DATA_SOURCE_OPTIONS = ["Experimental", "Literature", "In-house Archive"]
 DEFAULT_SOLVENT_OPTIONS = ["CDCl3", "DMSO-d6", "CD3OD", "Acetone-d6", "Pyridine-d5"]
@@ -3154,6 +3162,98 @@ header[data-testid="stHeader"] {
     background: rgba(7, 17, 29, 0.32);
 }
 
+/* Typography harmony pass: keep the app polished and readable across menus. */
+.section-title,
+.structure-search-editor-title {
+    font-size: clamp(1.34rem, 2vw, 1.68rem);
+    line-height: 1.15;
+    letter-spacing: 0;
+}
+
+.section-subtitle,
+.structure-search-editor-subtitle,
+.helper-text,
+.selector-subtitle,
+.inline-note,
+.record-section-note,
+.dashboard-search-strip-copy,
+.dashboard-workspace-copy,
+.workflow-copy,
+.result-subtitle,
+.small-note,
+div[data-testid="stCaptionContainer"],
+[data-testid="stMarkdownContainer"] p {
+    font-size: 0.9rem;
+    line-height: 1.48;
+}
+
+.dashboard-workspace-title,
+.dashboard-workflow-title,
+.helper-title,
+.selector-title,
+.result-title,
+.query-summary-value {
+    font-size: 1rem;
+    line-height: 1.24;
+    letter-spacing: 0;
+}
+
+.dashboard-hero-title {
+    font-size: clamp(2rem, 4vw, 3rem);
+    letter-spacing: 0;
+}
+
+.workspace-headbar-title {
+    font-size: clamp(1.52rem, 2.8vw, 2.35rem);
+}
+
+.dashboard-tagline,
+.dashboard-cta-copy,
+.badge-row,
+.kv-value {
+    font-size: 0.94rem;
+    line-height: 1.48;
+}
+
+.kv-title,
+.metric-card-label,
+.clean-stat-label,
+.query-summary-label,
+.structure-result-stat,
+.chart-legend-item,
+.info-chip,
+.record-badge {
+    font-size: 0.82rem;
+    line-height: 1.36;
+}
+
+.dashboard-workspace-copy,
+.workflow-copy {
+    font-size: 0.76rem;
+}
+
+.workflow-title {
+    font-size: 0.9rem;
+    line-height: 1.25;
+    letter-spacing: 0;
+}
+
+div[data-testid="stButton"] button,
+div[data-testid="stDownloadButton"] button,
+div[data-testid="stRadio"] label p,
+[data-testid="stTabs"] button[role="tab"],
+div[data-testid="stTextInput"] input,
+div[data-testid="stTextArea"] textarea,
+div[data-testid="stNumberInput"] input,
+div[data-baseweb="select"] {
+    font-size: 0.9rem !important;
+    line-height: 1.28 !important;
+}
+
+[data-testid="stDataFrame"] {
+    font-size: 0.84rem;
+}
+
 @media (max-width: 900px) {
     .section-title {
         font-size: 1.28rem;
@@ -3740,15 +3840,23 @@ def infer_source_fields(source_category="", source_organism="", source_material=
     category = normalize_source_category(source_category)
     organism = maybe_blank(source_organism)
     legacy = maybe_blank(source_material)
+    legacy_is_source_option = any(legacy.casefold() == option.casefold() for option in DEFAULT_SOURCE_OPTIONS)
+    legacy_has_marine_hint = any(token in legacy.casefold() for token in MARINE_SOURCE_ORGANISM_HINTS)
 
     if not category and legacy:
-        category = normalize_source_category(legacy)
-        if category and category.casefold() != legacy.casefold():
-            category = normalize_source_category(category)
+        legacy_normalized = normalize_source_category(legacy)
+        if legacy_is_source_option or legacy_normalized.casefold() != legacy.casefold():
+            category = legacy_normalized
+        elif legacy_has_marine_hint:
+            category = "Marine"
 
     if not organism and legacy:
         normalized_legacy_category = normalize_source_category(legacy)
-        if not normalized_legacy_category or normalized_legacy_category.casefold() != legacy.casefold():
+        if (
+            not normalized_legacy_category
+            or normalized_legacy_category.casefold() != legacy.casefold()
+            or (legacy_has_marine_hint and not legacy_is_source_option)
+        ):
             organism = legacy
 
     summary = legacy
