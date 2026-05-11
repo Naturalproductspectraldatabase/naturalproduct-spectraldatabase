@@ -972,9 +972,10 @@ def verify_access_gate():
             }}
             .login-shell {{
                 position: relative;
-                min-height: 100vh;
-                padding: 0.35rem 0 0.25rem 0;
-                overflow: hidden;
+                min-height: 0;
+                height: clamp(132px, 22vh, 190px);
+                padding: 0.35rem 0 0 0;
+                overflow: visible;
             }}
             .login-shell::before {{
                 content: "";
@@ -1056,7 +1057,7 @@ def verify_access_gate():
             .login-center {{
                 position: relative;
                 max-width: 1060px;
-                min-height: 72px;
+                min-height: 54px;
                 margin: 0 auto;
                 padding: 0 1.5rem;
                 z-index: 1;
@@ -1079,7 +1080,7 @@ def verify_access_gate():
             }}
             .login-card-anchor {{
                 width: min(100%, 560px);
-                height: 12px;
+                height: 8px;
                 margin: 0 auto;
                 border-radius: 28px;
                 border: 1px solid rgba(115, 79, 255, 0.44);
@@ -1121,7 +1122,7 @@ def verify_access_gate():
             }}
             div[data-testid="stForm"] {{
                 width: min(100%, 560px) !important;
-                margin: -0.85rem auto 0 auto !important;
+                margin: -1.05rem auto 0 auto !important;
                 padding: 0.84rem 1rem 0.68rem 1rem !important;
                 border-radius: 26px !important;
                 background: linear-gradient(145deg, rgba(6, 20, 38, 0.82), rgba(18, 19, 42, 0.86)) !important;
