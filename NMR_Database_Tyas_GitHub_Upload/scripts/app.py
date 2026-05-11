@@ -2625,6 +2625,65 @@ div[data-testid="stRadio"] label:has(input:checked) {
     color: transparent;
 }
 
+.workspace-headbar {
+    position: relative;
+    min-height: 132px;
+    margin: 0 0 1.05rem 0;
+    padding: 1.25rem 1.45rem;
+    border-radius: 22px;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,0.08);
+    background:
+        linear-gradient(112deg, rgba(5, 11, 26, 0.92), rgba(8, 18, 34, 0.66)),
+        radial-gradient(circle at 82% 24%, rgba(197, 94, 255, 0.16), transparent 30%),
+        radial-gradient(circle at 22% 18%, rgba(97, 216, 237, 0.12), transparent 26%);
+    box-shadow: var(--shadow-soft);
+    display: flex;
+    align-items: center;
+}
+
+.workspace-headbar.has-image {
+    background-size: cover;
+    background-position: center right;
+}
+
+.workspace-headbar::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, rgba(4,10,20,0.88) 0%, rgba(4,10,20,0.58) 52%, rgba(4,10,20,0.22) 100%);
+    pointer-events: none;
+}
+
+.workspace-headbar-copy {
+    position: relative;
+    z-index: 1;
+}
+
+.workspace-headbar-kicker {
+    color: rgba(174,184,198,0.84);
+    font-size: 0.72rem;
+    font-weight: 760;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin-bottom: 0.34rem;
+}
+
+.workspace-headbar-title {
+    color: #F7FBFF;
+    font-size: clamp(1.55rem, 3.2vw, 2.55rem);
+    line-height: 1.02;
+    font-weight: 830;
+    letter-spacing: 0;
+}
+
+.workspace-headbar-title span {
+    background: linear-gradient(90deg, #60dfec, #4d8fff 46%, #ae5df4 78%, #f497d8);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+
 .dashboard-workspace-card,
 .workflow-card,
 .dashboard-workflow-shell {
@@ -3158,6 +3217,13 @@ header[data-testid="stHeader"] {
         padding: 1.5rem 1.2rem 1.2rem 1.2rem;
     }
 
+    .workspace-headbar {
+        min-height: 116px;
+        padding: 1.1rem 1rem;
+        border-radius: 18px;
+        background-position: 62% center;
+    }
+
     .structure-search-shell {
         grid-template-columns: 1fr;
     }
@@ -3263,12 +3329,14 @@ header[data-testid="stHeader"] {
 .dashboard-workspace-card,
 .dashboard-workflow-shell,
 .dashboard-search-strip,
-.dashboard-hero-card {
+.dashboard-hero-card,
+.workspace-headbar {
     min-width: 0;
 }
 
 .section-title,
 .dashboard-hero-title,
+.workspace-headbar-title,
 .dashboard-search-strip-title,
 .dashboard-workspace-title,
 .workflow-title,
@@ -4945,6 +5013,29 @@ def render_metric_card(label, value, col):
         )
 
 
+def render_workspace_headbar(active_section: str):
+    if active_section == "Dashboard":
+        return
+    hero_uri = image_to_data_uri(str(HERO_BANNER_PATH), max_px=1300) if HERO_BANNER_PATH.exists() else ""
+    headbar_class = "workspace-headbar has-image" if hero_uri else "workspace-headbar"
+    headbar_style = (
+        "background-image: "
+        "linear-gradient(112deg, rgba(5, 11, 26, 0.92), rgba(8, 18, 34, 0.48)), "
+        f"url('{hero_uri}');"
+    ) if hero_uri else ""
+    section_label = html.escape(clean_text(active_section))
+    render_raw_html(
+        f"""
+        <div class="{headbar_class}" style="{headbar_style}">
+            <div class="workspace-headbar-copy">
+                <div class="workspace-headbar-kicker">{section_label}</div>
+                <div class="workspace-headbar-title">Natural Products<br><span>Spectral Database</span></div>
+            </div>
+        </div>
+        """
+    )
+
+
 def render_clean_stat(label, value, col):
     with col:
         st.markdown(
@@ -5526,18 +5617,6 @@ def render_batch_import_workspace():
 
     write_batch_import_templates()
     template_map = build_batch_import_template_map()
-
-    render_helper_card(
-        "Why this import page matters",
-        "The sample rows already follow your current database structure. Replace the values in rows marked TEMPLATE_, keep the column headers unchanged, then upload the CSV back into this workspace.",
-    )
-
-    existing_names = load_all_compounds()["trivial_name"].fillna("").astype(str).tolist()
-    if existing_names:
-        st.caption(
-            "Exact compound names currently available for peak/file imports: "
-            + ", ".join(existing_names[:5])
-        )
 
     tabs = st.tabs(["Compounds", "1H Peaks", "13C Peaks", "Spectra Files"])
     import_specs = [
@@ -9226,10 +9305,6 @@ def show_compound_pages():
             if selected_id is not None and selected_id in options["id"].tolist():
                 default_index = options.index[options["id"] == selected_id][0]
 
-            render_selector_card(
-                "Editing target",
-                "Choose the record you want to revise. This is the only main editing entry point in the compound workspace.",
-            )
             selected_label = st.selectbox(
                 "Select record to edit",
                 label_list,
@@ -11596,6 +11671,7 @@ with st.sidebar:
     render_sidebar_session_controls()
 
 main_section = st.session_state.get("nav_section", "Dashboard")
+render_workspace_headbar(main_section)
 # =========================
 # Main routing
 # =========================
