@@ -676,6 +676,11 @@ def get_secret_object(*keys: str):
     return None
 
 
+def allow_plaintext_password_secrets() -> bool:
+    value = get_secret_setting("NPDB_ALLOW_PLAINTEXT_PASSWORD_SECRETS", "allow_plaintext_password_secrets")
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def verify_password_secret(submitted_password: str, plain_secret: str = "", hashed_secret: str = "") -> bool:
     submitted_password = "" if submitted_password is None else str(submitted_password)
     hashed_secret = str(hashed_secret or "").strip()
@@ -697,7 +702,7 @@ def verify_password_secret(submitted_password: str, plain_secret: str = "", hash
             return False
 
     plain_secret = str(plain_secret or "")
-    return bool(plain_secret) and hmac.compare_digest(submitted_password, plain_secret)
+    return bool(plain_secret) and allow_plaintext_password_secrets() and hmac.compare_digest(submitted_password, plain_secret)
 
 
 def load_approved_users() -> list[dict[str, str]]:
@@ -724,7 +729,7 @@ def load_approved_users() -> list[dict[str, str]]:
         password = str(item.get("password", "")).strip()
         password_hash = str(item.get("password_hash", "")).strip()
         role = str(item.get("role", "viewer")).strip() or "viewer"
-        if username and (password or password_hash):
+        if username and (password_hash or (password and allow_plaintext_password_secrets())):
             users.append(
                 {
                     "username": username,
@@ -807,10 +812,11 @@ def _normalize_html_block(markup: str) -> str:
     return textwrap.dedent(markup).strip()
 
 def is_access_gate_enabled() -> bool:
+    plaintext_allowed = allow_plaintext_password_secrets()
     return bool(
-        get_secret_setting("NPDB_ACCESS_PASSWORD", "access_password")
+        (plaintext_allowed and get_secret_setting("NPDB_ACCESS_PASSWORD", "access_password"))
         or get_secret_setting("NPDB_ACCESS_PASSWORD_HASH", "access_password_hash")
-        or get_secret_setting("NPDB_APPROVED_PASSWORD", "approved_password")
+        or (plaintext_allowed and get_secret_setting("NPDB_APPROVED_PASSWORD", "approved_password"))
         or get_secret_setting("NPDB_APPROVED_PASSWORD_HASH", "approved_password_hash")
         or load_approved_users()
         or load_approved_names()
@@ -820,102 +826,6 @@ def is_access_gate_enabled() -> bool:
 def verify_access_gate():
     if not is_access_gate_enabled():
         return
-
-    if st.session_state.get("npdb_authenticated") and st.session_state.pop("npdb_show_transition", False):
-        transition_logo_path = FAVICON_PATH if FAVICON_PATH.exists() else SIDEBAR_LOGO_PATH
-        transition_logo_uri = inline_asset_data_uri(transition_logo_path, max_px=120) if transition_logo_path.exists() else ""
-        transition_logo_markup = (
-            f'<img class="npdb-login-transition-logo" src="{transition_logo_uri}" alt="NPDB logo" />'
-            if transition_logo_uri
-            else ""
-        )
-        st.markdown(
-            _normalize_html_block(
-                f"""
-                <style>
-                [data-testid="stAppViewContainer"] {{
-                    background:
-                        radial-gradient(circle at 24% 30%, rgba(24, 229, 255, 0.06), transparent 24%),
-                        radial-gradient(circle at 78% 28%, rgba(203, 62, 255, 0.08), transparent 24%),
-                        linear-gradient(180deg, rgba(4, 8, 20, 1), rgba(5, 10, 24, 1));
-                }}
-                [data-testid="stHeader"] {{
-                    background: transparent;
-                }}
-                [data-testid="stSidebar"] {{
-                    display: none !important;
-                }}
-                .block-container {{
-                    padding-top: 0 !important;
-                    padding-bottom: 0 !important;
-                    max-width: 100% !important;
-                }}
-                .npdb-login-transition {{
-                    min-height: 100vh;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    padding: 1rem;
-                }}
-                .npdb-login-transition-inner {{
-                    display: flex;
-                    align-items: center;
-                    gap: 0.9rem;
-                    padding: 0.95rem 1.1rem;
-                    border-radius: 22px;
-                    border: 1px solid rgba(255,255,255,0.08);
-                    background: linear-gradient(145deg, rgba(6, 20, 38, 0.78), rgba(18, 19, 42, 0.82));
-                    box-shadow: 0 22px 54px rgba(0, 0, 0, 0.28);
-                    backdrop-filter: blur(12px);
-                }}
-                .npdb-login-transition-logo {{
-                    width: 54px;
-                    height: 54px;
-                    object-fit: contain;
-                    display: block;
-                    flex: 0 0 auto;
-                }}
-                .npdb-login-transition-copy {{
-                    min-width: 0;
-                }}
-                .npdb-login-transition-title {{
-                    color: #F7FBFF;
-                    font-size: 1.05rem;
-                    font-weight: 780;
-                    line-height: 1.1;
-                    letter-spacing: -0.03em;
-                    margin: 0 0 0.12rem 0;
-                }}
-                .npdb-login-transition-title .accent {{
-                    background: linear-gradient(90deg, #18E5FF, #3B9BFF 43%, #8F69FF 74%, #DA58FF 100%);
-                    -webkit-background-clip: text;
-                    background-clip: text;
-                    color: transparent;
-                }}
-                .npdb-login-transition-subtitle {{
-                    color: rgba(214, 223, 238, 0.76);
-                    font-size: 0.76rem;
-                    letter-spacing: 0.14em;
-                    text-transform: uppercase;
-                }}
-                </style>
-                <div class="npdb-login-transition">
-                    <div class="npdb-login-transition-inner">
-                        {transition_logo_markup}
-                        <div class="npdb-login-transition-copy">
-                            <div class="npdb-login-transition-title">
-                                Natural Products<br><span class="accent">Spectral Database</span>
-                            </div>
-                            <div class="npdb-login-transition-subtitle">Loading workspace</div>
-                        </div>
-                    </div>
-                </div>
-                """
-            ),
-            unsafe_allow_html=True,
-        )
-        time.sleep(0.18)
-        st.rerun()
 
     if st.session_state.get("npdb_authenticated"):
         return
@@ -1428,7 +1338,6 @@ def verify_access_gate():
             st.session_state["npdb_role"] = matched_role
             st.session_state["npdb_auth_mode"] = matched_auth_mode
             st.session_state["npdb_remember_requested"] = bool(remember_me)
-            st.session_state["npdb_show_transition"] = True
             st.rerun()
         st.error("Access denied. Please check the approved credentials.")
 
