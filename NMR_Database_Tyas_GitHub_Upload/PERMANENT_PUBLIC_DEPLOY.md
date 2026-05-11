@@ -45,7 +45,7 @@ Kalau subdomain itu belum dipakai orang lain, kamu bisa memilihnya saat deploy d
 Format login:
 
 1. Username: `npdb_<nama>`
-2. Password: `OnnamideA13.`
+2. Password: gunakan password yang Tyas simpan di Streamlit Secrets, jangan ditulis di repo publik.
 
 Contoh:
 
@@ -165,7 +165,7 @@ Simpan nanti untuk Streamlit secrets.
 Format awal yang disarankan:
 
 ```toml
-NPDB_APPROVED_PASSWORD = "OnnamideA13."
+NPDB_APPROVED_PASSWORD = "change_this_shared_password"
 NPDB_APPROVED_NAMES = ["tyas", "sensei", "labmate1"]
 SUPABASE_URL = "https://your-project.supabase.co"
 SUPABASE_ANON_KEY = "your-anon-key"

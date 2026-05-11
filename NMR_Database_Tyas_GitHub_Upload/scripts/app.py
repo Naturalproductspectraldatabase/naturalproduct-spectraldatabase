@@ -8,10 +8,12 @@ import re
 import sqlite3
 import ssl
 import sys
+import textwrap
+import time
 import urllib.error
 import urllib.request
 import zipfile
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import quote, urlencode, urlparse
 
@@ -54,8 +56,9 @@ except Exception:
     st_ketcher = None
 
 try:
-    from rdkit import Chem, DataStructs
+    from rdkit import Chem, DataStructs, RDLogger
     from rdkit.Chem import AllChem
+    RDLogger.DisableLog("rdApp.*")
 except Exception:
     Chem = None
     DataStructs = None
@@ -88,6 +91,7 @@ PROJECT_DIR = resolve_project_dir(SCRIPT_DIR)
 DATABASE_DIR = PROJECT_DIR / "database"
 DATA_DIR = PROJECT_DIR / "data"
 BRANDING_DIR = DATA_DIR / "branding"
+BRANDING_OPTIMIZED_DIR = DATA_DIR / "branding_optimized"
 STRUCTURES_DIR = DATA_DIR / "structures"
 SPECTRA_DIR = DATA_DIR / "spectra"
 TEMPLATES_DIR = DATA_DIR / "templates"
@@ -107,10 +111,27 @@ OWNER_EDITOR_USERNAME = "npdb_tyas"
 
 def pick_branding_asset(*filenames: str) -> Path:
     for filename in filenames:
-        candidate = BRANDING_DIR / filename
-        if candidate.exists():
-            return candidate
+        for branding_dir in (BRANDING_OPTIMIZED_DIR, BRANDING_DIR):
+            candidate = branding_dir / filename
+            if candidate.exists():
+                return candidate
     return BRANDING_DIR / filenames[0]
+
+
+def pick_branding_asset_fuzzy(*keywords: str, fallback: str) -> Path:
+    normalized_keywords = [keyword.strip().lower() for keyword in keywords if keyword and keyword.strip()]
+    for branding_dir in (BRANDING_OPTIMIZED_DIR, BRANDING_DIR):
+        if not branding_dir.exists():
+            continue
+        candidates = sorted(
+            [path for path in branding_dir.iterdir() if path.is_file()],
+            key=lambda path: (len(path.name), path.name.lower()),
+        )
+        for candidate in candidates:
+            normalized_name = candidate.name.lower()
+            if all(keyword in normalized_name for keyword in normalized_keywords):
+                return candidate
+    return BRANDING_DIR / fallback
 
 
 FAVICON_PATH = pick_branding_asset(
@@ -124,29 +145,166 @@ FAVICON_PATH = pick_branding_asset(
     "favicon.png",
 )
 SIDEBAR_LOGO_PATH = pick_branding_asset(
-    "coral_favicon1.png",
     "favicon_circle.png",
+    "coral_favicon1.png",
     "favicon2.png",
     "favicon.png",
     "logo_header_web.png",
 )
 HEADER_LOGO_PATH = pick_branding_asset("logo_header_web.png", "header1_web.png", "logo_header.png", "header1.png", "header.png")
-HERO_BANNER_PATH = pick_branding_asset("background1.png", "background.png", "header_main_web.png", "logo_header_web.png")
+if not HEADER_LOGO_PATH.exists():
+    HEADER_LOGO_PATH = pick_branding_asset_fuzzy("logo", "header", fallback="logo_header_web.png")
+LOGIN_LOGO_PATH = pick_branding_asset(
+    "logo_header_web.png",
+    "header_main_web.png",
+    "favicon_circle.png",
+    "favicon2.png",
+    "favicon.png",
+)
+LOGIN_BADGE_PATH = pick_branding_asset(
+    "coral_favicon1.png",
+    "Coral_favicon.png",
+    "favicon_circle.png",
+    "favicon2.png",
+)
+HERO_BANNER_PATH = pick_branding_asset("background.png", "background1.png", "header_main_web.png", "logo_header_web.png")
+if not HERO_BANNER_PATH.exists():
+    HERO_BANNER_PATH = pick_branding_asset_fuzzy("background", fallback="background1.png")
 LOGIN_BACKGROUND_PATH = pick_branding_asset("background for login.png", "background1.png", "background.png")
+if not LOGIN_BACKGROUND_PATH.exists():
+    LOGIN_BACKGROUND_PATH = pick_branding_asset_fuzzy("login", "background", fallback="background for login.png")
 LOGIN_LEFT_ART_PATH = pick_branding_asset("Onnamide A.png", "NCO cmp.png", "structures.png")
+if not LOGIN_LEFT_ART_PATH.exists():
+    LOGIN_LEFT_ART_PATH = pick_branding_asset_fuzzy("onnamide", fallback="Onnamide A.png")
 LOGIN_RIGHT_ART_PATH = pick_branding_asset("NCO cmp 1.png", "NCO cmp.png", "bioactivity1.png")
+if not LOGIN_RIGHT_ART_PATH.exists():
+    LOGIN_RIGHT_ART_PATH = pick_branding_asset_fuzzy("nco", fallback="NCO cmp 1.png")
+
+
+def _normalize_html_block(markup: str) -> str:
+    if not isinstance(markup, str):
+        return markup
+    normalized = textwrap.dedent(markup).strip()
+    if any(token in normalized for token in ("<div", "</div>", "<section", "</section>", "<span", "</span>", "<img", "<style")):
+        return "\n".join(line.strip() for line in normalized.splitlines() if line.strip())
+    return normalized
+
+_STREAMLIT_MARKDOWN = st.markdown
+
+
+def _safe_markdown(body, *args, **kwargs):
+    if isinstance(body, str):
+        stripped = body.strip()
+        escaped = stripped.replace("&lt;", "<").replace("&gt;", ">")
+        standalone_tag_pattern = r"(?:</(?:div|section|span|main|article|header|footer|aside)>\s*)+"
+        if escaped in {"</div>", "</section>", "</span>", "</main>", "</article>", "</header>", "</footer>", "</aside>"}:
+            return _STREAMLIT_MARKDOWN("", *args, **kwargs)
+        if escaped and re.fullmatch(standalone_tag_pattern, escaped):
+            return _STREAMLIT_MARKDOWN("", *args, **kwargs)
+        if not kwargs.get("unsafe_allow_html") and escaped != stripped and re.fullmatch(standalone_tag_pattern, escaped):
+            return _STREAMLIT_MARKDOWN("", *args, **kwargs)
+    if kwargs.get("unsafe_allow_html") and isinstance(body, str):
+        stripped = body.strip()
+        if stripped in {"</div>", "</section>", "</span>", "</main>", "</article>", "</header>", "</footer>", "</aside>"}:
+            return _STREAMLIT_MARKDOWN("", *args, **kwargs)
+        if stripped and re.fullmatch(r"(?:</(?:div|section|span|main|article|header|footer|aside)>\s*)+", stripped):
+            return _STREAMLIT_MARKDOWN("", *args, **kwargs)
+        if stripped and re.fullmatch(r"<(?:div|section|span|main|article|header|footer|aside)(?:\s+[^>]*)?>", stripped):
+            return _STREAMLIT_MARKDOWN("", *args, **kwargs)
+        if stripped and re.fullmatch(r"(?:</(?:div|section|span|main|article|header|footer|aside)>\s*)+<(?:div|section|span|main|article|header|footer|aside)(?:\s+[^>]*)?>", stripped):
+            return _STREAMLIT_MARKDOWN("", *args, **kwargs)
+    if (
+        kwargs.get("unsafe_allow_html")
+        and isinstance(body, str)
+        and any(token in body for token in ("<div", "<style", "<svg", "<img", "<span", "<section"))
+    ):
+        body = _normalize_html_block(body)
+    return _STREAMLIT_MARKDOWN(body, *args, **kwargs)
+
+
+st.markdown = _safe_markdown
+
+
+def render_raw_html(markup: str):
+    normalized = _normalize_html_block(markup)
+    if hasattr(st, "html"):
+        st.html(normalized)
+    else:
+        _STREAMLIT_MARKDOWN(normalized, unsafe_allow_html=True)
+
+
 WORKSPACE_ART_PATH = pick_branding_asset("compound workspace.png", "updated.png", "structures.png")
+if not WORKSPACE_ART_PATH.exists():
+    WORKSPACE_ART_PATH = pick_branding_asset_fuzzy("workspace", fallback="compound workspace.png")
 COMPOUNDS_ART_PATH = pick_branding_asset("compounds.png", "structures.png")
+if not COMPOUNDS_ART_PATH.exists():
+    COMPOUNDS_ART_PATH = pick_branding_asset_fuzzy("compound", fallback="compounds.png")
 SPECTRA_ART_PATH = pick_branding_asset("spectra.png", "updated.png")
+if not SPECTRA_ART_PATH.exists():
+    SPECTRA_ART_PATH = pick_branding_asset_fuzzy("spectra", fallback="spectra.png")
 STRUCTURES_ART_PATH = pick_branding_asset("structures.png", "updated.png")
-BIOACTIVITY_ART_PATH = pick_branding_asset("bioactivity1.png", "updated.png")
+if not STRUCTURES_ART_PATH.exists():
+    STRUCTURES_ART_PATH = pick_branding_asset_fuzzy("structure", fallback="structures.png")
+BIOACTIVITY_ART_PATH = pick_branding_asset("bioactivity.png", "bioactivity1.png", "updated.png")
+if not BIOACTIVITY_ART_PATH.exists():
+    BIOACTIVITY_ART_PATH = pick_branding_asset_fuzzy("bioactivity", fallback="bioactivity.png")
 UPDATED_ART_PATH = pick_branding_asset("updated.png", "compound workspace.png")
+if not UPDATED_ART_PATH.exists():
+    UPDATED_ART_PATH = pick_branding_asset_fuzzy("updated", fallback="updated.png")
+SEARCH_ART_PATH = pick_branding_asset("Search spectra.png", "spectra.png", "updated.png")
+if not SEARCH_ART_PATH.exists():
+    SEARCH_ART_PATH = pick_branding_asset_fuzzy("search", "spectra", fallback="Search spectra.png")
+SEARCH_BIG_ART_PATH = pick_branding_asset("Search spectra big.png", "Search spectra.png", "spectra.png")
+if not SEARCH_BIG_ART_PATH.exists():
+    SEARCH_BIG_ART_PATH = pick_branding_asset_fuzzy("search", "spectra", "big", fallback="Search spectra big.png")
+DOCUMENTATION_ART_PATH = pick_branding_asset("Documentation.png", "updated.png")
+if not DOCUMENTATION_ART_PATH.exists():
+    DOCUMENTATION_ART_PATH = pick_branding_asset_fuzzy("documentation", fallback="Documentation.png")
+
+WORKFLOW_CARD_ART_PATHS = {
+    "Browse Record": pick_branding_asset("Browse Record.png", "compounds.png"),
+    "New Submission": pick_branding_asset("New Submission.png", "updated.png"),
+    "Batch Import": pick_branding_asset("Batch Import.png", "spectra.png"),
+    "Update Metadata": pick_branding_asset("Update Metadata.png", "updated.png"),
+}
+
+SIDEBAR_NAV_LABEL_ICONS = {
+    "Home": ":material/home:",
+    "Search Spectra": ":material/search:",
+    "Browse Dashboard": ":material/dashboard:",
+    "Start Submission": ":material/note_add:",
+    "New Submission": ":material/note_add:",
+    "Batch Import": ":material/upload_file:",
+    "Update Metadata": ":material/edit_note:",
+    "Delete Record": ":material/delete:",
+    "Bioactivity": ":material/biotech:",
+    "1H Peaks": ":material/monitoring:",
+    "13C Peaks": ":material/analytics:",
+    "Spectra Library": ":material/folder_open:",
+    "Guide": ":material/menu_book:",
+}
+
+SIDEBAR_NAV_ICON_PATHS = {
+    "Home": pick_branding_asset("favicon_circle.png", "logo_header_web.png"),
+    "Search Spectra": pick_branding_asset("Search spectra.png", "spectra.png"),
+    "Browse Dashboard": pick_branding_asset("Browse Dashboard.png", "compounds.png"),
+    "Start Submission": pick_branding_asset("Start Submission.png", "New Submission.png"),
+    "New Submission": pick_branding_asset("New Submission.png", "Start Submission.png"),
+    "Batch Import": pick_branding_asset("Batch Import.png", "spectra.png"),
+    "Update Metadata": pick_branding_asset("Update Metadata.png", "updated.png"),
+    "Delete Record": pick_branding_asset("Delete Record.png", "updated.png"),
+    "Bioactivity": pick_branding_asset("bioactivity.png", "updated.png"),
+    "1H Peaks": pick_branding_asset("spectra.png", "updated.png"),
+    "13C Peaks": pick_branding_asset("updated.png", "spectra.png"),
+    "Spectra Library": pick_branding_asset("spectra.png", "updated.png"),
+    "Guide": pick_branding_asset("Documentation.png", "updated.png"),
+}
 
 DASHBOARD_WORKFLOW_STEPS = [
-    ("Browse Record", "Explore curated records, structures, spectra previews, and linked bioactivity in one place."),
-    ("New Submission", "Submit a new natural product through a guided curation-first workflow."),
-    ("Batch Import", "Import standardized CSV templates when many compounds or spectra need to land together."),
-    ("Update Metadata", "Refine references, structure IDs, source details, and file links without losing consistency."),
+    ("Browse Record", "Review compounds and linked spectra."),
+    ("New Submission", "Add a new natural product record."),
+    ("Batch Import", "Import multiple records from structured files."),
+    ("Update Metadata", "Refine structure, source, and reference fields."),
 ]
 
 DASHBOARD_HIGHLIGHTS = [
@@ -161,7 +319,7 @@ SIDEBAR_NAV_GROUPS = [
     ("Main Menu", [
         {"label": "Home", "section": "Dashboard"},
         {"label": "Search Spectra", "section": "Search & Match"},
-        {"label": "Browse Record", "section": "Compound Workspace", "compound_page": "Browse Record"},
+        {"label": "Browse Dashboard", "section": "Compound Workspace", "compound_page": "Browse Record"},
         {"label": "Start Submission", "section": "Compound Workspace", "compound_page": "New Submission"},
     ]),
     ("Workflow", [
@@ -261,6 +419,7 @@ DEFAULT_POTENCY_UNITS = [
     "%",
     "mm",
 ]
+CURATION_STATUS_OPTIONS = ["curated", "reviewed", "imported"]
 
 SEARCH_FIELD_COLUMN_MAP = {
     "All searchable fields": [
@@ -402,6 +561,7 @@ COMPOUND_IMPORT_COLUMNS = [
     "ccdc_number",
     "hrms_data",
     "data_source",
+    "curation_status",
     "note",
 ]
 
@@ -520,13 +680,58 @@ def normalize_login_slug(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", text)
 
 
-def inline_asset_data_uri(path: Path) -> str:
+@st.cache_data(show_spinner=False)
+def optimized_image_data_uri(path_value: str, max_px: int = 1200, quality: int = 82) -> str:
+    path = Path(path_value)
     if not path.exists():
         return ""
     mime_type = mimetypes.guess_type(path.name)[0] or "image/png"
+    raster_suffixes = {".png", ".jpg", ".jpeg", ".webp"}
+    if Image is not None and path.suffix.lower() in raster_suffixes:
+        try:
+            with Image.open(path) as raw_image:
+                image = ImageOps.exif_transpose(raw_image) if ImageOps is not None else raw_image.copy()
+                image = image.copy()
+                if max_px and max(image.size) > max_px:
+                    image.thumbnail((max_px, max_px), Image.Resampling.LANCZOS)
+
+                has_alpha = image.mode in {"RGBA", "LA"} or "transparency" in image.info
+                output = io.BytesIO()
+                if has_alpha:
+                    image.save(output, format="PNG", optimize=True)
+                    mime_type = "image/png"
+                else:
+                    image.convert("RGB").save(
+                        output,
+                        format="JPEG",
+                        quality=quality,
+                        optimize=True,
+                        progressive=True,
+                    )
+                    mime_type = "image/jpeg"
+                encoded = base64.b64encode(output.getvalue()).decode("ascii")
+                return f"data:{mime_type};base64,{encoded}"
+        except Exception:
+            pass
     encoded = base64.b64encode(path.read_bytes()).decode("ascii")
     return f"data:{mime_type};base64,{encoded}"
 
+
+def inline_asset_data_uri(path: Path, max_px: int = 1200) -> str:
+    if not path.exists():
+        return ""
+    return optimized_image_data_uri(str(path), max_px=max_px)
+
+
+def inline_svg_data_uri(svg_markup: str) -> str:
+    encoded = base64.b64encode(svg_markup.encode("utf-8")).decode("ascii")
+    return f"data:image/svg+xml;base64,{encoded}"
+
+
+def _normalize_html_block(markup: str) -> str:
+    if not isinstance(markup, str):
+        return markup
+    return textwrap.dedent(markup).strip()
 
 def is_access_gate_enabled() -> bool:
     return bool(
@@ -541,6 +746,102 @@ def verify_access_gate():
     if not is_access_gate_enabled():
         return
 
+    if st.session_state.get("npdb_authenticated") and st.session_state.pop("npdb_show_transition", False):
+        transition_logo_path = FAVICON_PATH if FAVICON_PATH.exists() else SIDEBAR_LOGO_PATH
+        transition_logo_uri = inline_asset_data_uri(transition_logo_path, max_px=120) if transition_logo_path.exists() else ""
+        transition_logo_markup = (
+            f'<img class="npdb-login-transition-logo" src="{transition_logo_uri}" alt="NPDB logo" />'
+            if transition_logo_uri
+            else ""
+        )
+        st.markdown(
+            _normalize_html_block(
+                f"""
+                <style>
+                [data-testid="stAppViewContainer"] {{
+                    background:
+                        radial-gradient(circle at 24% 30%, rgba(24, 229, 255, 0.06), transparent 24%),
+                        radial-gradient(circle at 78% 28%, rgba(203, 62, 255, 0.08), transparent 24%),
+                        linear-gradient(180deg, rgba(4, 8, 20, 1), rgba(5, 10, 24, 1));
+                }}
+                [data-testid="stHeader"] {{
+                    background: transparent;
+                }}
+                [data-testid="stSidebar"] {{
+                    display: none !important;
+                }}
+                .block-container {{
+                    padding-top: 0 !important;
+                    padding-bottom: 0 !important;
+                    max-width: 100% !important;
+                }}
+                .npdb-login-transition {{
+                    min-height: 100vh;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 1rem;
+                }}
+                .npdb-login-transition-inner {{
+                    display: flex;
+                    align-items: center;
+                    gap: 0.9rem;
+                    padding: 0.95rem 1.1rem;
+                    border-radius: 22px;
+                    border: 1px solid rgba(255,255,255,0.08);
+                    background: linear-gradient(145deg, rgba(6, 20, 38, 0.78), rgba(18, 19, 42, 0.82));
+                    box-shadow: 0 22px 54px rgba(0, 0, 0, 0.28);
+                    backdrop-filter: blur(12px);
+                }}
+                .npdb-login-transition-logo {{
+                    width: 54px;
+                    height: 54px;
+                    object-fit: contain;
+                    display: block;
+                    flex: 0 0 auto;
+                }}
+                .npdb-login-transition-copy {{
+                    min-width: 0;
+                }}
+                .npdb-login-transition-title {{
+                    color: #F7FBFF;
+                    font-size: 1.05rem;
+                    font-weight: 780;
+                    line-height: 1.1;
+                    letter-spacing: -0.03em;
+                    margin: 0 0 0.12rem 0;
+                }}
+                .npdb-login-transition-title .accent {{
+                    background: linear-gradient(90deg, #18E5FF, #3B9BFF 43%, #8F69FF 74%, #DA58FF 100%);
+                    -webkit-background-clip: text;
+                    background-clip: text;
+                    color: transparent;
+                }}
+                .npdb-login-transition-subtitle {{
+                    color: rgba(214, 223, 238, 0.76);
+                    font-size: 0.76rem;
+                    letter-spacing: 0.14em;
+                    text-transform: uppercase;
+                }}
+                </style>
+                <div class="npdb-login-transition">
+                    <div class="npdb-login-transition-inner">
+                        {transition_logo_markup}
+                        <div class="npdb-login-transition-copy">
+                            <div class="npdb-login-transition-title">
+                                Natural Products<br><span class="accent">Spectral Database</span>
+                            </div>
+                            <div class="npdb-login-transition-subtitle">Loading workspace</div>
+                        </div>
+                    </div>
+                </div>
+                """
+            ),
+            unsafe_allow_html=True,
+        )
+        time.sleep(0.18)
+        st.rerun()
+
     if st.session_state.get("npdb_authenticated"):
         return
 
@@ -549,20 +850,22 @@ def verify_access_gate():
     approved_password = get_secret_setting("NPDB_APPROVED_PASSWORD", "approved_password")
     approved_users = load_approved_users()
     approved_names = load_approved_names()
-    login_background_uri = inline_asset_data_uri(LOGIN_BACKGROUND_PATH)
-    login_logo_uri = inline_asset_data_uri(HEADER_LOGO_PATH if HEADER_LOGO_PATH.exists() else SIDEBAR_LOGO_PATH)
-    login_left_art_uri = inline_asset_data_uri(LOGIN_LEFT_ART_PATH)
-    login_right_art_uri = inline_asset_data_uri(LOGIN_RIGHT_ART_PATH)
+    login_background_uri = inline_asset_data_uri(LOGIN_BACKGROUND_PATH, max_px=1600)
+    login_logo_uri = inline_asset_data_uri(SIDEBAR_LOGO_PATH if SIDEBAR_LOGO_PATH.exists() else LOGIN_LOGO_PATH, max_px=180)
+    login_left_art_uri = inline_asset_data_uri(LOGIN_LEFT_ART_PATH, max_px=560)
+    login_right_art_uri = inline_asset_data_uri(LOGIN_RIGHT_ART_PATH, max_px=560)
     background_style = (
-        f"background-image: linear-gradient(115deg, rgba(2, 9, 24, 0.90), rgba(3, 8, 22, 0.72)), url('{login_background_uri}');"
+        f"background-image: linear-gradient(118deg, rgba(2, 8, 20, 0.90), rgba(3, 7, 19, 0.78)), url('{login_background_uri}');"
         if login_background_uri
         else "background: radial-gradient(circle at 20% 30%, rgba(0, 170, 255, 0.16), transparent 30%), radial-gradient(circle at 80% 32%, rgba(182, 72, 255, 0.16), transparent 28%), linear-gradient(180deg, rgba(3, 8, 22, 1), rgba(4, 8, 18, 1));"
     )
-    logo_markup = f'<img class="login-brand-logo" src="{login_logo_uri}" alt="NPDB logo" />' if login_logo_uri else ""
+    use_login_brand_lockup = False
+    logo_class = "login-brand-logo"
+    logo_markup = f'<img class="{logo_class}" src="{login_logo_uri}" alt="NPDB logo" />' if login_logo_uri else ""
     left_art_markup = f'<img class="login-ambient-art login-ambient-art-left" src="{login_left_art_uri}" alt="Natural product structure" />' if login_left_art_uri else ""
     right_art_markup = f'<img class="login-ambient-art login-ambient-art-right" src="{login_right_art_uri}" alt="Natural product structure" />' if login_right_art_uri else ""
     shield_markup = """
-        <svg viewBox="0 0 64 64" aria-hidden="true" style="width:40px;height:40px;display:block">
+        <svg viewBox="0 0 64 64" aria-hidden="true" style="width:42px;height:42px;display:block">
             <defs>
                 <linearGradient id="npdbShield" x1="0%" y1="0%" x2="100%" y2="100%">
                     <stop offset="0%" stop-color="#18E5FF"/>
@@ -576,375 +879,427 @@ def verify_access_gate():
     """
 
     st.markdown(
-        f"""
-        <style>
-        [data-testid="stAppViewContainer"] {{
-            {background_style}
-            background-size: cover;
-            background-position: center;
-            background-attachment: fixed;
-        }}
-        [data-testid="stHeader"] {{
-            background: rgba(4, 10, 24, 0.08);
-        }}
-        [data-testid="stToolbar"] {{
-            right: 1rem;
-            top: 1rem;
-        }}
-        .login-shell {{
-            position: relative;
-            min-height: 100vh;
-            padding: 2rem 0 3rem 0;
-            overflow: hidden;
-        }}
-        .login-shell::before {{
-            content: "";
-            position: absolute;
-            inset: 0;
-            background:
-                radial-gradient(circle at 18% 72%, rgba(33, 203, 255, 0.16), transparent 26%),
-                radial-gradient(circle at 82% 72%, rgba(196, 52, 255, 0.18), transparent 26%);
-            pointer-events: none;
-        }}
-        .login-topbar {{
-            display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
-            gap: 1rem;
-            max-width: 1220px;
-            margin: 0 auto 1.8rem auto;
-            padding: 0 1.25rem;
-        }}
-        .login-brand {{
-            display: flex;
-            align-items: flex-start;
-            gap: 1.1rem;
-        }}
-        .login-brand-logo {{
-            width: 118px;
-            height: 118px;
-            object-fit: contain;
-            filter: drop-shadow(0 18px 30px rgba(0,0,0,0.28));
-        }}
-        .login-brand-copy {{
-            padding-top: 0.15rem;
-        }}
-        .login-brand-title {{
-            color: #F7FBFF;
-            font-size: clamp(2rem, 3.3vw, 3.9rem);
-            line-height: 0.94;
-            font-weight: 820;
-            letter-spacing: -0.05em;
-            margin-bottom: 0.35rem;
-        }}
-        .login-brand-title .accent {{
-            background: linear-gradient(90deg, #1DE6FF, #3898FF 42%, #8C66FF 70%, #D74DFF 100%);
-            -webkit-background-clip: text;
-            background-clip: text;
-            color: transparent;
-        }}
-        .login-help {{
-            display: inline-flex;
-            align-items: center;
-            gap: 0.55rem;
-            color: rgba(241, 246, 255, 0.92);
-            font-size: 0.98rem;
-            white-space: nowrap;
-            padding-top: 0.55rem;
-            text-decoration: none;
-        }}
-        .login-help-badge {{
-            width: 2rem;
-            height: 2rem;
-            border-radius: 999px;
-            display: inline-grid;
-            place-items: center;
-            border: 1px solid rgba(255,255,255,0.36);
-            background: rgba(255,255,255,0.04);
-            font-size: 1rem;
-        }}
-        .login-center {{
-            position: relative;
-            max-width: 1220px;
-            margin: 0 auto;
-            padding: 0 1.25rem;
-            z-index: 1;
-        }}
-        .login-ambient-art {{
-            position: absolute;
-            pointer-events: none;
-            opacity: 0.24;
-            filter: drop-shadow(0 24px 40px rgba(20, 32, 80, 0.24));
-        }}
-        .login-ambient-art-left {{
-            left: -3rem;
-            bottom: 5rem;
-            width: min(34vw, 520px);
-        }}
-        .login-ambient-art-right {{
-            right: -2rem;
-            top: 1rem;
-            width: min(28vw, 440px);
-        }}
-        .auth-card-wrap {{
-            max-width: 620px;
-            margin: 1.8rem auto 0 auto;
-        }}
-        .login-wave {{
-            position: absolute;
-            pointer-events: none;
-            opacity: 0.82;
-            mix-blend-mode: screen;
-        }}
-        .login-wave-left {{
-            left: -4vw;
-            bottom: 6.5rem;
-            width: min(44vw, 620px);
-            height: 220px;
-            background:
-                radial-gradient(circle at 22% 72%, rgba(46, 218, 255, 0.85), transparent 8%),
-                radial-gradient(circle at 44% 44%, rgba(45, 162, 255, 0.88), transparent 7%),
-                radial-gradient(circle at 64% 64%, rgba(0, 119, 255, 0.82), transparent 7%);
-            filter: blur(1px) drop-shadow(0 0 12px rgba(31, 189, 255, 0.46));
-            border-bottom: 2px solid rgba(47, 205, 255, 0.9);
-            clip-path: polygon(0 78%, 8% 76%, 12% 68%, 18% 72%, 23% 46%, 29% 78%, 36% 74%, 43% 32%, 49% 86%, 57% 82%, 65% 55%, 72% 88%, 80% 84%, 88% 79%, 100% 80%, 100% 100%, 0 100%);
-        }}
-        .login-wave-right {{
-            right: -3vw;
-            bottom: 6.5rem;
-            width: min(42vw, 580px);
-            height: 220px;
-            background:
-                radial-gradient(circle at 22% 68%, rgba(203, 57, 255, 0.86), transparent 8%),
-                radial-gradient(circle at 48% 48%, rgba(255, 116, 244, 0.84), transparent 7%),
-                radial-gradient(circle at 68% 70%, rgba(138, 69, 255, 0.84), transparent 7%);
-            filter: blur(1px) drop-shadow(0 0 14px rgba(215, 79, 255, 0.42));
-            border-bottom: 2px solid rgba(213, 84, 255, 0.88);
-            clip-path: polygon(0 80%, 10% 78%, 16% 48%, 23% 86%, 31% 74%, 39% 84%, 45% 62%, 52% 24%, 58% 84%, 66% 68%, 73% 82%, 80% 62%, 88% 74%, 94% 80%, 100% 82%, 100% 100%, 0 100%);
-        }}
-        .auth-card {{
-            padding: 1.5rem 1.55rem 1.3rem 1.55rem;
-            border-radius: 30px;
-            background: linear-gradient(145deg, rgba(6, 20, 38, 0.82), rgba(18, 19, 42, 0.86));
-            border: 1px solid rgba(94, 222, 255, 0.34);
-            box-shadow: 0 28px 68px rgba(0, 0, 0, 0.32);
-            backdrop-filter: blur(14px);
-        }}
-        .auth-card-badge {{
-            width: 84px;
-            height: 84px;
-            margin: 0 auto 0.9rem auto;
-            border-radius: 999px;
-            display: grid;
-            place-items: center;
-            background: linear-gradient(180deg, rgba(18, 44, 82, 0.82), rgba(44, 19, 78, 0.76));
-            border: 1px solid rgba(97, 216, 237, 0.34);
-            color: #8CEDFF;
-            font-size: 2rem;
-            box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
-        }}
-        .auth-title {{
-            color: #F5F8FD;
-            font-size: clamp(2rem, 3vw, 3.2rem);
-            text-align: center;
-            font-weight: 800;
-            letter-spacing: -0.04em;
-            margin-bottom: 0.35rem;
-        }}
-        .auth-subtitle {{
-            color: rgba(214, 223, 238, 0.86);
-            line-height: 1.58;
-            text-align: center;
-            font-size: 1rem;
-            margin: 0 auto 1.3rem auto;
-            max-width: 28rem;
-        }}
-        div[data-testid="stForm"] {{
-            border: none !important;
-            background: transparent !important;
-            padding: 0 !important;
-            box-shadow: none !important;
-        }}
-        div[data-testid="stForm"] label p {{
-            color: #F7FBFF !important;
-            font-size: 1rem !important;
-            font-weight: 620 !important;
-        }}
-        div[data-testid="stTextInput"] input {{
-            min-height: 56px;
-            border-radius: 16px !important;
-            border: 1px solid rgba(150, 168, 206, 0.28) !important;
-            background: rgba(19, 27, 48, 0.82) !important;
-            color: #F7FBFF !important;
-            font-size: 1rem !important;
-        }}
-        div[data-testid="stTextInput"] input::placeholder {{
-            color: rgba(180, 192, 214, 0.62) !important;
-        }}
-        div[data-testid="stCheckbox"] label {{
-            color: #DCE6F5 !important;
-            font-size: 0.94rem !important;
-        }}
-        div[data-testid="stCheckbox"] input + div {{
-            border-radius: 6px !important;
-        }}
-        div[data-testid="stButton"] button,
-        div[data-testid="stFormSubmitButton"] button {{
-            min-height: 58px;
-            border-radius: 18px !important;
-            border: 1px solid rgba(122, 89, 255, 0.28) !important;
-            background: linear-gradient(90deg, #1EAFFF, #2D7FFF 42%, #8246FF 73%, #CB3EFF 100%) !important;
-            color: #F8FBFF !important;
-            font-size: 1.1rem !important;
-            font-weight: 720 !important;
-            box-shadow: 0 18px 34px rgba(92, 85, 255, 0.24);
-        }}
-        .auth-meta {{
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 1rem;
-            margin: 0.25rem 0 0.7rem 0;
-        }}
-        .auth-meta-note {{
-            color: rgba(165, 183, 222, 0.88);
-            font-size: 0.92rem;
-        }}
-        .auth-meta-link {{
-            color: #9FA6FF;
-            font-size: 0.92rem;
-        }}
-        .auth-help-panel {{
-            margin: 1rem auto 0 auto;
-            max-width: 620px;
-            padding: 1rem 1.05rem;
-            border-radius: 22px;
-            border: 1px solid rgba(255,255,255,0.08);
-            background: linear-gradient(180deg, rgba(9, 16, 34, 0.72), rgba(14, 18, 42, 0.7));
-            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.22);
-            backdrop-filter: blur(10px);
-        }}
-        .auth-help-title {{
-            color: #F5F8FD;
-            font-size: 1rem;
-            font-weight: 730;
-            margin-bottom: 0.45rem;
-        }}
-        .auth-help-copy {{
-            color: rgba(210, 221, 239, 0.84);
-            font-size: 0.92rem;
-            line-height: 1.58;
-        }}
-        .auth-help-copy strong {{
-            color: #F6FBFF;
-        }}
-        .auth-footer {{
-            margin-top: 0.95rem;
-            color: rgba(169, 183, 208, 0.84);
-            font-size: 0.84rem;
-            text-align: center;
-        }}
-        @media (max-width: 900px) {{
-            .login-topbar {{
-                flex-direction: column;
+        _normalize_html_block(
+            f"""
+            <style>
+            [data-testid="stAppViewContainer"] {{
+                {background_style}
+                background-size: cover;
+                background-position: center;
+                background-attachment: fixed;
             }}
-            .login-brand {{
-                gap: 0.8rem;
+            [data-testid="stHeader"] {{
+                background: rgba(4, 10, 24, 0.06);
             }}
-            .login-brand-logo {{
-                width: 86px;
-                height: 86px;
-            }}
-            .login-ambient-art {{
+            [data-testid="stToolbar"] {{
                 display: none;
             }}
-            .login-wave {{
-                opacity: 0.5;
+            [data-testid="stSidebar"] {{
+                display: none;
             }}
-            .auth-card-wrap {{
-                margin-top: 1rem;
+            .block-container {{
+                max-width: none !important;
+                padding-top: 0 !important;
+                padding-bottom: 0.6rem !important;
             }}
-        }}
-        @media (max-width: 640px) {{
             .login-shell {{
-                padding-top: 1rem;
+                position: relative;
+                min-height: 100vh;
+                padding: 0.35rem 0 0.25rem 0;
+                overflow: hidden;
             }}
-            .auth-card {{
-                padding: 1.15rem 1rem 1rem 1rem;
+            .login-shell::before {{
+                content: "";
+                position: absolute;
+                inset: 0;
+                background:
+                    radial-gradient(circle at 18% 70%, rgba(33, 203, 255, 0.16), transparent 24%),
+                    radial-gradient(circle at 82% 70%, rgba(196, 52, 255, 0.18), transparent 24%);
+                pointer-events: none;
+            }}
+            .login-topbar {{
+                display: flex;
+                align-items: flex-start;
+                justify-content: space-between;
+                gap: 1rem;
+                max-width: 1060px;
+                margin: 0 auto 0.05rem auto;
+                padding: 0 1.5rem;
+            }}
+            .login-brand {{
+                display: flex;
+                align-items: flex-start;
+                gap: 0.9rem;
+            }}
+            .login-brand-logo {{
+                width: 58px;
+                height: 58px;
+                object-fit: contain;
+                filter: drop-shadow(0 12px 24px rgba(0,0,0,0.24));
+                flex: 0 0 auto;
+            }}
+            .login-brand-logo.is-lockup {{
+                width: min(40vw, 540px);
+                height: auto;
+            }}
+            .login-brand-copy {{
+                padding-top: 0.1rem;
+            }}
+            .login-brand-title {{
+                color: #F7FBFF;
+                font-size: clamp(1.02rem, 1.7vw, 1.5rem);
+                line-height: 1.05;
+                font-weight: 780;
+                letter-spacing: -0.05em;
+                margin-bottom: 0.12rem;
+            }}
+            .login-brand-title .accent {{
+                background: linear-gradient(90deg, #18E5FF, #3B9BFF 43%, #8F69FF 74%, #DA58FF 100%);
+                -webkit-background-clip: text;
+                background-clip: text;
+                color: transparent;
+            }}
+            .login-brand-kicker {{
+                color: rgba(215, 227, 243, 0.72);
+                font-size: 0.58rem;
+                letter-spacing: 0.16em;
+                text-transform: uppercase;
+            }}
+            .login-help {{
+                display: inline-flex;
+                align-items: center;
+                gap: 0.6rem;
+                color: rgba(241, 246, 255, 0.94);
+                font-size: 0.84rem;
+                white-space: nowrap;
+                padding-top: 0.18rem;
+                text-decoration: none;
+            }}
+            .login-help-badge {{
+                width: 1.62rem;
+                height: 1.62rem;
+                border-radius: 999px;
+                display: inline-grid;
+                place-items: center;
+                border: 1px solid rgba(255,255,255,0.36);
+                background: rgba(255,255,255,0.04);
+                font-size: 0.88rem;
+            }}
+            .login-center {{
+                position: relative;
+                max-width: 1060px;
+                min-height: 72px;
+                margin: 0 auto;
+                padding: 0 1.5rem;
+                z-index: 1;
+            }}
+            .login-ambient-art {{
+                position: absolute;
+                pointer-events: none;
+                opacity: 0.17;
+                filter: drop-shadow(0 24px 40px rgba(20, 32, 80, 0.24));
+            }}
+            .login-ambient-art-left {{
+                left: -3rem;
+                bottom: 0.2rem;
+                width: min(26vw, 360px);
+            }}
+            .login-ambient-art-right {{
+                right: -2rem;
+                top: -0.2rem;
+                width: min(24vw, 320px);
+            }}
+            .login-card-anchor {{
+                width: min(100%, 560px);
+                height: 12px;
+                margin: 0 auto;
+                border-radius: 28px;
+                border: 1px solid rgba(115, 79, 255, 0.44);
+                background: linear-gradient(145deg, rgba(6, 20, 38, 0.24), rgba(18, 19, 42, 0.32));
+                box-shadow: 0 18px 44px rgba(0, 0, 0, 0.14);
+                opacity: 0.12;
+            }}
+            .login-wave {{
+                position: absolute;
+                pointer-events: none;
+                opacity: 0.66;
+                mix-blend-mode: screen;
+            }}
+            .login-wave-left {{
+                left: -4vw;
+                bottom: -0.2rem;
+                width: min(46vw, 650px);
+                height: 120px;
+                background:
+                    radial-gradient(circle at 22% 72%, rgba(46, 218, 255, 0.85), transparent 8%),
+                    radial-gradient(circle at 44% 44%, rgba(45, 162, 255, 0.88), transparent 7%),
+                    radial-gradient(circle at 64% 64%, rgba(0, 119, 255, 0.82), transparent 7%);
+                filter: blur(1px) drop-shadow(0 0 12px rgba(31, 189, 255, 0.46));
+                border-bottom: 2px solid rgba(47, 205, 255, 0.9);
+                clip-path: polygon(0 78%, 8% 76%, 12% 68%, 18% 72%, 23% 46%, 29% 78%, 36% 74%, 43% 32%, 49% 86%, 57% 82%, 65% 55%, 72% 88%, 80% 84%, 88% 79%, 100% 80%, 100% 100%, 0 100%);
+            }}
+            .login-wave-right {{
+                right: -3vw;
+                bottom: -0.2rem;
+                width: min(42vw, 590px);
+                height: 120px;
+                background:
+                    radial-gradient(circle at 22% 68%, rgba(203, 57, 255, 0.86), transparent 8%),
+                    radial-gradient(circle at 48% 48%, rgba(255, 116, 244, 0.84), transparent 7%),
+                    radial-gradient(circle at 68% 70%, rgba(138, 69, 255, 0.84), transparent 7%);
+                filter: blur(1px) drop-shadow(0 0 14px rgba(215, 79, 255, 0.42));
+                border-bottom: 2px solid rgba(213, 84, 255, 0.88);
+                clip-path: polygon(0 80%, 10% 78%, 16% 48%, 23% 86%, 31% 74%, 39% 84%, 45% 62%, 52% 24%, 58% 84%, 66% 68%, 73% 82%, 80% 62%, 88% 74%, 94% 80%, 100% 82%, 100% 100%, 0 100%);
+            }}
+            div[data-testid="stForm"] {{
+                width: min(100%, 560px) !important;
+                margin: -0.85rem auto 0 auto !important;
+                padding: 0.84rem 1rem 0.68rem 1rem !important;
+                border-radius: 26px !important;
+                background: linear-gradient(145deg, rgba(6, 20, 38, 0.82), rgba(18, 19, 42, 0.86)) !important;
+                border: 1px solid rgba(94, 222, 255, 0.34) !important;
+                box-shadow: 0 22px 54px rgba(0, 0, 0, 0.26) !important;
+                backdrop-filter: blur(14px) !important;
+            }}
+            div[data-testid="stForm"] > div:first-child {{
+                border: none !important;
+                background: transparent !important;
+                box-shadow: none !important;
+                padding: 0 !important;
+            }}
+            .auth-card-badge {{
+                width: 58px;
+                height: 58px;
+                margin: 0 auto 0.34rem auto;
+                border-radius: 999px;
+                display: grid;
+                place-items: center;
+                background: linear-gradient(180deg, rgba(18, 44, 82, 0.82), rgba(44, 19, 78, 0.76));
+                border: 1px solid rgba(97, 216, 237, 0.34);
+                box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+                overflow: hidden;
+            }}
+            .auth-badge-logo {{
+                width: 42px;
+                height: 42px;
+                object-fit: contain;
+                display: block;
+                filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.28));
+            }}
+            .auth-title {{
+                color: #F5F8FD;
+                font-size: clamp(1.45rem, 2vw, 2rem);
+                text-align: center;
+                font-weight: 800;
+                letter-spacing: -0.04em;
+                margin-bottom: 0.06rem;
+            }}
+            .auth-subtitle {{
+                color: rgba(214, 223, 238, 0.86);
+                line-height: 1.34;
+                text-align: center;
+                font-size: 0.82rem;
+                margin: 0 auto 0.48rem auto;
+                max-width: 19rem;
+            }}
+            .auth-field-shell {{
+                position: relative;
+                margin-bottom: 0.18rem;
+            }}
+            div[data-testid="stForm"] label p {{
+                color: #F7FBFF !important;
+                font-size: 0.88rem !important;
+                font-weight: 620 !important;
+            }}
+            div[data-testid="stForm"] div[data-testid="stTextInput"] input {{
+                min-height: 42px !important;
+                border-radius: 14px !important;
+                border: 1px solid rgba(150, 168, 206, 0.28) !important;
+                background: rgba(19, 27, 48, 0.82) !important;
+                color: #F7FBFF !important;
+                font-size: 0.9rem !important;
+                padding-left: 1rem !important;
+            }}
+            div[data-testid="stForm"] div[data-testid="stTextInput"] input::placeholder {{
+                color: rgba(180, 192, 214, 0.62) !important;
+            }}
+            div[data-testid="stForm"] div[data-testid="stCheckbox"] label {{
+                color: #DCE6F5 !important;
+                font-size: 0.84rem !important;
+            }}
+            div[data-testid="stForm"] div[data-testid="stCheckbox"] input + div {{
+                border-radius: 6px !important;
+            }}
+            div[data-testid="stFormSubmitButton"] button {{
+                min-height: 48px !important;
+                border-radius: 15px !important;
+                border: 1px solid rgba(122, 89, 255, 0.28) !important;
+                background: linear-gradient(90deg, #1EAFFF, #2D7FFF 42%, #8246FF 73%, #CB3EFF 100%) !important;
+                color: #F8FBFF !important;
+                font-size: 0.94rem !important;
+                font-weight: 720 !important;
+                box-shadow: 0 18px 34px rgba(92, 85, 255, 0.24) !important;
             }}
             .auth-meta {{
-                flex-direction: column;
-                align-items: flex-start;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 1rem;
+                margin: 0.01rem 0 0.2rem 0;
             }}
-        }}
-        </style>
-        <div class="login-shell">
-            <div class="login-topbar">
-                <div class="login-brand">
-                    {logo_markup}
-                    <div class="login-brand-copy">
-                        <div class="login-brand-title">Natural Products<br><span class="accent">Spectral Database</span></div>
+            .auth-forgot-link {{
+                color: #9FA6FF;
+                font-size: 0.82rem;
+                text-decoration: none;
+            }}
+            .auth-meta-note {{
+                color: rgba(165, 183, 222, 0.88);
+                font-size: 0.78rem;
+            }}
+            .auth-help-panel {{
+                margin: 0.2rem auto 0 auto;
+                max-width: 560px;
+                padding: 0.58rem 0.82rem;
+                border-radius: 18px;
+                border: 1px solid rgba(255,255,255,0.08);
+                background: linear-gradient(180deg, rgba(9, 16, 34, 0.72), rgba(14, 18, 42, 0.7));
+                box-shadow: 0 20px 50px rgba(0, 0, 0, 0.22);
+                backdrop-filter: blur(10px);
+            }}
+            .auth-help-title {{
+                color: #F5F8FD;
+                font-size: 0.88rem;
+                font-weight: 730;
+                margin-bottom: 0.18rem;
+            }}
+            .auth-help-copy {{
+                color: rgba(210, 221, 239, 0.84);
+                font-size: 0.76rem;
+                line-height: 1.34;
+            }}
+            .auth-help-copy strong {{
+                color: #F6FBFF;
+            }}
+            .auth-footer {{
+                margin-top: 0.2rem;
+                color: rgba(169, 183, 208, 0.84);
+                font-size: 0.72rem;
+                text-align: center;
+            }}
+            @media (max-width: 900px) {{
+                .login-topbar {{
+                    flex-direction: column;
+                }}
+                .login-brand-logo {{
+                    width: 80px;
+                    height: 80px;
+                }}
+                .login-brand-logo.is-lockup {{
+                    width: min(78vw, 460px);
+                    height: auto;
+                }}
+                .login-ambient-art {{
+                    display: none;
+                }}
+                .login-wave {{
+                    opacity: 0.52;
+                }}
+                .login-card-anchor {{
+                    height: 24px;
+                }}
+                div[data-testid="stForm"] {{
+                    margin-top: -1.2rem !important;
+                }}
+            }}
+            @media (max-width: 640px) {{
+                .login-shell {{
+                    padding-top: 0.8rem;
+                }}
+                .login-topbar,
+                .login-center {{
+                    padding-left: 1rem;
+                    padding-right: 1rem;
+                }}
+                .login-card-anchor {{
+                    height: 20px;
+                    margin-top: 0.1rem;
+                }}
+                div[data-testid="stForm"] {{
+                    margin-top: -1rem !important;
+                    padding: 0.78rem 0.85rem 0.74rem 0.85rem !important;
+                }}
+                .auth-meta {{
+                    flex-direction: column;
+                    align-items: flex-start;
+                }}
+            }}
+            </style>
+            <div class="login-shell">
+                <div class="login-topbar">
+                    <div class="login-brand">
+                        {logo_markup}
+                {"" if use_login_brand_lockup else '<div class="login-brand-copy"><div class="login-brand-title">Natural Products<br><span class="accent">Spectral Database</span></div><div class="login-brand-kicker">Explore · Analyze · Discover</div></div>'}
                     </div>
+                    <a class="login-help" href="#login-access-help">
+                        <span class="login-help-badge">?</span>
+                        <span>Help</span>
+                    </a>
                 </div>
-                <a class="login-help" href="#login-access-help">
-                    <span class="login-help-badge">?</span>
-                    <span>Help</span>
-                </a>
-            </div>
-            <div class="login-center">
-                {left_art_markup}
-                {right_art_markup}
-                <div class="login-wave login-wave-left"></div>
-                <div class="login-wave login-wave-right"></div>
-                <div class="auth-card-wrap">
-                    <div class="auth-card">
-                        <div class="auth-card-badge">{shield_markup}</div>
-                        <div class="auth-title">Welcome Back</div>
-                        <div class="auth-subtitle">
-                            This workspace is protected. Please enter your credentials to access the database.
-                        </div>
-                    </div>
+                <div class="login-center">
+                    {left_art_markup}
+                    {right_art_markup}
+                    <div class="login-wave login-wave-left"></div>
+                    <div class="login-wave login-wave-right"></div>
+                    <div class="login-card-anchor"></div>
                 </div>
             </div>
-        </div>
-        """,
+            """
+        ),
         unsafe_allow_html=True,
     )
 
     with st.form("npdb_access_gate"):
-        username = st.text_input("Username", value="", placeholder="Enter your username")
-        password = st.text_input("Password", value="", type="password", placeholder="Enter your password")
-        remember_me = st.checkbox("Remember me", value=False)
+        badge_uri = inline_asset_data_uri(LOGIN_BADGE_PATH, max_px=120)
+        badge_markup = (
+            f'<img class="auth-badge-logo" src="{badge_uri}" alt="NPDB secure coral badge" />'
+            if badge_uri
+            else shield_markup
+        )
+        st.markdown(f'<div class="auth-card-badge">{badge_markup}</div>', unsafe_allow_html=True)
+        st.markdown('<div class="auth-title">Welcome Back</div>', unsafe_allow_html=True)
         st.markdown(
-            """
-            <div class="auth-meta">
-                <div class="auth-meta-note">Approved users only. Contact the database owner if you need access.</div>
-                <div class="auth-meta-link"><a href="#login-access-help" style="color:inherit;text-decoration:none;">Access guide</a></div>
-            </div>
-            """,
+            '<div class="auth-subtitle">This workspace is protected.<br>Please enter your credentials to access the database.</div>',
             unsafe_allow_html=True,
         )
-        submitted = st.form_submit_button("Open Database", use_container_width=True)
+        username = st.text_input("Username", value="", placeholder="Enter your username", icon=":material/person:")
+        password = st.text_input("Password", value="", type="password", placeholder="Enter your password", icon=":material/lock:")
+        remember_col, forgot_col = st.columns([1.1, 1])
+        with remember_col:
+            remember_me = st.checkbox("Remember me", value=False)
+        with forgot_col:
+            st.markdown(
+                '<div style="text-align:right; padding-top: 1.85rem;"><a class="auth-forgot-link" href="#login-access-help">Forgot password?</a></div>',
+                unsafe_allow_html=True,
+            )
+        st.markdown('<div class="auth-meta"><div class="auth-meta-note">Approved users only. Contact the database owner if you need access.</div></div>', unsafe_allow_html=True)
+        submitted = st.form_submit_button("Open Database  →", width="stretch")
         st.markdown(
-            """
-            <div class="auth-footer">This access gate protects the curated NPDB workspace and its editing tools.</div>
-            """,
+            '<div class="auth-footer">This access gate protects the curated NPDB workspace.</div>',
             unsafe_allow_html=True,
         )
 
-    st.markdown(
-        """
-        <div id="login-access-help" class="auth-help-panel">
-            <div class="auth-help-title">Access Guide</div>
+    st.markdown('<div id="login-access-help"></div>', unsafe_allow_html=True)
+    with st.expander("Access Guide", expanded=False):
+        st.markdown(
+            """
             <div class="auth-help-copy">
                 Sign in with an approved NPDB account. If your workspace uses the approved-name pattern, enter the username as
                 <strong>npdb_yourname</strong>. Only the owner account can edit or submit records; other approved users can browse,
                 search, and download curated data.
             </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+            """,
+            unsafe_allow_html=True,
+        )
 
     if submitted:
         authenticated = False
@@ -977,11 +1332,11 @@ def verify_access_gate():
             st.session_state["npdb_username"] = username.strip()
             st.session_state["npdb_role"] = matched_role
             st.session_state["npdb_remember_requested"] = bool(remember_me)
+            st.session_state["npdb_show_transition"] = True
             st.rerun()
         st.error("Access denied. Please check the approved credentials.")
 
     st.stop()
-
 
 verify_access_gate()
 
@@ -1066,6 +1421,47 @@ def set_compound_page(page_name: str):
     st.session_state["compound_page"] = page_name
     st.session_state["_pending_compound_page_radio"] = page_name
 
+
+def build_internal_nav_href(section: str, compound_page: str | None = None) -> str:
+    params = {"nav": section}
+    if compound_page:
+        params["compound_page"] = compound_page
+    return f"?{urlencode(params)}"
+
+
+def navigate_internal(section: str, compound_page: str | None = None):
+    set_main_nav(section)
+    if compound_page:
+        set_compound_page(compound_page)
+    try:
+        st.query_params["nav"] = section
+        if compound_page:
+            st.query_params["compound_page"] = compound_page
+        elif "compound_page" in st.query_params:
+            del st.query_params["compound_page"]
+    except Exception:
+        pass
+
+
+def apply_navigation_query_params():
+    query_params = st.query_params
+    target_section = query_params.get("nav")
+    target_compound_page = query_params.get("compound_page")
+
+    if isinstance(target_section, list):
+        target_section = target_section[0] if target_section else None
+    if isinstance(target_compound_page, list):
+        target_compound_page = target_compound_page[0] if target_compound_page else None
+
+    if target_section:
+        set_main_nav(str(target_section))
+        if target_compound_page:
+            set_compound_page(str(target_compound_page))
+        try:
+            st.query_params.clear()
+        except Exception:
+            pass
+
 def open_compound_detail(compound_id: int):
     st.session_state["selected_compound_id"] = int(compound_id)
     set_main_nav("Compound Workspace")
@@ -1127,80 +1523,244 @@ st.markdown("""
 
 [data-testid="stSidebar"] .block-container {
     padding-top: 1.1rem;
-    padding-left: 1rem;
-    padding-right: 1rem;
+    padding-left: 0.74rem;
+    padding-right: 0.74rem;
 }
 
 .sidebar-note {
-    border-radius: 20px;
-    padding: 0.95rem 1rem;
-    background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.018));
-    border: 1px solid rgba(255,255,255,0.09);
+    border-radius: 18px;
+    padding: 0.9rem 0.95rem;
+    background: linear-gradient(180deg, rgba(17, 28, 46, 0.78), rgba(9, 18, 31, 0.82));
+    border: 1px solid rgba(255,255,255,0.06);
     color: var(--text-soft);
-    font-size: 0.93rem;
+    font-size: 0.88rem;
     line-height: 1.5;
-    box-shadow: var(--glow-soft);
-}
-
-.sidebar-logo-shell {
-    border-radius: 24px;
-    padding: 0.48rem;
-    margin-bottom: 0.75rem;
-    background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.018));
-    border: 1px solid rgba(255,255,255,0.08);
-    box-shadow: var(--shadow-soft);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+    margin-bottom: 0.95rem;
 }
 
 .sidebar-brand {
-    border-radius: 22px;
-    padding: 0.85rem 0.9rem 0.9rem 0.9rem;
-    margin-bottom: 0.8rem;
-    background: linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.02));
-    border: 1px solid rgba(255,255,255,0.08);
-    box-shadow: var(--shadow-soft);
+    padding: 0.2rem 0.1rem 0.45rem 0.1rem;
+    margin-bottom: 0.95rem;
+}
+
+.sidebar-brand-head {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.72rem;
+    text-align: center;
+}
+
+.sidebar-brand-logo-shell {
+    width: 126px;
+    height: 126px;
+    border-radius: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,0.18);
+    border: 1px solid rgba(97,216,237,0.12);
+    overflow: hidden;
+    box-shadow: 0 18px 36px rgba(0,0,0,0.24), 0 0 0 1px rgba(156,99,241,0.05);
+}
+
+.sidebar-brand-logo {
+    width: 118px;
+    height: 118px;
+    object-fit: contain;
+    display: block;
+}
+
+.sidebar-brand-copy {
+    min-width: 0;
 }
 
 .sidebar-brand-title {
     color: var(--text-main);
-    font-size: 0.98rem;
+    font-size: 1.04rem;
+    line-height: 1.23;
     font-weight: 760;
-    letter-spacing: -0.02em;
-    margin-top: 0.15rem;
+    letter-spacing: 0;
+    text-align: center;
 }
 
-.sidebar-brand-subtitle {
-    color: var(--text-soft);
-    font-size: 0.82rem;
-    line-height: 1.42;
-    margin-top: 0.25rem;
+.sidebar-doc-cta {
+    margin: 0.25rem 0 0.9rem 0;
+}
+
+.sidebar-nav-icon-shell {
+    width: 2.95rem;
+    height: 2.95rem;
+    border-radius: 17px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(180deg, rgba(19, 33, 55, 0.96), rgba(10, 18, 31, 0.98));
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 10px 22px rgba(0,0,0,0.16);
+    margin-top: 0.08rem;
+}
+
+.sidebar-nav-icon {
+    width: 1.45rem;
+    height: 1.45rem;
+    object-fit: contain;
+    display: block;
+    filter: drop-shadow(0 0 12px rgba(97, 216, 237, 0.16));
+}
+
+.sidebar-nav-link {
+    display: flex;
+    align-items: center;
+    gap: 0.78rem;
+    min-height: 56px;
+    padding: 0.55rem 0.82rem;
+    margin-bottom: 0.28rem;
+    border-radius: 18px;
+    color: rgba(240, 246, 255, 0.92) !important;
+    text-decoration: none !important;
+    border: 1px solid transparent;
+    background: transparent;
+    transition: background 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
+}
+
+.sidebar-nav-link:hover {
+    background: linear-gradient(180deg, rgba(255,255,255,0.032), rgba(255,255,255,0.014));
+    border-color: rgba(255,255,255,0.07);
+    transform: translateY(-1px);
+}
+
+.sidebar-nav-link.is-active {
+    background: linear-gradient(90deg, rgba(120, 66, 209, 0.94), rgba(48, 79, 167, 0.94));
+    border-color: rgba(120, 176, 255, 0.2);
+    box-shadow: 0 12px 24px rgba(0,0,0,0.16);
+}
+
+.sidebar-nav-link .sidebar-nav-icon-shell {
+    width: 2.34rem;
+    height: 2.34rem;
+    border-radius: 13px;
+    margin: 0;
+    flex: 0 0 auto;
+}
+
+.sidebar-nav-link-label {
+    display: block;
+    min-width: 0;
+    color: inherit;
+    font-size: 1rem;
+    line-height: 1.2;
+    font-weight: 680;
+    text-align: left;
 }
 
 .sidebar-stats {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.6rem;
+    gap: 0.58rem;
     margin-bottom: 1rem;
 }
 
 .sidebar-stat {
-    border-radius: 16px;
-    padding: 0.66rem 0.72rem;
-    background: linear-gradient(180deg, rgba(255,255,255,0.036), rgba(255,255,255,0.018));
-    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 15px;
+    padding: 0.58rem 0.62rem;
+    background: linear-gradient(180deg, rgba(17, 28, 46, 0.78), rgba(10, 18, 31, 0.88));
+    border: 1px solid rgba(255,255,255,0.06);
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+    min-width: 0;
+}
+
+.sidebar-stat-head {
+    display: flex;
+    align-items: center;
+    gap: 0.48rem;
+    min-width: 0;
+}
+
+.sidebar-stat-icon {
+    width: 20px;
+    height: 20px;
+    object-fit: contain;
+    filter: drop-shadow(0 0 10px rgba(97, 216, 237, 0.08));
+    flex: 0 0 auto;
 }
 
 .sidebar-stat-value {
     color: var(--text-main);
-    font-size: 1.02rem;
+    font-size: 0.88rem;
     font-weight: 760;
     line-height: 1.1;
+    min-width: 0;
+    white-space: nowrap;
 }
 
 .sidebar-stat-label {
     color: var(--text-soft);
-    font-size: 0.74rem;
-    margin-top: 0.18rem;
+    font-size: 0.68rem;
+    line-height: 1.2;
+    margin-top: 0.25rem;
+    overflow-wrap: normal;
+}
+
+.sidebar-meta-block {
+    margin-top: 0.15rem;
+    margin-bottom: 0.95rem;
+}
+
+.sidebar-meta-title {
+    color: rgba(174,184,198,0.78);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 0.28rem;
+}
+
+.sidebar-meta-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: var(--text-main);
+    font-size: 0.96rem;
+    font-weight: 640;
+    margin-bottom: 0.55rem;
+}
+
+.sidebar-status-dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 999px;
+    background: linear-gradient(180deg, #34e38b, #22c96d);
+    box-shadow: 0 0 0 4px rgba(52, 227, 139, 0.08);
+}
+
+.sidebar-meta-divider {
+    height: 1px;
+    background: rgba(255,255,255,0.08);
+    margin: 0.55rem 0 0.75rem 0;
+}
+
+.sidebar-quality-value {
+    color: var(--text-main);
+    font-size: 0.96rem;
+    font-weight: 720;
+    margin-bottom: 0.42rem;
+}
+
+.sidebar-quality-track {
+    width: 100%;
+    height: 12px;
+    border-radius: 999px;
+    background: rgba(93, 109, 141, 0.34);
+    overflow: hidden;
+}
+
+.sidebar-quality-fill {
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #1ee4ef, #2ad59e);
 }
 
 .selector-card {
@@ -1578,6 +2138,25 @@ st.markdown("""
     align-items: start;
 }
 
+.structure-search-shell .panel-card {
+    border-radius: 24px;
+    background: linear-gradient(180deg, rgba(12, 21, 36, 0.92), rgba(9, 16, 29, 0.94));
+}
+
+.structure-search-editor-title {
+    color: var(--text-strong);
+    font-size: 1.35rem;
+    font-weight: 760;
+    margin-bottom: 0.45rem;
+}
+
+.structure-search-editor-subtitle {
+    color: var(--text-soft);
+    font-size: 0.92rem;
+    line-height: 1.55;
+    margin-bottom: 0.9rem;
+}
+
 .structure-editor-note {
     margin-top: 0.55rem;
     color: var(--text-soft);
@@ -1691,7 +2270,111 @@ div[data-testid="stDownloadButton"] button:hover {
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 14px 26px rgba(0,0,0,0.2);
 }
 
+div[data-testid="stButton"] button[kind="primary"],
+div[data-testid="stButton"] button[data-testid="stBaseButton-primary"] {
+    background: linear-gradient(90deg, #1EAFFF 0%, #2E86FF 38%, #8246FF 72%, #CB3EFF 100%) !important;
+    border-color: rgba(255,255,255,0.18) !important;
+    color: #FFFFFF !important;
+    box-shadow: 0 18px 34px rgba(92, 85, 255, 0.24), inset 0 1px 0 rgba(255,255,255,0.18) !important;
+}
+
+[data-testid="stSidebar"] div[data-testid="stButton"] button {
+    min-height: 46px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    text-align: left !important;
+    padding: 0.48rem 0.78rem !important;
+    border-radius: 14px !important;
+    background: transparent !important;
+    border: 1px solid transparent !important;
+    box-shadow: none !important;
+    font-size: 0.92rem !important;
+    line-height: 1.15 !important;
+}
+
+[data-testid="stSidebar"] div[data-testid="stButton"] button > div {
+    width: 100% !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: start !important;
+    gap: 0.72rem !important;
+    min-width: 0 !important;
+}
+
+[data-testid="stSidebar"] div[data-testid="stButton"] button p {
+    margin: 0 !important;
+    text-align: left !important;
+    white-space: normal !important;
+    overflow-wrap: normal !important;
+    word-break: normal !important;
+    min-width: 0 !important;
+}
+
+[data-testid="stSidebar"] div[data-testid="stButton"] button svg,
+[data-testid="stSidebar"] div[data-testid="stButton"] button span[data-testid="stIconMaterial"] {
+    width: 1.36rem !important;
+    height: 1.36rem !important;
+    min-width: 1.36rem !important;
+    flex: 0 0 1.56rem !important;
+    margin: 0 !important;
+    font-size: 1.34rem !important;
+    line-height: 1 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+[data-testid="stSidebar"] div[data-testid="stButton"] button[kind="primary"] {
+    background: linear-gradient(90deg, rgba(120, 66, 209, 0.92), rgba(48, 79, 167, 0.92)) !important;
+    border-color: rgba(120, 176, 255, 0.18) !important;
+    box-shadow: 0 12px 24px rgba(0,0,0,0.16) !important;
+}
+
+[data-testid="stSidebar"] div[data-testid="stButton"] button[data-testid="stBaseButton-primary"] {
+    background: linear-gradient(90deg, rgba(120, 66, 209, 0.92), rgba(48, 79, 167, 0.92)) !important;
+    border-color: rgba(120, 176, 255, 0.18) !important;
+    box-shadow: 0 12px 24px rgba(0,0,0,0.16) !important;
+}
+
+[data-testid="stSidebar"] div[data-testid="stButton"] button[kind="secondary"] {
+    color: rgba(240, 246, 255, 0.92) !important;
+}
+
+[data-testid="stSidebar"] div[data-testid="stButton"] button:hover {
+    border-color: rgba(255,255,255,0.06) !important;
+    background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.015)) !important;
+    transform: none !important;
+}
+
+[data-testid="stSidebar"] div[data-testid="stButton"] button[kind="primary"]:hover {
+    background: linear-gradient(90deg, rgba(120, 66, 209, 0.96), rgba(48, 79, 167, 0.96)) !important;
+}
+
+main div[data-testid="stButton"] button[kind="primary"],
+main div[data-testid="stButton"] button[data-testid="stBaseButton-primary"] {
+    background: linear-gradient(90deg, #1EAFFF 0%, #2E86FF 38%, #8246FF 72%, #CB3EFF 100%) !important;
+    border-color: rgba(255,255,255,0.18) !important;
+    color: #FFFFFF !important;
+    box-shadow: 0 18px 34px rgba(92, 85, 255, 0.24), inset 0 1px 0 rgba(255,255,255,0.18) !important;
+}
+
+main div[data-testid="stButton"] button[kind="primary"] p,
+main div[data-testid="stButton"] button[data-testid="stBaseButton-primary"] p {
+    white-space: nowrap !important;
+}
+
+main div[data-testid="stButton"] button[kind="primary"]:hover,
+main div[data-testid="stButton"] button[data-testid="stBaseButton-primary"]:hover {
+    filter: brightness(1.05);
+    transform: translateY(-1px);
+}
+
 div[data-testid="stRadio"] > div {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
     gap: 0.6rem;
 }
 
@@ -1707,6 +2390,7 @@ div[data-testid="stRadio"] label {
 div[data-testid="stRadio"] label p {
     font-size: 0.88rem !important;
     font-weight: 600 !important;
+    white-space: nowrap !important;
 }
 
 div[data-testid="stRadio"] label:has(input:checked) {
@@ -1761,77 +2445,20 @@ div[data-testid="stRadio"] label:has(input:checked) {
     text-align: center;
 }
 
-.app-masthead {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    padding: 1rem 1.15rem;
-    margin-bottom: 1rem;
-    border-radius: 24px;
-    border: 1px solid rgba(255,255,255,0.08);
-    background: linear-gradient(135deg, rgba(12,24,40,0.82), rgba(9,18,34,0.92));
-    box-shadow: var(--shadow-soft);
-}
-
-.app-masthead-brand {
-    display: flex;
-    align-items: center;
-    gap: 0.9rem;
-}
-
-.app-masthead-logo {
-    width: 58px;
-    height: 58px;
-    border-radius: 18px;
-    object-fit: cover;
-    background: linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.02));
-    border: 1px solid rgba(255,255,255,0.08);
-    padding: 0.32rem;
-}
-
-.app-masthead-title {
-    margin: 0;
-    color: var(--text-strong);
-    font-size: 1.12rem;
-    font-weight: 780;
-    letter-spacing: -0.02em;
-}
-
-.app-masthead-subtitle {
-    margin: 0.12rem 0 0 0;
-    color: var(--text-soft);
-    font-size: 0.9rem;
-    line-height: 1.45;
-}
-
-.app-masthead-status {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0.45rem 0.82rem;
-    border-radius: 999px;
-    border: 1px solid rgba(255,255,255,0.08);
-    background: linear-gradient(90deg, rgba(97,216,237,0.14), rgba(156,99,241,0.14));
-    color: var(--text-main);
-    font-size: 0.8rem;
-    white-space: nowrap;
-}
-
 .sidebar-menu-caption {
     color: rgba(174,184,198,0.8);
     font-size: 0.72rem;
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    margin-top: 0.2rem;
-    margin-bottom: 0.38rem;
+    margin-top: 0.6rem;
+    margin-bottom: 0.45rem;
 }
 
 .dashboard-hero-card {
     position: relative;
-    min-height: 320px;
-    border-radius: 30px;
+    min-height: 238px;
+    border-radius: 24px;
     overflow: hidden;
     border: 1px solid rgba(255,255,255,0.08);
     background:
@@ -1846,6 +2473,13 @@ div[data-testid="stRadio"] label:has(input:checked) {
     background-position: center;
 }
 
+.dashboard-hero-card pre,
+.dashboard-hero-card code,
+.dashboard-hero-card [data-testid="stCodeBlock"],
+.dashboard-hero-card [data-testid="stMarkdownContainer"] pre {
+    display: none !important;
+}
+
 .dashboard-hero-overlay {
     position: absolute;
     inset: 0;
@@ -1856,8 +2490,8 @@ div[data-testid="stRadio"] label:has(input:checked) {
 .dashboard-hero-content {
     position: relative;
     z-index: 1;
-    max-width: 920px;
-    padding: 1.8rem 2rem 1.35rem 2rem;
+    max-width: 940px;
+    padding: 2.1rem 1.65rem 1.55rem 1.65rem;
 }
 
 .dashboard-hero-kicker {
@@ -1872,8 +2506,8 @@ div[data-testid="stRadio"] label:has(input:checked) {
 .dashboard-hero-title {
     margin: 0;
     color: #F7FBFF;
-    font-size: clamp(2.25rem, 5vw, 4.1rem);
-    line-height: 0.97;
+    font-size: clamp(2rem, 4.5vw, 3.35rem);
+    line-height: 0.98;
     font-weight: 830;
     letter-spacing: -0.04em;
     text-wrap: balance;
@@ -1886,55 +2520,13 @@ div[data-testid="stRadio"] label:has(input:checked) {
     color: transparent;
 }
 
-.dashboard-hero-subtitle {
-    margin: 0.9rem 0 1.2rem 0;
-    color: rgba(230, 237, 247, 0.8);
-    font-size: 1.05rem;
-    line-height: 1.6;
-    max-width: 34rem;
-}
-
-.dashboard-stat-strip {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 0.75rem;
-    margin-top: 1.15rem;
-}
-
-.dashboard-stat-tile {
-    border-radius: 18px;
-    padding: 0.9rem 0.95rem;
-    background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
-    border: 1px solid rgba(255,255,255,0.1);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
-}
-
-.dashboard-stat-value {
-    color: var(--text-strong);
-    font-size: 1.45rem;
-    font-weight: 780;
-    letter-spacing: -0.03em;
-}
-
-.dashboard-stat-label {
-    color: var(--text-soft);
-    font-size: 0.8rem;
-    margin-top: 0.2rem;
-}
-
-.dashboard-cta-card,
 .dashboard-workspace-card,
 .workflow-card,
-.highlight-card {
+.dashboard-workflow-shell {
     border-radius: 26px;
     border: 1px solid rgba(255,255,255,0.08);
     background: linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.018));
     box-shadow: var(--shadow-soft);
-}
-
-.dashboard-cta-card {
-    padding: 1.2rem 1.25rem;
-    min-height: 170px;
 }
 
 .dashboard-cta-kicker {
@@ -1965,121 +2557,217 @@ div[data-testid="stRadio"] label:has(input:checked) {
     display: flex;
     flex-direction: column;
     justify-content: space-between;
-    min-height: 100%;
-    padding: 1.15rem;
+    min-height: 214px;
+    padding: 0.82rem 0.92rem 0.72rem 0.92rem;
     overflow: hidden;
 }
 
 .dashboard-workspace-title {
     color: var(--text-strong);
-    font-size: 1.32rem;
+    font-size: 0.94rem;
     font-weight: 750;
-    margin-bottom: 0.3rem;
+    margin-bottom: 0.22rem;
 }
 
 .dashboard-workspace-copy {
     color: var(--text-soft);
-    font-size: 0.94rem;
-    line-height: 1.6;
-    margin-bottom: 1rem;
+    font-size: 0.68rem;
+    line-height: 1.3;
+    margin-bottom: 0.12rem;
 }
 
 .dashboard-workspace-art {
     width: 100%;
-    max-height: 240px;
+    max-height: 102px;
     object-fit: contain;
     align-self: center;
 }
 
+.dashboard-workflow-shell {
+    position: relative;
+    padding: 1.02rem 1.05rem 1rem 1.05rem;
+    overflow: hidden;
+}
+
+.dashboard-workflow-title {
+    color: var(--text-strong);
+    font-size: 1rem;
+    font-weight: 760;
+    margin-bottom: 1rem;
+}
+
+.dashboard-workflow-grid {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.84rem;
+    align-items: stretch;
+}
+
+.dashboard-workflow-grid::before {
+    content: "";
+    position: absolute;
+    top: 1.05rem;
+    left: 8%;
+    right: 8%;
+    border-top: 1px dotted rgba(174, 184, 198, 0.34);
+    z-index: 0;
+}
+
 .workflow-card {
-    padding: 1rem;
-    min-height: 210px;
+    display: block;
+    padding: 2.68rem 0.78rem 0.82rem 0.78rem;
+    min-height: 150px;
+    position: relative;
+    background: linear-gradient(180deg, rgba(20, 31, 51, 0.82), rgba(10, 18, 31, 0.92));
+    text-decoration: none;
+    z-index: 1;
+}
+
+.dashboard-chart-card {
+    border-radius: 24px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: linear-gradient(180deg, rgba(255,255,255,0.036), rgba(255,255,255,0.016));
+    box-shadow: var(--shadow-soft);
+    padding: 0.8rem 0.86rem 0.68rem 0.86rem;
+    min-height: 420px;
+}
+
+.chart-legend-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 0.32rem 0.65rem;
+    margin: 0.04rem 0 0.95rem 0;
+}
+
+.chart-legend-item {
+    display: grid;
+    grid-template-columns: 0.72rem minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.45rem;
+    color: #DDE6F3;
+    font-size: 0.78rem;
+    line-height: 1.25;
+    min-width: 0;
+}
+
+.chart-legend-swatch {
+    width: 0.72rem;
+    height: 0.72rem;
+    border-radius: 3px;
+    border: 1px solid rgba(255,255,255,0.22);
+}
+
+.chart-legend-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.chart-legend-percent {
+    color: rgba(221,230,243,0.72);
+    font-variant-numeric: tabular-nums;
+}
+
+.workflow-card.is-primary {
+    border-color: rgba(22, 228, 240, 0.8);
+    box-shadow: 0 0 0 1px rgba(22, 228, 240, 0.18), 0 24px 42px rgba(0,0,0,0.26);
+}
+
+.workflow-card.is-primary .workflow-step {
+    background: linear-gradient(135deg, rgba(16, 210, 232, 0.92), rgba(88, 72, 214, 0.92));
+    border-color: rgba(97, 216, 237, 0.72);
+    box-shadow: 0 0 0 4px rgba(16, 210, 232, 0.12), 0 0 24px rgba(97, 216, 237, 0.2);
+}
+
+.workflow-card:hover {
+    transform: translateY(-1px);
+    border-color: rgba(97,216,237,0.28);
 }
 
 .workflow-step {
+    position: absolute;
+    top: -0.08rem;
+    left: 50%;
+    transform: translateX(-50%);
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 2.3rem;
-    height: 2.3rem;
+    width: 2.08rem;
+    height: 2.08rem;
     border-radius: 999px;
-    margin-bottom: 0.9rem;
     background: linear-gradient(90deg, rgba(97,216,237,0.26), rgba(156,99,241,0.3));
     border: 1px solid rgba(97,216,237,0.28);
     color: var(--text-strong);
     font-weight: 760;
+    z-index: 2;
 }
 
 .workflow-title {
     color: var(--text-strong);
-    font-size: 1.02rem;
+    font-size: 0.84rem;
     font-weight: 720;
-    margin-bottom: 0.3rem;
+    margin-bottom: 0.26rem;
+    line-height: 1.22;
+}
+
+.workflow-card-icon-shell {
+    width: 2.72rem;
+    height: 2.72rem;
+    margin-bottom: 0.62rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 18px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: linear-gradient(180deg, rgba(22, 30, 56, 0.88), rgba(9, 17, 29, 0.92));
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+}
+
+.workflow-card-icon {
+    width: 1.62rem;
+    height: 1.62rem;
+    object-fit: contain;
+    filter: drop-shadow(0 0 10px rgba(97, 216, 237, 0.18));
 }
 
 .workflow-copy {
     color: var(--text-soft);
-    font-size: 0.92rem;
-    line-height: 1.58;
-}
-
-.highlight-card {
-    height: 100%;
-    padding: 1rem 1.05rem;
-}
-
-.highlight-title {
-    color: var(--text-strong);
-    font-size: 0.98rem;
-    font-weight: 730;
-    margin-bottom: 0.32rem;
-}
-
-.highlight-copy {
-    color: var(--text-soft);
-    font-size: 0.9rem;
-    line-height: 1.55;
+    font-size: 0.68rem;
+    line-height: 1.34;
 }
 
 .dashboard-hero-header {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-}
-
-.dashboard-hero-logo {
-    width: 92px;
-    height: 92px;
-    border-radius: 24px;
-    object-fit: contain;
-    background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.018));
-    border: 1px solid rgba(255,255,255,0.08);
-    padding: 0.45rem;
-    box-shadow: 0 16px 34px rgba(0,0,0,0.28);
+    display: block;
 }
 
 .dashboard-hero-text {
     flex: 1 1 auto;
 }
 
+.dashboard-hero-title-shell {
+    max-width: 42rem;
+}
+
 .dashboard-tagline {
-    margin: 0.75rem 0 0 0;
+    margin: 0.7rem 0 0 0;
     color: rgba(230, 237, 247, 0.78);
-    font-size: 1.02rem;
+    font-size: 0.95rem;
     line-height: 1.55;
 }
 
 .dashboard-stat-board {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 0.35rem;
-    margin-top: 1.4rem;
-    max-width: 58rem;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.2rem;
+    margin-top: 1.05rem;
+    max-width: 42rem;
 }
 
 .dashboard-stat-board-item {
     position: relative;
-    padding: 0.35rem 1rem 0.15rem 1rem;
+    padding: 0.25rem 1rem 0.15rem 1rem;
 }
 
 .dashboard-stat-board-item + .dashboard-stat-board-item::before {
@@ -2099,9 +2787,13 @@ div[data-testid="stRadio"] label:has(input:checked) {
     margin-bottom: 0.25rem;
 }
 
+.dashboard-stat-board-head.is-updated-head {
+    align-items: center;
+}
+
 .dashboard-stat-board-icon {
-    width: 42px;
-    height: 42px;
+    width: 36px;
+    height: 36px;
     border-radius: 14px;
     object-fit: contain;
     background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
@@ -2112,11 +2804,18 @@ div[data-testid="stRadio"] label:has(input:checked) {
 
 .dashboard-stat-board-copy {
     min-width: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+}
+
+.dashboard-stat-board-copy.is-updated {
+    padding-top: 0;
 }
 
 .dashboard-stat-board-value {
     color: var(--text-strong);
-    font-size: clamp(1.7rem, 3vw, 2.2rem);
+    font-size: clamp(1.42rem, 2.4vw, 1.86rem);
     font-weight: 780;
     line-height: 1;
     letter-spacing: -0.04em;
@@ -2125,34 +2824,103 @@ div[data-testid="stRadio"] label:has(input:checked) {
 
 .dashboard-stat-board-label {
     color: rgba(230, 237, 247, 0.88);
-    font-size: 0.88rem;
+    font-size: 0.84rem;
     line-height: 1.35;
 }
 
+.dashboard-stat-board-label-top {
+    margin-top: 0;
+    margin-bottom: 0.18rem;
+}
+
+.dashboard-stat-board-date {
+    color: rgba(230, 237, 247, 0.92);
+    font-size: 1rem;
+    line-height: 1.4;
+}
+
 .dashboard-search-strip {
-    margin-top: 1rem;
+    margin-top: 0.6rem;
     display: flex;
     align-items: center;
-    justify-content: space-between;
     gap: 1rem;
-    padding: 1rem 1.15rem;
+    padding: 0.88rem 1rem;
     border-radius: 22px;
     border: 1px solid rgba(255,255,255,0.08);
     background: linear-gradient(90deg, rgba(11, 22, 40, 0.88), rgba(21, 24, 52, 0.9));
     box-shadow: var(--shadow-soft);
 }
 
+.dashboard-search-strip-icon-shell {
+    flex: 0 0 auto;
+}
+
+.dashboard-search-strip-icon {
+    width: 72px;
+    height: 72px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    color: #f7fbff;
+    font-size: 2rem;
+    box-shadow: none;
+}
+
+.dashboard-search-strip-icon-image {
+    width: 72px;
+    height: 72px;
+    object-fit: contain;
+    display: block;
+    filter: drop-shadow(0 14px 22px rgba(30, 87, 196, 0.18));
+}
+
+.dashboard-search-strip-copy-shell {
+    min-width: 0;
+}
+
 .dashboard-search-strip-title {
     color: var(--text-strong);
     font-size: 1.14rem;
     font-weight: 760;
-    margin-bottom: 0.22rem;
+    margin-bottom: 0.16rem;
 }
 
 .dashboard-search-strip-copy {
     color: var(--text-soft);
-    font-size: 0.92rem;
-    line-height: 1.55;
+    font-size: 0.84rem;
+    line-height: 1.42;
+}
+
+.dashboard-search-cta {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-height: 56px;
+    padding: 0.7rem 0.9rem;
+    border-radius: 18px;
+    border: 1px solid rgba(255,255,255,0.18);
+    background: linear-gradient(90deg, #1EAFFF 0%, #2E86FF 38%, #8246FF 72%, #CB3EFF 100%);
+    color: #FFFFFF !important;
+    -webkit-text-fill-color: #FFFFFF;
+    font-size: 0.98rem;
+    font-weight: 800;
+    text-decoration: none;
+    letter-spacing: 0.01em;
+    box-shadow: 0 18px 34px rgba(92, 85, 255, 0.24), inset 0 1px 0 rgba(255,255,255,0.18);
+    text-shadow: none;
+    white-space: nowrap;
+    line-height: 1.05;
+}
+
+.dashboard-search-cta:visited {
+    color: #FFFFFF !important;
+    -webkit-text-fill-color: #FFFFFF;
+}
+
+.dashboard-search-cta:hover {
+    filter: brightness(1.05);
 }
 
 [data-testid="stDataFrame"] {
@@ -2223,11 +2991,6 @@ header[data-testid="stHeader"] {
 }
 
 @media (max-width: 900px) {
-    .app-masthead {
-        flex-direction: column;
-        align-items: flex-start;
-    }
-
     .section-title {
         font-size: 1.28rem;
     }
@@ -2237,7 +3000,7 @@ header[data-testid="stHeader"] {
     }
 
     .sidebar-stats {
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
     .dashboard-stat-strip {
@@ -2245,7 +3008,7 @@ header[data-testid="stHeader"] {
     }
 
     .dashboard-stat-board {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 
     .dashboard-hero-header {
@@ -2266,6 +3029,10 @@ header[data-testid="stHeader"] {
 }
 
 @media (max-width: 700px) {
+    .dashboard-workflow-grid {
+        grid-template-columns: 1fr;
+    }
+
     .dashboard-stat-strip {
         grid-template-columns: 1fr;
     }
@@ -2289,6 +3056,122 @@ header[data-testid="stHeader"] {
     .structure-search-shell {
         grid-template-columns: 1fr;
     }
+
+}
+
+@media (max-width: 1180px) {
+    .block-container {
+        max-width: 100% !important;
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+    }
+
+    [data-testid="stSidebar"] {
+        min-width: 16rem !important;
+        max-width: 16rem !important;
+    }
+
+    .dashboard-hero-card {
+        min-height: 190px;
+    }
+
+    .dashboard-search-cta {
+        white-space: normal;
+        text-align: center;
+    }
+}
+
+@media (max-width: 960px) {
+    .dashboard-workspace-card {
+        min-height: auto;
+    }
+
+    .dashboard-workspace-art {
+        max-height: 92px;
+    }
+
+    .dashboard-workflow-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .dashboard-workflow-grid::before {
+        display: none;
+    }
+
+    .workflow-card {
+        min-height: auto;
+    }
+
+    .dashboard-search-strip-icon,
+    .dashboard-search-strip-icon-image {
+        width: 54px;
+        height: 54px;
+    }
+}
+
+@media (max-width: 820px) {
+    [data-testid="stSidebar"] {
+        min-width: 14.5rem !important;
+        max-width: 14.5rem !important;
+    }
+
+    .sidebar-brand-head {
+        gap: 0.56rem;
+    }
+
+    .sidebar-brand-logo-shell {
+        width: 104px;
+        height: 104px;
+        border-radius: 24px;
+    }
+
+    .sidebar-brand-logo {
+        width: 98px;
+        height: 98px;
+    }
+
+    .sidebar-brand-title {
+        font-size: 0.94rem;
+    }
+
+    .sidebar-nav-link {
+        min-height: 48px;
+        padding: 0.46rem 0.62rem;
+    }
+
+    .sidebar-nav-link .sidebar-nav-icon-shell {
+        width: 2rem;
+        height: 2rem;
+    }
+
+    .sidebar-nav-link-label {
+        font-size: 0.9rem;
+    }
+}
+
+.panel-card,
+.compound-card,
+.result-card,
+.helper-card,
+.kv-card,
+.workflow-card,
+.dashboard-workspace-card,
+.dashboard-workflow-shell,
+.dashboard-search-strip,
+.dashboard-hero-card {
+    min-width: 0;
+}
+
+.section-title,
+.dashboard-hero-title,
+.dashboard-search-strip-title,
+.dashboard-workspace-title,
+.workflow-title,
+.result-title,
+.sidebar-nav-link-label,
+.info-chip,
+.kv-value {
+    overflow-wrap: anywhere;
 }
 
 </style>
@@ -2301,6 +3184,7 @@ def ensure_project_dirs():
     for directory in [
         DATABASE_DIR,
         BRANDING_DIR,
+        BRANDING_OPTIMIZED_DIR,
         STRUCTURES_DIR,
         SPECTRA_DIR,
         TEMPLATES_DIR,
@@ -2319,6 +3203,10 @@ def get_connection():
     ensure_project_dirs()
     connection = sqlite3.connect(DB_PATH)
     connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute("PRAGMA journal_mode = WAL")
+    connection.execute("PRAGMA synchronous = NORMAL")
+    connection.execute("PRAGMA temp_store = MEMORY")
+    connection.execute("PRAGMA cache_size = -32000")
     return connection
 
 
@@ -2397,6 +3285,7 @@ def ensure_database_schema():
                 molecular_weight REAL,
                 hrms_data TEXT,
                 data_source TEXT,
+                curation_status TEXT DEFAULT 'curated',
                 note TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -2485,13 +3374,40 @@ def ensure_database_schema():
             "CREATE INDEX IF NOT EXISTS idx_compounds_smiles ON compounds(smiles)"
         )
         cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_compounds_updated_at ON compounds(updated_at)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_compounds_curation_status ON compounds(curation_status)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_compounds_compound_class ON compounds(compound_class)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_compounds_source_category ON compounds(source_category)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_compounds_source_organism ON compounds(source_organism)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_compounds_data_source ON compounds(data_source)"
+        )
+        cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_proton_compound ON proton_nmr(compound_id)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_proton_compound_delta ON proton_nmr(compound_id, delta_ppm)"
         )
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_carbon_compound ON carbon_nmr(compound_id)"
         )
         cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_carbon_compound_delta ON carbon_nmr(compound_id, delta_ppm)"
+        )
+        cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_spectra_compound ON spectra_files(compound_id)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_spectra_type ON spectra_files(spectrum_type)"
         )
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_bioactivity_compound ON bioactivity_records(compound_id)"
@@ -2518,20 +3434,25 @@ def ensure_compounds_schema():
         "source_organism": "TEXT",
         "cd_data": "TEXT",
         "article_title": "TEXT",
+        "curation_status": "TEXT DEFAULT 'curated'",
         "created_at": "TEXT",
         "updated_at": "TEXT",
     }
 
     existing = get_table_columns("compounds")
     missing = {name: dtype for name, dtype in required_columns.items() if name not in existing}
-    if not missing:
-        return
-
     conn = get_connection()
     try:
         cursor = conn.cursor()
         for column_name, data_type in missing.items():
             cursor.execute(f"ALTER TABLE compounds ADD COLUMN {column_name} {data_type}")
+        cursor.execute(
+            """
+            UPDATE compounds
+            SET curation_status = 'curated'
+            WHERE curation_status IS NULL OR TRIM(curation_status) = ''
+            """
+        )
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_compounds_inchikey ON compounds(inchikey)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_compounds_smiles ON compounds(smiles)")
         conn.commit()
@@ -2601,17 +3522,14 @@ def maybe_blank(value):
 
 
 @st.cache_data(show_spinner=False)
-def image_to_data_uri(path_value: str) -> str:
-    path = Path(path_value)
-    if not path.exists():
-        return ""
-    mime_type = mimetypes.guess_type(path.name)[0] or "image/png"
-    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
-    return f"data:{mime_type};base64,{encoded}"
+def image_to_data_uri(path_value: str, max_px: int = 720) -> str:
+    return optimized_image_data_uri(path_value, max_px=max_px)
 
 
 def render_cloud_sync_notice():
-    if not use_supabase_backend():
+    if use_local_read_backend() and use_supabase_write_backend():
+        return
+    elif not use_supabase_backend():
         st.warning(
             "Local-only mode is active. Changes in this session are still being written to the desktop database only. "
             "Before production use, configure Supabase secrets in local and deployed environments so every submission goes to the same cloud database."
@@ -2622,9 +3540,7 @@ def render_cloud_sync_notice():
             "This app is keeping editing disabled so new submissions or metadata changes do not get split between local storage and Supabase."
         )
     elif use_supabase_write_backend():
-        st.caption(
-            "Cloud source of truth is active: submissions, edits, imports, and file uploads are written to Supabase first, then mirrored to the local desktop database as a working copy."
-        )
+        return
 
 def safe_float_or_none(value):
     text = maybe_blank(value)
@@ -2681,6 +3597,25 @@ def source_summary_from_record(record) -> str:
     return summary
 
 
+def normalize_curation_status(value: str, default: str = "curated") -> str:
+    text = maybe_blank(value).lower()
+    if text in CURATION_STATUS_OPTIONS:
+        return text
+    return default
+
+
+def infer_curation_status(record, default: str = "curated") -> str:
+    explicit = maybe_blank(record.get("curation_status"))
+    if explicit:
+        return normalize_curation_status(explicit, default=default)
+    note_text = maybe_blank(record.get("note")).lower()
+    data_source = maybe_blank(record.get("data_source")).lower()
+    imported_sources = {"coconut", "cmnpd", "np-mrd", "npatlas", "nmrshiftdb", "jeol"}
+    if "imported from" in note_text or data_source in imported_sources:
+        return "imported"
+    return default
+
+
 COMPOUND_REQUIRED_COLUMNS = [
     "id",
     "trivial_name",
@@ -2716,6 +3651,7 @@ COMPOUND_REQUIRED_COLUMNS = [
     "molecular_weight",
     "hrms_data",
     "data_source",
+    "curation_status",
     "note",
     "created_at",
     "updated_at",
@@ -2744,6 +3680,7 @@ def enrich_compounds_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     enriched["source_category"] = source_fields["source_category"]
     enriched["source_organism"] = source_fields["source_organism"]
     enriched["source_material"] = source_fields["source_material"]
+    enriched["curation_status"] = enriched.apply(lambda row: infer_curation_status(row), axis=1)
     return enriched
 
 
@@ -2799,21 +3736,6 @@ def slugify_value(value: str, fallback: str = "file") -> str:
 
 def relative_project_path(path: Path) -> str:
     return str(path.relative_to(PROJECT_DIR))
-
-def save_uploaded_asset(uploaded_file, target_dir: Path, base_name: str) -> str:
-    safe_name = slugify_value(base_name, fallback="asset")
-    suffix = Path(uploaded_file.name).suffix.lower() or ".bin"
-    candidate = target_dir / f"{safe_name}{suffix}"
-    counter = 2
-
-    while candidate.exists():
-        candidate = target_dir / f"{safe_name}_{counter}{suffix}"
-        counter += 1
-
-    with open(candidate, "wb") as output_file:
-        output_file.write(uploaded_file.getbuffer())
-
-    return relative_project_path(candidate)
 
 def build_existing_options(df: pd.DataFrame, column_name: str, defaults=None):
     values = set(defaults or [])
@@ -2903,6 +3825,7 @@ def reset_compound_wizard():
         "wizard_issue",
         "wizard_pages",
         "wizard_doi",
+        "wizard_curation_status",
         "wizard_note",
     ]
     for key in wizard_keys:
@@ -2957,6 +3880,7 @@ def persist_wizard_inputs():
         "wizard_issue",
         "wizard_pages",
         "wizard_doi",
+        "wizard_curation_status",
         "wizard_note",
     ]
     for key in wizard_keys:
@@ -3129,6 +4053,43 @@ def molecule_similarity_score(query_mol, candidate_mol) -> float:
     return float(DataStructs.TanimotoSimilarity(query_fp, candidate_fp))
 
 
+def molecule_fingerprint(mol):
+    if not is_structure_backend_available() or mol is None:
+        return None
+    try:
+        return AllChem.GetMorganFingerprintAsBitVect(mol, radius=2, nBits=2048)
+    except Exception:
+        return None
+
+
+@st.cache_resource(show_spinner=False)
+def build_structure_candidate_index(_db_signature: float):
+    if not is_structure_backend_available():
+        return []
+
+    candidates = []
+    compounds_df = load_all_compounds()
+    for _, row in compounds_df.iterrows():
+        candidate_smiles = maybe_blank(row.get("smiles"))
+        if not candidate_smiles:
+            continue
+        candidate_mol = smiles_to_mol(candidate_smiles)
+        if candidate_mol is None:
+            continue
+        candidate_fp = molecule_fingerprint(candidate_mol)
+        candidates.append(
+            {
+                "id": int(row.get("id")),
+                "row": row.to_dict(),
+                "smiles": candidate_smiles,
+                "mol": candidate_mol,
+                "fp": candidate_fp,
+                "canonical": canonicalize_smiles(candidate_smiles),
+            }
+        )
+    return candidates
+
+
 def search_by_structure(
     compounds_df: pd.DataFrame,
     query_smiles: str,
@@ -3147,15 +4108,17 @@ def search_by_structure(
         return [], "The structure could not be parsed. Please redraw the query or paste a valid SMILES / Molfile structure."
 
     query_canonical = canonicalize_smiles(query_text)
+    query_fp = molecule_fingerprint(query_mol)
+    allowed_ids = set(compounds_df["id"].astype(int).tolist()) if "id" in compounds_df.columns else set()
+    indexed_candidates = build_structure_candidate_index(get_db_signature())
     results = []
     searchable_candidates = 0
 
-    for _, row in compounds_df.iterrows():
-        candidate_smiles = maybe_blank(row.get("smiles"))
-        if not candidate_smiles:
+    for candidate in indexed_candidates:
+        if allowed_ids and int(candidate["id"]) not in allowed_ids:
             continue
-
-        candidate_mol = smiles_to_mol(candidate_smiles)
+        candidate_smiles = candidate["smiles"]
+        candidate_mol = candidate["mol"]
         if candidate_mol is None:
             continue
         searchable_candidates += 1
@@ -3165,7 +4128,7 @@ def search_by_structure(
         match_label = ""
 
         if search_type == "Identity Search":
-            candidate_canonical = canonicalize_smiles(candidate_smiles)
+            candidate_canonical = candidate.get("canonical", "")
             matched = bool(query_canonical and candidate_canonical and query_canonical == candidate_canonical)
             score = 1.0 if matched else 0.0
             match_label = "Identity"
@@ -3177,12 +4140,16 @@ def search_by_structure(
             score = 1.0 if matched else 0.0
             match_label = "Substructure"
         else:
-            score = molecule_similarity_score(query_mol, candidate_mol)
+            candidate_fp = candidate.get("fp")
+            if query_fp is None or candidate_fp is None:
+                score = 0.0
+            else:
+                score = float(DataStructs.TanimotoSimilarity(query_fp, candidate_fp))
             matched = score >= similarity_threshold
             match_label = "Similarity"
 
         if matched:
-            item = row.to_dict()
+            item = dict(candidate["row"])
             item["structure_score"] = score * 100
             item["structure_match_type"] = match_label
             item["query_smiles"] = query_text
@@ -3249,21 +4216,6 @@ def render_structure_search_results(results: list[dict], search_type: str, limit
 
     section_header("Structure Search Results", f"Showing the top {min(limit, len(results))} candidate(s) for {search_type.lower()}.")
     st.caption(f"Results: {len(results)}")
-
-    summary_rows = []
-    for i, item in enumerate(results, start=1):
-        summary_rows.append(
-            {
-                "Rank": i,
-                "Compound ID": item.get("id"),
-                "Trivial Name": clean_text(item.get("trivial_name")),
-                "Match Type": clean_text(item.get("structure_match_type")),
-                "Score (%)": round(float(item.get("structure_score", 0.0)), 2),
-            }
-        )
-    st.markdown('<div class="detail-table-wrap">', unsafe_allow_html=True)
-    st.dataframe(pd.DataFrame(summary_rows[:limit]), width="stretch", hide_index=True)
-    st.markdown('</div>', unsafe_allow_html=True)
 
     for i, item in enumerate(results[:limit], start=1):
         title = clean_text(item.get("trivial_name"))
@@ -3695,6 +4647,43 @@ def count_bioactivity_records(filtered_ids):
         conn.close()
 
 
+@st.cache_data(show_spinner=False)
+def count_database_totals(_db_signature: float):
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM compounds")
+        compounds_count = int(cursor.fetchone()[0] or 0)
+        cursor.execute("SELECT COUNT(*) FROM proton_nmr")
+        proton_count = int(cursor.fetchone()[0] or 0)
+        cursor.execute("SELECT COUNT(*) FROM carbon_nmr")
+        carbon_count = int(cursor.fetchone()[0] or 0)
+        cursor.execute("SELECT COUNT(*) FROM spectra_files")
+        spectra_count = int(cursor.fetchone()[0] or 0)
+        cursor.execute(
+            """
+            SELECT COUNT(*) FROM compounds
+            WHERE TRIM(COALESCE(smiles, '')) != ''
+               OR TRIM(COALESCE(inchi, '')) != ''
+               OR TRIM(COALESCE(inchikey, '')) != ''
+               OR TRIM(COALESCE(structure_image_path, '')) != ''
+            """
+        )
+        structures_count = int(cursor.fetchone()[0] or 0)
+        cursor.execute("SELECT COUNT(*) FROM bioactivity_records")
+        bioactivity_count = int(cursor.fetchone()[0] or 0)
+        return {
+            "compounds": compounds_count,
+            "structures": structures_count,
+            "proton": proton_count,
+            "carbon": carbon_count,
+            "spectra": spectra_count,
+            "bioactivity": bioactivity_count,
+        }
+    finally:
+        conn.close()
+
+
 def calculate_workspace_health(compounds_df: pd.DataFrame):
     compounds_df = enrich_compounds_dataframe(compounds_df)
     if compounds_df.empty:
@@ -3825,36 +4814,90 @@ def render_dashboard_bar_chart(df: pd.DataFrame, x_col: str, y_col: str, color_h
     st.bar_chart(chart_df[[y_col]], color=color_hex)
 
 
-def render_dashboard_pie_chart(df: pd.DataFrame, names_col: str, values_col: str, color_sequence: list[str] | None = None):
+def limit_chart_categories(df: pd.DataFrame, names_col: str, values_col: str, top_n: int = 8) -> pd.DataFrame:
+    chart_df = df[[names_col, values_col]].copy()
+    chart_df[names_col] = chart_df[names_col].fillna("Uncategorized").astype(str).str.strip().replace("", "Uncategorized")
+    chart_df[values_col] = pd.to_numeric(chart_df[values_col], errors="coerce").fillna(0)
+    chart_df = chart_df[chart_df[values_col] > 0].sort_values(values_col, ascending=False)
+    if len(chart_df) <= top_n:
+        return chart_df
+    top_df = chart_df.head(top_n).copy()
+    other_total = chart_df.iloc[top_n:][values_col].sum()
+    if other_total > 0:
+        other_label = "Other categories" if "source" in names_col.lower() else "Other classes"
+        top_df = pd.concat(
+            [top_df, pd.DataFrame([{names_col: other_label, values_col: other_total}])],
+            ignore_index=True,
+        )
+    return top_df
+
+
+def render_dashboard_pie_chart(df: pd.DataFrame, names_col: str, values_col: str, color_sequence: list[str] | None = None, top_n: int = 8):
     if df.empty:
         st.info("No data available.")
         return
     if px is None:
-        st.dataframe(df[[names_col, values_col]], width="stretch", hide_index=True)
+        st.dataframe(limit_chart_categories(df, names_col, values_col, top_n=top_n), width="stretch", hide_index=True)
         return
-    chart_df = df[[names_col, values_col]].copy()
-    chart_df[names_col] = chart_df[names_col].fillna("Uncategorized").astype(str).replace("", "Uncategorized")
-    chart_df[values_col] = pd.to_numeric(chart_df[values_col], errors="coerce").fillna(0)
-    chart_df = chart_df[chart_df[values_col] > 0]
+    chart_df = limit_chart_categories(df, names_col, values_col, top_n=top_n)
     if chart_df.empty:
         st.info("No data available.")
         return
+
+    palette = color_sequence or ["#61D8ED", "#4C8EFF", "#9C63F1", "#FF7F6D", "#F2C66D", "#7EF0C2", "#BFA5FF", "#92F2D7", "#F7A68E"]
+    chart_df = chart_df.copy()
+    total_value = int(chart_df[values_col].sum())
+    chart_df["_pct"] = chart_df[values_col].div(total_value).mul(100) if total_value else 0
+    chart_df["_pct_label"] = chart_df["_pct"].apply(lambda value: f"{value:.1f}%" if value >= 5 else "")
+
     figure = px.pie(
         chart_df,
         names=names_col,
         values=values_col,
-        hole=0.45,
-        color_discrete_sequence=color_sequence or ["#61D8ED", "#4C8EFF", "#9C63F1", "#FF7F6D", "#F2C66D", "#7EF0C2"],
+        hole=0.58,
+        color_discrete_sequence=palette,
+        custom_data=["_pct_label"],
     )
-    figure.update_traces(textposition="inside", textinfo="percent+label")
+    figure.update_traces(
+        textposition="inside",
+        textinfo="text",
+        texttemplate="%{customdata[0]}",
+        textfont=dict(size=11, color="#F7FBFF"),
+        insidetextorientation="auto",
+        sort=False,
+        pull=[0.025] + [0] * max(len(chart_df) - 1, 0),
+        marker=dict(line=dict(color="rgba(7,17,29,0.95)", width=2)),
+        hovertemplate=f"%{{label}}<br>%{{value}} {values_col.lower()}<br>%{{percent}}<extra></extra>",
+    )
     figure.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=10, r=10, t=10, b=10),
-        font=dict(color="#F5F8FD"),
-        legend=dict(orientation="h", yanchor="bottom", y=-0.12, xanchor="left", x=0),
+        height=304,
+        margin=dict(l=10, r=10, t=4, b=4),
+        font=dict(color="#F5F8FD", family="Inter, system-ui, -apple-system, BlinkMacSystemFont, sans-serif"),
+        showlegend=False,
+        annotations=[
+            dict(
+                text=f"<b>{total_value:,}</b><br><span style='font-size:12px;color:#AFC0DA'>records</span>",
+                x=0.5,
+                y=0.5,
+                showarrow=False,
+                font=dict(size=15, color="#F5F8FD"),
+            )
+        ],
     )
-    st.plotly_chart(figure, use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(figure, width="stretch", config={"displayModeBar": False})
+
+    legend_items = []
+    for idx, row in chart_df.iterrows():
+        color = palette[idx % len(palette)]
+        label = clean_text(row[names_col])
+        percent = float(row["_pct"])
+        legend_items.append(
+            f'<div class="chart-legend-item"><span class="chart-legend-swatch" style="background:{color}"></span>'
+            f'<span class="chart-legend-label">{label}</span><span class="chart-legend-percent">{percent:.1f}%</span></div>'
+        )
+    st.markdown(f'<div class="chart-legend-grid">{"".join(legend_items)}</div>', unsafe_allow_html=True)
 
 
 def format_latest_update_label(df: pd.DataFrame) -> str:
@@ -3878,8 +4921,20 @@ def format_metric_value(value) -> str:
 
 
 def build_dashboard_stat_markup(value, label: str, icon_path: Path | None = None) -> str:
-    icon_uri = image_to_data_uri(str(icon_path)) if icon_path and icon_path.exists() else ""
+    icon_uri = image_to_data_uri(str(icon_path), max_px=96) if icon_path and icon_path.exists() else ""
     icon_markup = f'<img class="dashboard-stat-board-icon" src="{icon_uri}" alt="{label} icon" />' if icon_uri else ""
+    if label == "Updated":
+        return f"""
+            <div class="dashboard-stat-board-item is-updated">
+                <div class="dashboard-stat-board-head is-updated-head">
+                    {icon_markup}
+                    <div class="dashboard-stat-board-copy is-updated">
+                        <div class="dashboard-stat-board-label dashboard-stat-board-label-top">{label}</div>
+                        <div class="dashboard-stat-board-date">{format_metric_value(value)}</div>
+                    </div>
+                </div>
+            </div>
+        """
     return f"""
         <div class="dashboard-stat-board-item">
             <div class="dashboard-stat-board-head">
@@ -3893,6 +4948,64 @@ def build_dashboard_stat_markup(value, label: str, icon_path: Path | None = None
     """
 
 
+def build_sidebar_stat_markup(value, label: str, icon_path: Path | None = None) -> str:
+    icon_uri = image_to_data_uri(str(icon_path), max_px=88) if icon_path and icon_path.exists() else ""
+    icon_markup = f'<img class="sidebar-stat-icon" src="{icon_uri}" alt="{label} icon" />' if icon_uri else ""
+    return f"""
+        <div class="sidebar-stat">
+            <div class="sidebar-stat-head">
+                {icon_markup}
+                <div class="sidebar-stat-value">{format_metric_value(value)}</div>
+            </div>
+            <div class="sidebar-stat-label">{label}</div>
+        </div>
+    """
+
+
+def build_workflow_card_icon_markup(title: str) -> str:
+    icon_path = WORKFLOW_CARD_ART_PATHS.get(title)
+    if not icon_path or not icon_path.exists():
+        return ""
+    icon_uri = image_to_data_uri(str(icon_path), max_px=128)
+    return (
+        '<div class="workflow-card-icon-shell">'
+        f'<img class="workflow-card-icon" src="{icon_uri}" alt="{title} icon" />'
+        '</div>'
+    )
+
+
+def format_sidebar_nav_label(label: str) -> str:
+    icon = SIDEBAR_NAV_LABEL_ICONS.get(label, "")
+    return f"{icon}  {label}" if icon else label
+
+
+def build_sidebar_nav_icon_markup(label: str) -> str:
+    icon_path = SIDEBAR_NAV_ICON_PATHS.get(label)
+    if not icon_path or not icon_path.exists():
+        return ""
+    icon_uri = image_to_data_uri(str(icon_path), max_px=72)
+    return (
+        '<div class="sidebar-nav-icon-shell">'
+        f'<img class="sidebar-nav-icon" src="{icon_uri}" alt="{label} icon" />'
+        '</div>'
+    )
+
+
+def render_sidebar_nav_link(group_title: str, item: dict, is_active: bool):
+    target_section = item["section"]
+    target_compound_page = item.get("compound_page")
+    button_type = "primary" if is_active else "secondary"
+    if st.button(
+        item["label"],
+        key=f"sidebar_nav_{group_title}_{item['label']}_{target_section}_{target_compound_page or 'none'}",
+        width="stretch",
+        type=button_type,
+        icon=SIDEBAR_NAV_LABEL_ICONS.get(item["label"]),
+    ):
+        navigate_internal(target_section, target_compound_page)
+        st.rerun()
+
+
 def build_snapshot_manifest() -> dict:
     compounds_df = load_all_compounds()
     proton_df = load_all_proton_data()
@@ -3901,7 +5014,7 @@ def build_snapshot_manifest() -> dict:
     bioactivity_df = load_all_bioactivity_data()
     return {
         "project": "npdb",
-        "created_at_utc": datetime.utcnow().isoformat(),
+        "created_at_utc": datetime.now(UTC).isoformat(),
         "cloud_backend_active": use_supabase_backend(),
         "cloud_write_active": use_supabase_write_backend(),
         "source_of_truth": "Supabase" if use_supabase_write_backend() else "Local SQLite",
@@ -3917,7 +5030,7 @@ def build_snapshot_manifest() -> dict:
 
 def build_backup_bundle_bytes() -> tuple[bytes, str]:
     manifest = build_snapshot_manifest()
-    bundle_timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    bundle_timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     bundle_name = f"npdb_snapshot_{bundle_timestamp}.zip"
     tables = {
         "compounds": load_all_compounds(),
@@ -3949,7 +5062,7 @@ def upload_backup_bundle_to_cloud(bundle_bytes: bytes, file_name: str) -> str:
     save_backup_bundle_locally(bundle_bytes, file_name)
     return supabase_upload_bytes(
         "backups",
-        f"snapshots/{datetime.utcnow().strftime('%Y/%m/%d')}/{file_name}",
+        f"snapshots/{datetime.now(UTC).strftime('%Y/%m/%d')}/{file_name}",
         bundle_bytes,
         content_type="application/zip",
         public_bucket=False,
@@ -3958,88 +5071,92 @@ def upload_backup_bundle_to_cloud(bundle_bytes: bytes, file_name: str) -> str:
 
 def render_sidebar_workspace_summary(active_section: str, all_compounds_df: pd.DataFrame):
     all_compounds_df = enrich_compounds_dataframe(all_compounds_df)
-    total_compounds = len(all_compounds_df)
-    available_ids = all_compounds_df["id"].tolist() if "id" in all_compounds_df.columns else []
-    proton_count, carbon_count, spectra_count = count_related_records(available_ids)
-    bioactivity_count = count_bioactivity_records(available_ids)
+    totals_snapshot = count_database_totals(get_db_signature())
+    total_compounds = int(totals_snapshot["compounds"])
+    structures_count = int(totals_snapshot.get("structures", 0))
+    proton_count = int(totals_snapshot["proton"])
+    carbon_count = int(totals_snapshot["carbon"])
+    spectra_count = int(totals_snapshot["spectra"])
+    bioactivity_count = int(totals_snapshot["bioactivity"])
     health = calculate_workspace_health(all_compounds_df)
-    active_copy = NAV_SECTION_COPY.get(active_section, {"title": active_section, "summary": ""})
     latest_update = format_latest_update_label(all_compounds_df)
+    logo_uri = image_to_data_uri(str(SIDEBAR_LOGO_PATH), max_px=144) if SIDEBAR_LOGO_PATH.exists() else ""
+    quality_pct = 0
+    if total_compounds:
+        quality_pct = int(round((health["submission_ready"] / total_compounds) * 100))
+    quality_pct = max(0, min(100, quality_pct))
+    stats_markup = "".join(
+        [
+            build_sidebar_stat_markup(total_compounds, "Compounds", COMPOUNDS_ART_PATH),
+            build_sidebar_stat_markup(structures_count, "Structures", STRUCTURES_ART_PATH),
+            build_sidebar_stat_markup(proton_count, "1H Peaks", SPECTRA_ART_PATH),
+            build_sidebar_stat_markup(carbon_count, "13C Peaks", UPDATED_ART_PATH),
+            build_sidebar_stat_markup(spectra_count, "Spectra", SPECTRA_ART_PATH),
+            build_sidebar_stat_markup(bioactivity_count, "Bioactivity", BIOACTIVITY_ART_PATH),
+        ]
+    )
 
-    if SIDEBAR_LOGO_PATH.exists():
-        st.markdown('<div class="sidebar-logo-shell">', unsafe_allow_html=True)
-        st.image(str(SIDEBAR_LOGO_PATH), width="stretch")
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    st.markdown('<div class="sidebar-brand">', unsafe_allow_html=True)
     st.markdown(
-        """
-        <div class="sidebar-brand-title">Natural Products Spectral Database</div>
-        <div class="sidebar-brand-subtitle">
-            From raw spectra to verified structures — organized, connected, and accessible.
+        f"""
+        <div class="sidebar-brand">
+            <div class="sidebar-brand-head">
+                <div class="sidebar-brand-logo-shell">
+                    <img class="sidebar-brand-logo" src="{logo_uri}" alt="NPDB logo" />
+                </div>
+                <div class="sidebar-brand-copy">
+                    <div class="sidebar-brand-title">Natural Products<br>Spectral Database</div>
+                </div>
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown(
         f"""
         <div class="sidebar-stats">
-            <div class="sidebar-stat">
-                <div class="sidebar-stat-value">{total_compounds}</div>
-                <div class="sidebar-stat-label">Compounds</div>
-            </div>
-            <div class="sidebar-stat">
-                <div class="sidebar-stat-value">{proton_count}</div>
-                <div class="sidebar-stat-label">1H Peaks</div>
-            </div>
-            <div class="sidebar-stat">
-                <div class="sidebar-stat-value">{carbon_count}</div>
-                <div class="sidebar-stat-label">13C Peaks</div>
-            </div>
-            <div class="sidebar-stat">
-                <div class="sidebar-stat-value">{spectra_count}</div>
-                <div class="sidebar-stat-label">Spectra Files</div>
-            </div>
+            {stats_markup}
         </div>
         """,
         unsafe_allow_html=True,
     )
-
     st.markdown(
         f"""
-        <div class="sidebar-note">
-            <strong>{active_copy['title']}</strong><br><br>
-            {active_copy['summary']}
+        <div class="sidebar-meta-block">
+            <div class="sidebar-meta-title">Last Update</div>
+            <div class="sidebar-meta-row">
+                <span>{latest_update}</span>
+                <span class="sidebar-status-dot"></span>
+            </div>
+            <div class="sidebar-meta-divider"></div>
+            <div class="sidebar-meta-title">Dataset Quality</div>
+            <div class="sidebar-quality-value">{quality_pct}% Verified</div>
+            <div class="sidebar-quality-track">
+                <div class="sidebar-quality-fill" style="width:{quality_pct}%"></div>
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-
-    current_user = maybe_blank(st.session_state.get("npdb_username")) or "Approved user"
-    current_role = maybe_blank(st.session_state.get("npdb_role")) or "viewer"
-    st.caption(f"Signed in as {current_user} ({current_role})")
-    if use_supabase_write_backend():
-        backend_label = "Supabase cloud (read/write)"
-    elif use_supabase_backend():
-        backend_label = "Supabase cloud (read-only)"
-    else:
-        backend_label = "Local SQLite"
-    st.caption(f"Data backend: {backend_label}")
-    st.caption(f"Last update: {latest_update}")
-    st.caption(
-        f"Structure-ready: {health['structure_ready']} | Reference-ready: {health['reference_ready']} | "
-        f"Drive-linked: {health['external_ready']} | Submission-ready: {health['submission_ready']}"
-    )
-    st.caption(f"Bioactivity records: {bioactivity_count} | Bioactivity-linked compounds: {health.get('bioactivity_ready', 0)}")
-
 
 def render_sidebar_navigation():
     current_section = st.session_state.get("nav_section", "Dashboard")
     current_compound_page = st.session_state.get("compound_page", "Browse Record")
 
     for group_title, items in SIDEBAR_NAV_GROUPS:
+        if group_title == "Data Library":
+            with st.expander("Additional Views", expanded=False):
+                for item in items:
+                    target_section = item["section"]
+                    target_compound_page = item.get("compound_page")
+                    if target_compound_page and not can_edit_database() and target_compound_page != "Browse Record":
+                        continue
+                    is_active = current_section == target_section
+                    if target_compound_page:
+                        is_active = is_active and current_compound_page == target_compound_page
+                    render_sidebar_nav_link(group_title, item, is_active)
+            continue
+
         st.markdown(f'<div class="sidebar-menu-caption">{group_title}</div>', unsafe_allow_html=True)
         for item in items:
             target_section = item["section"]
@@ -4049,16 +5166,7 @@ def render_sidebar_navigation():
             is_active = current_section == target_section
             if target_compound_page:
                 is_active = is_active and current_compound_page == target_compound_page
-            if st.button(
-                item["label"],
-                key=f"sidebar_nav_{target_section}_{target_compound_page or 'root'}",
-                use_container_width=True,
-                type="primary" if is_active else "secondary",
-            ):
-                set_main_nav(target_section)
-                if target_compound_page:
-                    set_compound_page(target_compound_page if can_edit_database() or target_compound_page == "Browse Record" else "Browse Record")
-                st.rerun()
+            render_sidebar_nav_link(group_title, item, is_active)
 
 
 def render_dashboard_showcase(
@@ -4067,83 +5175,83 @@ def render_dashboard_showcase(
     carbon_count: int,
     spectra_count: int,
     bioactivity_count: int,
-    health: dict,
 ):
-    hero_uri = image_to_data_uri(str(HERO_BANNER_PATH)) if HERO_BANNER_PATH.exists() else ""
-    logo_uri = image_to_data_uri(str(SIDEBAR_LOGO_PATH)) if SIDEBAR_LOGO_PATH.exists() else ""
-    workspace_uri = image_to_data_uri(str(WORKSPACE_ART_PATH)) if WORKSPACE_ART_PATH.exists() else ""
-    latest_update = format_latest_update_label(filtered_df)
+    hero_uri = image_to_data_uri(str(HERO_BANNER_PATH), max_px=1600) if HERO_BANNER_PATH.exists() else ""
+    workspace_uri = image_to_data_uri(str(WORKSPACE_ART_PATH), max_px=540) if WORKSPACE_ART_PATH.exists() else ""
+    search_icon_uri = image_to_data_uri(str(SEARCH_BIG_ART_PATH), max_px=160) if SEARCH_BIG_ART_PATH.exists() else ""
     hero_class = "dashboard-hero-card has-image" if hero_uri else "dashboard-hero-card"
     hero_style = f"background-image: linear-gradient(115deg, rgba(5, 11, 26, 0.9), rgba(8, 18, 34, 0.48)), url('{hero_uri}'); background-position: center right;" if hero_uri else ""
-    logo_markup = f'<img class="dashboard-hero-logo" src="{logo_uri}" alt="NPDB logo" />' if logo_uri else ""
-    stat_markup = "".join(
-        [
-            build_dashboard_stat_markup(len(filtered_df), "Compounds", COMPOUNDS_ART_PATH),
-            build_dashboard_stat_markup(spectra_count, "Spectra", SPECTRA_ART_PATH),
-            build_dashboard_stat_markup(bioactivity_count, "Bioactivity", BIOACTIVITY_ART_PATH),
-            build_dashboard_stat_markup(latest_update, "Updated", UPDATED_ART_PATH),
-        ]
-    )
-
-    st.markdown(
+    render_raw_html(
         f"""
         <div class="{hero_class}" style="{hero_style}">
             <div class="dashboard-hero-overlay"></div>
             <div class="dashboard-hero-content">
                 <div class="dashboard-hero-header">
-                    {logo_markup}
                     <div class="dashboard-hero-text">
-                        <div class="dashboard-hero-kicker">Curated public workspace</div>
-                        <h1 class="dashboard-hero-title">Natural Products<br><span class="accent">Spectral Database</span></h1>
-                        <div class="dashboard-tagline">Explore. Analyze. Discover.</div>
+                        <div class="dashboard-hero-title-shell">
+                            <h1 class="dashboard-hero-title">Natural Products<br><span class="accent">Spectral Database</span></h1>
+                            <div class="dashboard-tagline">Explore. Analyze. Discover.</div>
+                        </div>
                     </div>
-                </div>
-                <div class="dashboard-stat-board">
-                    {stat_markup}
                 </div>
             </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
 
-    cta_col, workspace_col = st.columns([1.65, 1], gap="large")
-    with cta_col:
+    search_col, search_button_col = st.columns([3.25, 1.15], gap="medium")
+    with search_col:
         st.markdown(
-            """
+            f"""
             <div class="dashboard-search-strip">
-                <div>
-                    <div class="dashboard-search-strip-title">Search Spectra</div>
-                    <div class="dashboard-search-strip-copy">
-                        Find compounds by keyword, structure, or 1H/13C similarity from the same curated workspace.
+                <div class="dashboard-search-strip-icon-shell">
+                    <div class="dashboard-search-strip-icon">
+                        {"<img class='dashboard-search-strip-icon-image' src='" + search_icon_uri + "' alt='Search icon' />" if search_icon_uri else "⌕"}
                     </div>
                 </div>
-            </div>
-            <div class="dashboard-cta-card" style="margin-top: 0.9rem;">
-                <div class="dashboard-cta-kicker">Database access model</div>
-                <div class="dashboard-cta-title">Browse freely, curate carefully.</div>
-                <div class="dashboard-cta-copy">
-                    Public users can browse, search, and export data. Submission, editing, and deletion remain reserved for
-                    <strong>npdb_tyas</strong> so the collection stays tidy, traceable, and publication-ready.
+                <div class="dashboard-search-strip-copy-shell">
+                    <div class="dashboard-search-strip-title">Search Spectra</div>
+                    <div class="dashboard-search-strip-copy">
+                        Search by name, shift, formula, structure, or source organism.
+                    </div>
                 </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
-        b1, b2, b3 = st.columns(3)
-        with b1:
-            if st.button("Start Searching", key="dashboard_search_cta", use_container_width=True):
-                set_main_nav("Search & Match")
-                st.rerun()
-        with b2:
-            if st.button("Browse Records", key="dashboard_browse_cta", use_container_width=True):
-                set_main_nav("Compound Workspace")
-                set_compound_page("Browse Record")
-                st.rerun()
-        with b3:
-            if st.button("Open Guide", key="dashboard_guide_cta", use_container_width=True):
-                set_main_nav("Guide")
-                st.rerun()
+    with search_button_col:
+        st.write("")
+        st.write("")
+        if st.button("Start Searching ->", key="dashboard_start_search", width="stretch", type="primary", icon=":material/search:"):
+            navigate_internal("Search & Match")
+            st.rerun()
+
+    workflow_col, workspace_col = st.columns([2.05, 0.82], gap="medium")
+    with workflow_col:
+        workflow_cards = []
+        for idx, (title, copy) in enumerate(DASHBOARD_WORKFLOW_STEPS, start=1):
+            is_primary = idx == 1
+            icon_markup = build_workflow_card_icon_markup(title)
+            workflow_cards.append(
+                f"""
+                <div class="workflow-card {'is-primary' if is_primary else ''}">
+                    <div class="workflow-step">{idx}</div>
+                    {icon_markup}
+                    <div class="workflow-title">{title}</div>
+                    <div class="workflow-copy">{copy}</div>
+                </div>
+                """
+            )
+        render_raw_html(
+            f"""
+            <div class="dashboard-workflow-shell">
+                <div class="dashboard-workflow-title">Compound Workflow</div>
+                <div class="dashboard-workflow-grid">
+                    {''.join(workflow_cards)}
+                </div>
+            </div>
+            """
+        )
 
     with workspace_col:
         art_markup = f'<img class="dashboard-workspace-art" src="{workspace_uri}" alt="Compound workspace visual" />' if workspace_uri else ""
@@ -4151,11 +5259,12 @@ def render_dashboard_showcase(
             f"""
             <div class="dashboard-workspace-card">
                 <div>
-                    <div class="dashboard-cta-kicker">Compound Workspace</div>
-                    <div class="dashboard-workspace-title">One place to curate structure, spectra, references, and activity.</div>
+                    <div class="dashboard-workspace-title">Compound Workspace</div>
                     <div class="dashboard-workspace-copy">
-                        Structure-ready: {health['structure_ready']} records. Bioactivity-linked: {health.get('bioactivity_ready', 0)}.
-                        This keeps browsing and curation connected instead of scattering them across unrelated screens.
+                        A unified workspace to manage curated data.
+                    </div>
+                    <div class="dashboard-workspace-copy">
+                        Browse, create, import, and maintain high-quality spectral records in one place.
                     </div>
                 </div>
                 {art_markup}
@@ -4163,44 +5272,9 @@ def render_dashboard_showcase(
             """,
             unsafe_allow_html=True,
         )
-        if st.button("Open Workspace", key="dashboard_workspace_cta", use_container_width=True):
-            set_main_nav("Compound Workspace")
-            set_compound_page("Browse Record")
+        if st.button("Open Workspace", key="dashboard_workspace_cta", width="stretch", icon=":material/folder_open:"):
+            navigate_internal("Compound Workspace", "Browse Record")
             st.rerun()
-
-    section_header("Compound Workflow", "A clearer sequence keeps curation easier to follow for both the owner and public visitors.")
-    step_columns = st.columns(len(DASHBOARD_WORKFLOW_STEPS))
-    for idx, (col, (title, copy)) in enumerate(zip(step_columns, DASHBOARD_WORKFLOW_STEPS), start=1):
-        with col:
-            st.markdown(
-                f"""
-                <div class="workflow-card">
-                    <div class="workflow-step">{idx}</div>
-                    <div class="workflow-title">{title}</div>
-                    <div class="workflow-copy">{copy}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-    section_header("Design Priorities", "These improvements aim to make NPDB more informative, more stable, and easier to trust.")
-    highlight_columns = st.columns(len(DASHBOARD_HIGHLIGHTS))
-    for col, (title, copy) in zip(highlight_columns, DASHBOARD_HIGHLIGHTS):
-        with col:
-            st.markdown(
-                f"""
-                <div class="highlight-card">
-                    <div class="highlight-title">{title}</div>
-                    <div class="highlight-copy">{copy}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-    st.caption(
-        f"Bioactivity records available in the current view: {bioactivity_count}. "
-        f"Submission-ready compounds: {health['submission_ready']}."
-    )
 
 
 def show_section_banner(image_path: Path, caption: str | None = None):
@@ -4310,7 +5384,7 @@ def render_batch_import_workspace():
             st.markdown("**Preview before import**")
             st.dataframe(preview_df, width="stretch", hide_index=True)
 
-            if st.button(f"Import {filename}", key=f"import_{filename}", use_container_width=True):
+            if st.button(f"Import {filename}", key=f"import_{filename}", width="stretch"):
                 inserted, skipped, errors = import_function(uploaded_df)
                 status, headline = summarize_import_result(inserted, skipped, errors)
                 getattr(st, status)(headline)
@@ -4330,28 +5404,34 @@ def render_kv(title, value):
         unsafe_allow_html=True
     )
 
-def render_compound_card(row):
+def render_compound_card(row, show_preview: bool = True):
     title = clean_text(row["trivial_name"])
     formula = clean_text(row["molecular_formula"])
     compound_class = clean_text(row["compound_class"])
     subclass = clean_text(row["compound_subclass"])
     source_summary = clean_text(source_summary_from_record(row))
     sample_code = clean_text(row["sample_code"])
+    curation_status = clean_text(normalize_curation_status(row.get("curation_status"))).title()
     st.markdown('<div class="compound-card">', unsafe_allow_html=True)
-    preview_col, info_col = st.columns([0.92, 4.08])
-    with preview_col:
-        source_value = row.get("structure_image_path")
-        standardized_image = load_standardized_structure_source(source_value, size=(300, 220))
-        if standardized_image is not None:
-            st.image(standardized_image, width="stretch")
-        elif source_value and is_external_url(str(source_value).strip()):
-            safe_url = str(source_value).strip().replace('"', "&quot;")
-            st.markdown(
-                f'<div class="compound-thumb-shell"><img src="{safe_url}" alt="{title} structure"/></div>',
-                unsafe_allow_html=True,
-            )
-        else:
-            render_structure_preview(row.get("smiles"), caption=None, empty_message=False, size=(300, 220))
+    if show_preview:
+        preview_col, info_col = st.columns([0.92, 4.08])
+    else:
+        preview_col = None
+        info_col = st.container()
+    if show_preview and preview_col is not None:
+        with preview_col:
+            source_value = row.get("structure_image_path")
+            standardized_image = load_standardized_structure_source(source_value, size=(300, 220))
+            if standardized_image is not None:
+                st.image(standardized_image, width="stretch")
+            elif source_value and is_external_url(str(source_value).strip()):
+                safe_url = str(source_value).strip().replace('"', "&quot;")
+                st.markdown(
+                    f'<div class="compound-thumb-shell"><img src="{safe_url}" alt="{title} structure"/></div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                render_structure_preview(row.get("smiles"), caption=None, empty_message=False, size=(300, 220))
     with info_col:
         st.markdown(
             f"""
@@ -4362,38 +5442,12 @@ def render_compound_card(row):
                 <span class="info-chip">Subclass: {subclass}</span>
                 <span class="info-chip">Source: {source_summary}</span>
                 <span class="info-chip">Sample: {sample_code}</span>
+                <span class="info-chip">Status: {curation_status}</span>
             </div>
             """,
             unsafe_allow_html=True,
         )
     st.markdown('</div>', unsafe_allow_html=True)
-
-def show_app_header():
-    current_section = st.session_state.get("nav_section", "Dashboard")
-    current_copy = NAV_SECTION_COPY.get(current_section, {"title": current_section, "summary": "Curated natural products workspace."})
-    logo_uri = image_to_data_uri(str(SIDEBAR_LOGO_PATH)) if SIDEBAR_LOGO_PATH.exists() else ""
-    logo_markup = f'<img class="app-masthead-logo" src="{logo_uri}" alt="NPDB logo" />' if logo_uri else ""
-    if use_supabase_write_backend():
-        status_label = "Cloud sync enabled"
-    elif use_supabase_backend():
-        status_label = "Cloud read mode"
-    else:
-        status_label = "Local draft mode"
-    st.markdown(
-        f"""
-        <div class="app-masthead">
-            <div class="app-masthead-brand">
-                {logo_markup}
-                <div>
-                    <div class="app-masthead-title">NPDB Workspace</div>
-                    <div class="app-masthead-subtitle"><strong>{current_copy['title']}</strong> • {current_copy['summary']}</div>
-                </div>
-            </div>
-            <div class="app-masthead-status">{status_label}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
 
 # =========================
 # Data loading
@@ -5324,6 +6378,7 @@ def build_batch_import_template_map() -> dict[str, pd.DataFrame]:
     compound_row["source_organism"] = compound_row["source_organism"] or "Stylissa sp."
     compound_row["sample_code"] = compound_row["sample_code"] or "NP-001"
     compound_row["data_source"] = compound_row["data_source"] or "Experimental"
+    compound_row["curation_status"] = compound_row["curation_status"] or "imported"
     compound_row["note"] = "Delete or replace this template row before import."
 
     proton_row = {column: "" for column in PROTON_IMPORT_COLUMNS}
@@ -5359,7 +6414,15 @@ def build_batch_import_template_map() -> dict[str, pd.DataFrame]:
 
 def write_batch_import_templates():
     for filename, template_df in build_batch_import_template_map().items():
-        template_df.to_csv(TEMPLATES_DIR / filename, index=False)
+        template_path = TEMPLATES_DIR / filename
+        template_csv = template_df.to_csv(index=False)
+        if template_path.exists():
+            try:
+                if template_path.read_text(encoding="utf-8") == template_csv:
+                    continue
+            except UnicodeDecodeError:
+                pass
+        template_path.write_text(template_csv, encoding="utf-8")
 
 
 def import_compounds_from_dataframe(df: pd.DataFrame):
@@ -5448,6 +6511,7 @@ def import_compounds_from_dataframe(df: pd.DataFrame):
             molecular_weight=molecular_weight_value,
             hrms_data=maybe_blank(row.get("hrms_data")),
             data_source=maybe_blank(row.get("data_source")),
+            curation_status=normalize_curation_status(maybe_blank(row.get("curation_status")), default="imported"),
             note=maybe_blank(row.get("note")),
         )
         existing_keys.add(dedupe_key)
@@ -5918,6 +6982,7 @@ def export_name_results(result_df: pd.DataFrame) -> pd.DataFrame:
         "molecular_weight": "Mr",
         "hrms_data": "HRMS Data",
         "data_source": "Data Source",
+        "curation_status": "Curation Status",
         "note": "Note"
     })
 
@@ -6039,6 +7104,7 @@ CCDC: {clean_text(row['ccdc_number'])}
 Mr: {clean_text(row['molecular_weight'])}
 HRMS Data: {clean_text(row['hrms_data'])}
 Data Source: {clean_text(row['data_source'])}
+Curation Status: {clean_text(row.get('curation_status')).title()}
 
 Note:
 {clean_text(row['note'])}
@@ -6262,42 +7328,42 @@ def show_compound_detail(compound_id):
         )
     with action_col2:
         if is_editor:
-            if st.button("Edit This Record", key=f"edit_compound_from_detail_{row_data['id']}", use_container_width=True):
+            if st.button("Edit This Record", key=f"edit_compound_from_detail_{row_data['id']}", width="stretch"):
                 open_compound_editor(int(row_data["id"]))
                 st.rerun()
         else:
-            if st.button("Open Search", key=f"search_from_detail_{row_data['id']}", use_container_width=True):
-                set_main_nav("Search & Match")
+            if st.button("Open Search", key=f"search_from_detail_{row_data['id']}", width="stretch"):
+                navigate_internal("Search & Match")
                 st.rerun()
     with action_col3:
         if is_editor:
-            if st.button("Open 1H Workspace", key=f"open_1h_from_detail_{row_data['id']}", use_container_width=True):
+            if st.button("Open 1H Workspace", key=f"open_1h_from_detail_{row_data['id']}", width="stretch"):
                 st.session_state["selected_compound_id"] = int(row_data["id"])
-                set_main_nav("1H Peaks")
+                navigate_internal("1H Peaks")
                 st.rerun()
         else:
-            if st.button("Open Bioactivity", key=f"bioactivity_from_detail_{row_data['id']}", use_container_width=True):
-                set_main_nav("Bioactivity")
+            if st.button("Open Bioactivity", key=f"bioactivity_from_detail_{row_data['id']}", width="stretch"):
+                navigate_internal("Bioactivity")
                 st.rerun()
     with action_col4:
         if is_editor:
-            if st.button("Open 13C Workspace", key=f"open_13c_from_detail_{row_data['id']}", use_container_width=True):
+            if st.button("Open 13C Workspace", key=f"open_13c_from_detail_{row_data['id']}", width="stretch"):
                 st.session_state["selected_compound_id"] = int(row_data["id"])
-                set_main_nav("13C Peaks")
+                navigate_internal("13C Peaks")
                 st.rerun()
         else:
-            if st.button("Open Spectra Browser", key=f"spectra_from_detail_{row_data['id']}", use_container_width=True):
+            if st.button("Open Spectra Browser", key=f"spectra_from_detail_{row_data['id']}", width="stretch"):
                 st.session_state["selected_compound_id"] = int(row_data["id"])
-                set_main_nav("Spectra Library")
+                navigate_internal("Spectra Library")
                 st.rerun()
     with action_col5:
         if is_editor:
-            if st.button("Open Spectra Files", key=f"open_spectra_from_detail_{row_data['id']}", use_container_width=True):
+            if st.button("Open Spectra Files", key=f"open_spectra_from_detail_{row_data['id']}", width="stretch"):
                 st.session_state["selected_compound_id"] = int(row_data["id"])
-                set_main_nav("Spectra Library")
+                navigate_internal("Spectra Library")
                 st.rerun()
         else:
-            st.button("Read-only Access", key=f"readonly_detail_{row_data['id']}", disabled=True, use_container_width=True)
+            st.button("Read-only Access", key=f"readonly_detail_{row_data['id']}", disabled=True, width="stretch")
     st.markdown('</div>', unsafe_allow_html=True)
 
     completeness_score = calculate_completeness_score(row, proton_df_raw, carbon_df_raw, spectra_df_raw)
@@ -6314,6 +7380,7 @@ def show_compound_detail(compound_id):
             <span class="record-badge">Class: {clean_text(row_data['compound_class'])}</span>
             <span class="record-badge">Source: {clean_text(source_summary_from_record(row_data))}</span>
             <span class="record-badge">Data Source: {clean_text(row_data['data_source'])}</span>
+            <span class="record-badge">Status: {clean_text(normalize_curation_status(row_data.get('curation_status'))).title()}</span>
             <span class="record-badge">Completeness: {completeness_score}%</span>
         </div>
         """,
@@ -6343,6 +7410,7 @@ def show_compound_detail(compound_id):
         render_kv("GPS Coordinates", row_data["gps_coordinates"])
         render_kv("Depth (m)", row_data["depth_m"])
         render_kv("Data Source", row_data["data_source"])
+        render_kv("Curation Status", clean_text(normalize_curation_status(row_data.get("curation_status"))).title())
         render_kv("Journal Name", row_data["journal_name"])
         render_kv("Article Title", row_data["article_title"])
         render_kv(
@@ -6456,6 +7524,7 @@ def render_best_match_summary(item, mode_label):
             <div class="badge-row"><strong>Source:</strong> {source_summary}</div>
             <div class="badge-row"><strong>Sample Code:</strong> {clean_text(item.get('sample_code'))}</div>
             <div class="badge-row"><strong>Data Source:</strong> {clean_text(item.get('data_source'))}</div>
+            <div class="badge-row"><strong>Status:</strong> {clean_text(normalize_curation_status(item.get('curation_status'))).title()}</div>
         </div>
         """,
         unsafe_allow_html=True
@@ -6645,132 +7714,124 @@ def show_search_page(all_compounds_df):
         )
 
         query_smiles = maybe_blank(st.session_state.get("structure_query_smiles"))
+
+        st.markdown('<div class="panel-card">', unsafe_allow_html=True)
+        st.markdown('<div class="structure-search-editor-title">Search by Structure</div>', unsafe_allow_html=True)
         st.markdown(
-            """
-            <div class="search-preset-strip">
-                <div class="search-preset-pill"><strong>Reference-style</strong> compact structure workflow</div>
-                <div class="search-preset-pill"><strong>Supported</strong> identity, substructure, similarity</div>
-                <div class="search-preset-pill"><strong>Input</strong> draw, paste SMILES, or paste Molfile</div>
-            </div>
-            """,
+            '<div class="structure-search-editor-subtitle">Draw directly in the embedded editor, or paste SMILES / Molfile when you already have a structure string.</div>',
             unsafe_allow_html=True,
         )
-        editor_left, editor_right = st.columns([1.34, 0.92], gap="large")
-
-        with editor_left:
-            st.markdown('<div class="panel-card">', unsafe_allow_html=True)
-            st.markdown("**Search by Structure**")
-            previous_query_smiles = maybe_blank(st.session_state.get("structure_query_smiles"))
-            editor_mode_message = ""
-            draw_tab, paste_tab = st.tabs(["Draw Structure", "Paste SMILES / Molfile"])
-            with draw_tab:
-                if st_ketcher is not None:
-                    drawn_smiles = st_ketcher(
-                        value=previous_query_smiles,
-                        height=400,
-                        molecule_format="SMILES",
-                        key=f"structure_search_editor_primary_{st.session_state['structure_editor_nonce']}",
-                    )
-                    drawn_smiles_text = "" if drawn_smiles in {None, 0, "0"} else maybe_blank(drawn_smiles)
-                    if drawn_smiles_text != previous_query_smiles:
-                        st.session_state["structure_query_smiles"] = drawn_smiles_text
-                        clear_structure_search_state()
-                    query_smiles = drawn_smiles_text
-                    editor_mode_message = "Direct drawing editor is active. Draw the structure in the compact canvas, then run identity, substructure, or similarity search."
-                elif streamlit_ketchersa is not None:
-                    drawn_structure = streamlit_ketchersa(height="400px", key=f"structure_search_editor_full_{st.session_state['structure_editor_nonce']}")
-                    drawn_structure_text = "" if drawn_structure in {None, 0, "0"} else maybe_blank(drawn_structure)
-                    if drawn_structure_text != previous_query_smiles:
-                        st.session_state["structure_query_smiles"] = drawn_structure_text
-                        clear_structure_search_state()
-                    query_smiles = drawn_structure_text
-                    editor_mode_message = "Embedded Ketcher build is active. Draw directly in the compact canvas, then run identity, substructure, or similarity search."
-                else:
-                    st.warning("The direct drawing editor is not active in this deployment yet.")
-                    st.caption(f"Editor status: {KETCHER_STATUS}")
-                    query_smiles = st.text_area(
-                        "Query Structure (SMILES or Molfile)",
-                        key="structure_query_smiles",
-                        height=180,
-                        placeholder="Example: C1=CC=CC=C1",
-                    )
-                    editor_mode_message = "Fallback mode is active. You can still search by pasting a valid SMILES or Molfile query."
-                    if maybe_blank(query_smiles) != previous_query_smiles:
-                        clear_structure_search_state()
-            with paste_tab:
-                manual_query = st.text_area(
-                    "Paste or refine the current query",
-                    value=query_smiles or previous_query_smiles,
-                    key="structure_query_paste_area",
-                    height=140,
-                    placeholder="Paste a valid SMILES or Molfile here.",
+        previous_query_smiles = maybe_blank(st.session_state.get("structure_query_smiles"))
+        editor_mode_message = ""
+        draw_tab, paste_tab = st.tabs(["Draw Structure", "Paste SMILES / Molfile"])
+        with draw_tab:
+            if st_ketcher is not None:
+                drawn_smiles = st_ketcher(
+                    value=previous_query_smiles,
+                    height=410,
+                    molecule_format="SMILES",
+                    key=f"structure_search_editor_primary_{st.session_state['structure_editor_nonce']}",
                 )
-                paste_col1, paste_col2 = st.columns(2)
-                with paste_col1:
-                    if st.button("Use Pasted Query", use_container_width=True, key="apply_pasted_structure_query"):
-                        st.session_state["structure_query_smiles"] = maybe_blank(manual_query)
-                        query_smiles = maybe_blank(manual_query)
-                        clear_structure_search_state()
-                        st.rerun()
-                with paste_col2:
-                    if st.button("Clear Query", use_container_width=True, key="clear_structure_query"):
-                        st.session_state["structure_query_smiles"] = ""
-                        st.session_state["structure_query_paste_area"] = ""
-                        st.session_state["structure_editor_nonce"] += 1
-                        clear_structure_search_state()
-                        st.rerun()
+                drawn_smiles_text = "" if drawn_smiles in {None, 0, "0"} else maybe_blank(drawn_smiles)
+                if drawn_smiles_text != previous_query_smiles:
+                    st.session_state["structure_query_smiles"] = drawn_smiles_text
+                    clear_structure_search_state()
+                query_smiles = drawn_smiles_text
+            elif streamlit_ketchersa is not None:
+                drawn_structure = streamlit_ketchersa(height="410px", key=f"structure_search_editor_full_{st.session_state['structure_editor_nonce']}")
+                drawn_structure_text = "" if drawn_structure in {None, 0, "0"} else maybe_blank(drawn_structure)
+                if drawn_structure_text != previous_query_smiles:
+                    st.session_state["structure_query_smiles"] = drawn_structure_text
+                    clear_structure_search_state()
+                query_smiles = drawn_structure_text
+            else:
+                st.warning("The direct drawing editor is not active in this deployment yet.")
+                st.caption(f"Editor status: {KETCHER_STATUS}")
+                query_smiles = st.text_area(
+                    "Query Structure (SMILES or Molfile)",
+                    key="structure_query_smiles",
+                    height=180,
+                    placeholder="Example: C1=CC=CC=C1",
+                )
+                editor_mode_message = "Fallback mode is active. You can still search by pasting a valid SMILES or Molfile query."
+                if maybe_blank(query_smiles) != previous_query_smiles:
+                    clear_structure_search_state()
+        with paste_tab:
+            manual_query = st.text_area(
+                "Paste or refine the current query",
+                value=query_smiles or previous_query_smiles,
+                key="structure_query_paste_area",
+                height=140,
+                placeholder="Paste a valid SMILES or Molfile here.",
+            )
+            paste_col1, paste_col2 = st.columns(2)
+            with paste_col1:
+                if st.button("Use Pasted Query", width="stretch", key="apply_pasted_structure_query"):
+                    st.session_state["structure_query_smiles"] = maybe_blank(manual_query)
+                    query_smiles = maybe_blank(manual_query)
+                    clear_structure_search_state()
+                    st.rerun()
+            with paste_col2:
+                if st.button("Clear Query", width="stretch", key="clear_structure_query"):
+                    st.session_state["structure_query_smiles"] = ""
+                    st.session_state["structure_query_paste_area"] = ""
+                    st.session_state["structure_editor_nonce"] += 1
+                    clear_structure_search_state()
+                    st.rerun()
+        if editor_mode_message:
             st.markdown(f'<div class="structure-editor-note">{editor_mode_message}</div>', unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
-        with editor_right:
-            st.markdown('<div class="panel-card">', unsafe_allow_html=True)
+        run_structure_search = False
+        mode_col, search_col = st.columns([3.4, 1.25], gap="medium")
+        with mode_col:
             structure_search_type = st.radio(
-                "Structure Search Type",
-                ["Identity Search", "Substructure Search", "Similarity Search"],
-                horizontal=False,
+                "Structure search mode",
+                ["Identity Search", "Similarity Search", "Substructure Search"],
+                horizontal=True,
+                label_visibility="collapsed",
                 key="structure_search_type",
             )
-            if query_smiles:
-                render_structure_preview(query_smiles, caption="Current query", empty_message=False, size=(280, 190))
+        with search_col:
+            run_structure_search = st.button("Search by Structure", width="stretch", key="run_structure_search")
+
+        if query_smiles:
+            if can_edit_database():
+                preview_col, admin_col, save_col, spacer_col = st.columns([0.78, 1.28, 1.46, 1.38], gap="small")
             else:
-                st.caption("Draw a structure in the editor area to prepare the current query.")
-            if structure_search_type == "Similarity Search":
-                st.caption(f"Minimum similarity score: {min_similarity_score}%")
-                st.caption("Similarity mode compares molecular fingerprints and ranks the closest structures first.")
-            elif structure_search_type == "Substructure Search":
-                st.caption("Substructure mode checks whether your query fragment is present inside stored candidate structures.")
-            else:
-                st.caption("Identity mode compares the canonicalized query structure against stored compounds.")
-            run_structure_search = st.button("Search by Structure", use_container_width=True, key="run_structure_search")
-            if query_smiles:
-                with st.expander("Technical query preview", expanded=False):
-                    st.code(query_smiles)
-                if can_edit_database():
-                    target_df = all_compounds_df.copy()
-                    missing_df = target_df[
-                        target_df["smiles"].fillna("").astype(str).str.strip().eq("")
-                        & target_df["inchi"].fillna("").astype(str).str.strip().eq("")
-                        & target_df["inchikey"].fillna("").astype(str).str.strip().eq("")
-                    ]
-                    preferred_df = missing_df if not missing_df.empty else target_df
-                    preferred_df = preferred_df[["id", "trivial_name"]].copy()
-                    preferred_df["label"] = preferred_df["id"].astype(str) + " - " + preferred_df["trivial_name"].fillna("Unnamed record").astype(str)
-                    st.markdown("---")
-                    st.caption("Admin shortcut: save the current drawn structure into a compound record so structure search becomes searchable in your own database.")
-                    selected_structure_label = st.selectbox(
-                        "Save current structure to compound",
-                        preferred_df["label"].tolist(),
-                        key="structure_link_target_select",
-                    )
-                    if st.button("Save Structure IDs to Selected Compound", use_container_width=True, key="save_structure_ids_from_query"):
-                        target_compound_id = int(selected_structure_label.split(" - ")[0])
-                        saved, save_message = save_structure_query_to_compound(target_compound_id, query_smiles)
-                        if saved:
-                            st.success(save_message)
-                            st.rerun()
-                        else:
-                            st.error(save_message)
-            st.markdown('</div>', unsafe_allow_html=True)
+                preview_col, spacer_col = st.columns([0.78, 4.12], gap="small")
+                admin_col = save_col = None
+            with preview_col:
+                render_structure_preview(query_smiles, caption="Current query", empty_message=False, size=(210, 150))
+        else:
+            preview_col = admin_col = save_col = spacer_col = None
+
+        if query_smiles and can_edit_database():
+            target_df = all_compounds_df.copy()
+            missing_df = target_df[
+                target_df["smiles"].fillna("").astype(str).str.strip().eq("")
+                & target_df["inchi"].fillna("").astype(str).str.strip().eq("")
+                & target_df["inchikey"].fillna("").astype(str).str.strip().eq("")
+            ]
+            preferred_df = missing_df if not missing_df.empty else target_df
+            preferred_df = preferred_df[["id", "trivial_name"]].copy()
+            preferred_df["label"] = preferred_df["id"].astype(str) + " - " + preferred_df["trivial_name"].fillna("Unnamed record").astype(str)
+            with admin_col:
+                selected_structure_label = st.selectbox(
+                    "Save current structure to compound",
+                    preferred_df["label"].tolist(),
+                    key="structure_link_target_select",
+                    label_visibility="collapsed",
+                )
+            with save_col:
+                if st.button("Save Structure IDs to Selected Compound", width="stretch", key="save_structure_ids_from_query"):
+                    target_compound_id = int(selected_structure_label.split(" - ")[0])
+                    saved, save_message = save_structure_query_to_compound(target_compound_id, query_smiles)
+                    if saved:
+                        st.success(save_message)
+                        st.rerun()
+                    else:
+                        st.error(save_message)
 
         if run_structure_search:
             results, error_message = search_by_structure(
@@ -6796,52 +7857,32 @@ def show_search_page(all_compounds_df):
                 st.error(structure_error)
         elif structure_results:
             st.write(f"Found {len(structure_results)} compound(s) for the current structure query.")
-            query_col, summary_col = st.columns([1.05, 1.35])
-            with query_col:
-                st.markdown('<div class="panel-card">', unsafe_allow_html=True)
-                st.markdown("**Query Structure**")
-                render_structure_preview(query_smiles, caption="Current query", empty_message=False, size=(280, 190))
-                st.markdown('</div>', unsafe_allow_html=True)
-            with summary_col:
-                st.markdown('<div class="panel-card">', unsafe_allow_html=True)
-                top_score = float(structure_results[0].get("structure_score", 0.0)) if structure_results else 0.0
-                st.markdown(
-                    f'''
-                    <div class="query-summary-grid">
-                        <div class="query-summary-card">
-                            <div class="query-summary-label">Search Mode</div>
-                            <div class="query-summary-value">{structure_mode_label}</div>
-                        </div>
-                        <div class="query-summary-card">
-                            <div class="query-summary-label">Top Similarity / Match</div>
-                            <div class="query-summary-value">{top_score:.1f}%</div>
-                        </div>
-                        <div class="query-summary-card">
-                            <div class="query-summary-label">Candidates Returned</div>
-                            <div class="query-summary-value">{len(structure_results)}</div>
-                        </div>
+            st.markdown('<div class="panel-card">', unsafe_allow_html=True)
+            top_score = float(structure_results[0].get("structure_score", 0.0)) if structure_results else 0.0
+            st.markdown(
+                f'''
+                <div class="query-summary-grid">
+                    <div class="query-summary-card">
+                        <div class="query-summary-label">Search Mode</div>
+                        <div class="query-summary-value">{structure_mode_label}</div>
                     </div>
-                    ''',
-                    unsafe_allow_html=True,
-                )
-                st.caption("Results are ranked against the structures currently available in your database, so the percentages always reflect your own curated dataset.")
-                st.markdown('</div>', unsafe_allow_html=True)
-            export_df = export_structure_search_results(structure_results)
-            download_dataframe_button(
-                label="Download Structure Search Results as Excel",
-                df=export_df,
-                file_name="search_by_structure_results.xlsx",
-                key="download_structure_search_xlsx",
-                sheet_name="Structure Search",
+                    <div class="query-summary-card">
+                        <div class="query-summary-label">Top Similarity / Match</div>
+                        <div class="query-summary-value">{top_score:.1f}%</div>
+                    </div>
+                    <div class="query-summary-card">
+                        <div class="query-summary-label">Candidates Returned</div>
+                        <div class="query-summary-value">{len(structure_results)}</div>
+                    </div>
+                </div>
+                ''',
+                unsafe_allow_html=True,
             )
+            st.caption("Results are ranked against the structures currently available in your own database.")
+            st.markdown('</div>', unsafe_allow_html=True)
             render_structure_search_results(structure_results, structure_mode_label, limit=candidate_limit)
         elif structure_attempted:
             st.info("The structure query was submitted, but no result rows were returned.")
-        else:
-            render_helper_card(
-                "Structure search workflow",
-                "Draw a structure directly in the embedded editor, choose identity, substructure, or similarity mode, then run the search against the currently filtered dataset.",
-            )
 
     elif search_mode == "Keyword Search":
         filtered_df = apply_dataframe_filters(
@@ -6874,8 +7915,7 @@ def show_search_page(all_compounds_df):
                     ["All keywords", "Exact phrase", "Starts with"],
                     key="search_match_mode",
                 )
-                run_name_search = st.form_submit_button("Run Keyword Search", use_container_width=True)
-                run_name_search = st.form_submit_button("Run Keyword Search", use_container_width=True)
+                run_name_search = st.form_submit_button("Run Keyword Search", width="stretch")
                 st.markdown('</div>', unsafe_allow_html=True)
 
         if keyword.strip():
@@ -6891,13 +7931,13 @@ def show_search_page(all_compounds_df):
                     key="download_name_xlsx",
                     sheet_name="Keyword Search",
                 )
-                st.dataframe(export_df, width="stretch", hide_index=True)
+                st.dataframe(export_df, width="stretch", hide_index=True, height=392)
 
                 section_header("Quick Browse")
                 for _, row in result.head(candidate_limit).iterrows():
                     c1, c2 = st.columns([5, 1])
                     with c1:
-                        render_compound_card(row)
+                        render_compound_card(row, show_preview=True)
                     with c2:
                         st.write("")
                         if st.button("Open", key=f"name_open_{row['id']}"):
@@ -6909,8 +7949,8 @@ def show_search_page(all_compounds_df):
             st.warning("Please enter at least one keyword.")
         elif not filtered_df.empty:
             st.info("Type one or more keywords to search. The filtered dataset preview is shown below.")
-            preview_df = export_name_results(filtered_df.head(candidate_limit))
-            st.dataframe(preview_df, width="stretch", hide_index=True)
+            preview_df = export_name_results(filtered_df)
+            st.dataframe(preview_df, width="stretch", hide_index=True, height=392)
         else:
             st.info("No compounds available for the selected filters.")
 
@@ -6929,7 +7969,7 @@ def show_search_page(all_compounds_df):
             with right:
                 st.markdown('<div class="panel-card">', unsafe_allow_html=True)
                 carbon_tol = st.number_input("13C tolerance", min_value=0.0, value=0.5, step=0.1)
-                run_13c = st.form_submit_button("Run 13C Match", use_container_width=True)
+                run_13c = st.form_submit_button("Run 13C Match", width="stretch")
                 st.markdown('<div class="small-note">Example: 145.2, 122.8, 77.1, 38.5. Peak files can also be pasted from text or uploaded as JCAMP-DX.</div>', unsafe_allow_html=True)
                 st.markdown('</div>', unsafe_allow_html=True)
 
@@ -6985,7 +8025,7 @@ def show_search_page(all_compounds_df):
             with right:
                 st.markdown('<div class="panel-card">', unsafe_allow_html=True)
                 proton_tol = st.number_input("1H tolerance", min_value=0.0, value=0.05, step=0.01, format="%.2f")
-                run_1h = st.form_submit_button("Run 1H Match", use_container_width=True)
+                run_1h = st.form_submit_button("Run 1H Match", width="stretch")
                 st.markdown('<div class="small-note">Example: 5.82, 5.35, 3.21, 1.22. Peak files can also be uploaded for quick screening.</div>', unsafe_allow_html=True)
                 st.markdown('</div>', unsafe_allow_html=True)
 
@@ -7048,7 +8088,7 @@ def show_search_page(all_compounds_df):
                 st.markdown('<div class="panel-card">', unsafe_allow_html=True)
                 proton_tol = st.number_input("1H tolerance", min_value=0.0, value=0.05, step=0.01, format="%.2f", key="combined_1h")
                 carbon_tol = st.number_input("13C tolerance", min_value=0.0, value=0.5, step=0.1, key="combined_13c")
-                run_combined = st.form_submit_button("Run Combined Match", use_container_width=True)
+                run_combined = st.form_submit_button("Run Combined Match", width="stretch")
                 st.markdown('<div class="small-note">Use both peak lists for more selective candidate ranking.</div>', unsafe_allow_html=True)
                 st.markdown('</div>', unsafe_allow_html=True)
 
@@ -7099,10 +8139,11 @@ def show_search_page(all_compounds_df):
 # Overview page
 # =========================
 def show_overview_page(all_compounds_df):
-    overall_ids = all_compounds_df["id"].tolist() if "id" in all_compounds_df.columns else []
-    overall_proton_count, overall_carbon_count, overall_spectra_count = count_related_records(overall_ids)
-    overall_bioactivity_count = count_bioactivity_records(overall_ids)
-    overall_health = calculate_workspace_health(all_compounds_df)
+    totals_snapshot = count_database_totals(get_db_signature())
+    overall_proton_count = int(totals_snapshot["proton"])
+    overall_carbon_count = int(totals_snapshot["carbon"])
+    overall_spectra_count = int(totals_snapshot["spectra"])
+    overall_bioactivity_count = int(totals_snapshot["bioactivity"])
 
     with st.sidebar.expander("Dashboard Filters", expanded=True):
         dashboard_class_filter = st.selectbox(
@@ -7136,138 +8177,38 @@ def show_overview_page(all_compounds_df):
         data_source_filter=dashboard_data_source_filter
     )
 
-    filtered_ids = filtered_df["id"].tolist()
-    proton_count, carbon_count, spectra_count = count_related_records(filtered_ids)
-    bioactivity_count = count_bioactivity_records(filtered_ids)
-    health = calculate_workspace_health(filtered_df)
-    spectra_df = load_all_spectra_files()
-    linked_spectra_ids = set(spectra_df["compound_id"].tolist()) if not spectra_df.empty else set()
-
-    missing_structure_df = filtered_df[
-        filtered_df["smiles"].fillna("").astype(str).str.strip().eq("")
-        & filtered_df["inchi"].fillna("").astype(str).str.strip().eq("")
-        & filtered_df["inchikey"].fillna("").astype(str).str.strip().eq("")
-    ]
-    missing_reference_df = filtered_df[
-        filtered_df["doi"].fillna("").astype(str).str.strip().eq("")
-        & filtered_df["journal_name"].fillna("").astype(str).str.strip().eq("")
-    ]
-    missing_source_df = filtered_df[
-        filtered_df["source_category"].fillna("").astype(str).str.strip().eq("")
-        & filtered_df["source_organism"].fillna("").astype(str).str.strip().eq("")
-        & filtered_df["source_material"].fillna("").astype(str).str.strip().eq("")
-    ]
-    missing_spectra_df = filtered_df[~filtered_df["id"].isin(linked_spectra_ids)]
-
     render_dashboard_showcase(
         all_compounds_df,
         overall_proton_count,
         overall_carbon_count,
         overall_spectra_count,
         overall_bioactivity_count,
-        overall_health,
     )
-    section_header("Collection Overview", "Track current coverage, curation progress, linked files, and dataset readiness from one dashboard.")
-
-    c1, c2, c3, c4, c5 = st.columns(5)
-    render_metric_card("Compounds", len(filtered_df), c1)
-    render_metric_card("1H Peaks", proton_count, c2)
-    render_metric_card("13C Peaks", carbon_count, c3)
-    render_metric_card("Spectra Files", spectra_count, c4)
-    render_metric_card("Bioactivity Records", bioactivity_count, c5)
-
-    h1, h2, h3, h4, h5 = st.columns(5)
-    render_metric_card("Structure IDs Ready", health["structure_ready"], h1)
-    render_metric_card("Reference Ready", health["reference_ready"], h2)
-    render_metric_card("Drive-linked Records", health["external_ready"], h3)
-    render_metric_card("Submission-ready Metadata", health["submission_ready"], h4)
-    render_metric_card("Bioactivity-linked Compounds", health.get("bioactivity_ready", 0), h5)
-
-    section_header("Metadata Gaps", "This section helps you see which records should be curated next.")
-    g1, g2, g3, g4 = st.columns(4)
-    render_clean_stat("Missing Structure IDs", len(missing_structure_df), g1)
-    render_clean_stat("Missing Reference Info", len(missing_reference_df), g2)
-    render_clean_stat("Missing Source Info", len(missing_source_df), g3)
-    render_clean_stat("Without Spectra Links", len(missing_spectra_df), g4)
-
-    priority_df = filtered_df.copy()
-    if not priority_df.empty:
-        priority_df["missing_structure"] = (
-            priority_df["smiles"].fillna("").astype(str).str.strip().eq("")
-            & priority_df["inchi"].fillna("").astype(str).str.strip().eq("")
-            & priority_df["inchikey"].fillna("").astype(str).str.strip().eq("")
-        )
-        priority_df["missing_reference"] = (
-            priority_df["doi"].fillna("").astype(str).str.strip().eq("")
-            & priority_df["journal_name"].fillna("").astype(str).str.strip().eq("")
-        )
-        priority_df["missing_source"] = (
-            priority_df["source_category"].fillna("").astype(str).str.strip().eq("")
-            & priority_df["source_organism"].fillna("").astype(str).str.strip().eq("")
-            & priority_df["source_material"].fillna("").astype(str).str.strip().eq("")
-        )
-        priority_df["source_material"] = priority_df.apply(source_summary_from_record, axis=1)
-        priority_df["missing_spectra"] = ~priority_df["id"].isin(linked_spectra_ids)
-        priority_df["curation_priority"] = (
-            priority_df["missing_structure"].astype(int)
-            + priority_df["missing_reference"].astype(int)
-            + priority_df["missing_source"].astype(int)
-            + priority_df["missing_spectra"].astype(int)
-        )
-
-        priority_view = priority_df[priority_df["curation_priority"] > 0].copy()
-        if not priority_view.empty:
-            section_header("Priority Records", "Records at the top of this list are the best candidates for metadata improvement.")
-            priority_view = priority_view.sort_values(
-                by=["curation_priority", "id"],
-                ascending=[False, True],
-            )
-            priority_view["Missing Fields"] = priority_view.apply(
-                lambda row: ", ".join(
-                    [
-                        label
-                        for label, missing in [
-                            ("structure IDs", row["missing_structure"]),
-                            ("reference", row["missing_reference"]),
-                            ("source", row["missing_source"]),
-                            ("spectra link", row["missing_spectra"]),
-                        ]
-                        if missing
-                    ]
-                ),
-                axis=1,
-            )
-            st.dataframe(
-                priority_view[
-                    [
-                        "id",
-                        "trivial_name",
-                        "compound_class",
-                        "source_material",
-                        "curation_priority",
-                        "Missing Fields",
-                    ]
-                ].rename(
-                    columns={
-                        "id": "ID",
-                        "trivial_name": "Trivial Name",
-                        "compound_class": "Compound Class",
-                        "source_material": "Source Summary",
-                        "curation_priority": "Priority Score",
-                    }
-                ),
-                width="stretch",
-                hide_index=True,
-            )
-        else:
-            render_helper_card(
-                "Priority status",
-                "The filtered records already look well curated. Use the sidebar to move into record editing, spectra review, or submission work when needed.",
-            )
+    st.markdown('<div class="dashboard-section"></div>', unsafe_allow_html=True)
+    section_header("Quick Browse")
+    quick_browse_limit = st.select_slider(
+        "Quick Browse cards",
+        options=[4, 6, 8, 10, 12],
+        value=6,
+        key="dashboard_quick_browse_limit",
+    )
+    if filtered_df.empty:
+        st.info("No compounds available for the selected filters.")
+    else:
+        preview_df = filtered_df.sort_values(by="updated_at", ascending=False, na_position="last").head(int(quick_browse_limit))
+        for _, row in preview_df.iterrows():
+            c1, c2 = st.columns([6.2, 0.8])
+            with c1:
+                render_compound_card(row, show_preview=True)
+            with c2:
+                st.write("")
+                if st.button("Open", key=f"overview_open_{row['id']}"):
+                    open_compound_detail(int(row["id"]))
+                    st.rerun()
 
     st.markdown('<div class="dashboard-section"></div>', unsafe_allow_html=True)
-    section_header("Distribution Overview", "These charts help you see how the current filtered dataset is distributed across class and source category.")
-    left, right = st.columns([1.15, 0.95])
+    section_header("Distribution Overview", "Interactive composition charts for the current filtered dataset.")
+    left, right = st.columns([1.05, 1.05])
 
     with left:
         section_header("Compound Distribution")
@@ -7286,7 +8227,8 @@ def show_overview_page(all_compounds_df):
                 class_counts,
                 names_col="Compound Class",
                 values_col="Count",
-                color_sequence=["#61D8ED", "#4C8EFF", "#9C63F1", "#7EF0C2", "#F2C66D", "#FF7F6D"],
+                color_sequence=["#61D8ED", "#4C8EFF", "#9C63F1", "#7EF0C2", "#F2C66D", "#FF7F6D", "#BFA5FF"],
+                top_n=6,
             )
 
     with right:
@@ -7307,102 +8249,8 @@ def show_overview_page(all_compounds_df):
                 names_col="Source Category",
                 values_col="Count",
                 color_sequence=["#9C63F1", "#61D8ED", "#4C8EFF", "#FF7F6D", "#F2C66D", "#7EF0C2"],
+                top_n=7,
             )
-
-    st.markdown('<div class="dashboard-section"></div>', unsafe_allow_html=True)
-    section_header("Quick Browse")
-    if filtered_df.empty:
-        st.info("No compounds available for the selected filters.")
-    else:
-        browse_limit = st.slider("Number of compounds to preview", min_value=3, max_value=16, value=6)
-        for _, row in filtered_df.head(browse_limit).iterrows():
-            c1, c2 = st.columns([6.2, 0.8])
-            with c1:
-                render_compound_card(row)
-            with c2:
-                st.write("")
-                if st.button("Open", key=f"overview_open_{row['id']}"):
-                    open_compound_detail(int(row["id"]))
-                    st.rerun()
-
-    st.markdown('<div class="dashboard-section"></div>', unsafe_allow_html=True)
-    table_col, utility_col = st.columns([4.8, 1.05])
-
-    with table_col:
-        section_header("Compound Table")
-        st.markdown(
-            '<div class="dashboard-dataframe-note">Use this table for broad scanning, then open individual records from Quick Browse when you need detailed review.</div>',
-            unsafe_allow_html=True,
-        )
-        if filtered_df.empty:
-            st.info("No rows available.")
-        else:
-            display_df = filtered_df[
-                [
-                    "id",
-                    "trivial_name",
-                    "molecular_formula",
-                    "compound_class",
-                    "compound_subclass",
-                    "source_category",
-                    "source_organism",
-                    "source_material",
-                    "sample_code"
-                ]
-            ].rename(columns={
-                "id": "ID",
-                "trivial_name": "Trivial Name",
-                "molecular_formula": "Molecular Formula",
-                "compound_class": "Compound Class",
-                "compound_subclass": "Compound Subclass",
-                "source_category": "Source Category",
-                "source_organism": "Source Organism",
-                "source_material": "Source Summary",
-                "sample_code": "Sample Code"
-            })
-
-            download_dataframe_button(
-                label="Download Current Overview as Excel",
-                df=display_df,
-                file_name="overview_filtered_compounds.xlsx",
-                key="download_overview_xlsx",
-                sheet_name="Dashboard Overview",
-            )
-
-            st.dataframe(display_df, width="stretch", hide_index=True)
-
-    with utility_col:
-        section_header("Backup")
-        render_helper_card(
-            "Keep the dataset recoverable",
-            "Download a fresh backup before major imports or metadata revision. When cloud write mode is active, you can also package a multi-table snapshot and push it to the private Supabase backups bucket.",
-        )
-        backup_filename = f"nmr_database_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
-        st.download_button(
-            label="Download SQLite Backup",
-            data=get_backup_bytes(),
-            file_name=backup_filename,
-            mime="application/octet-stream",
-            key="download_db_backup"
-        )
-        if can_edit_database():
-            snapshot_bytes, snapshot_name = build_backup_bundle_bytes()
-            st.download_button(
-                label="Download Cloud Snapshot ZIP",
-                data=snapshot_bytes,
-                file_name=snapshot_name,
-                mime="application/zip",
-                key="download_cloud_snapshot_zip",
-            )
-            if use_supabase_write_backend():
-                if st.button("Upload Snapshot to Supabase Backups", use_container_width=True, key="upload_cloud_snapshot_zip"):
-                    try:
-                        uploaded_url = upload_backup_bundle_to_cloud(snapshot_bytes, snapshot_name)
-                        st.success("Snapshot uploaded to the private Supabase backups bucket.")
-                        st.caption(uploaded_url)
-                    except Exception as exc:
-                        st.error(str(exc))
-                st.caption("Runtime buckets: `structures` and `spectra` are public for viewing, while `exports` and `backups` stay private.")
 
 
 def show_guide_page():
@@ -7627,6 +8475,7 @@ def show_compound_pages():
             "wizard_issue",
             "wizard_pages",
             "wizard_doi",
+            "wizard_curation_status",
             "wizard_note",
         ]:
             hydrate_wizard_widget(key)
@@ -7745,6 +8594,16 @@ def show_compound_pages():
                 st.text_input("Issue", key="wizard_issue")
                 st.text_input("Pages", key="wizard_pages")
                 st.text_input("DOI", key="wizard_doi")
+                current_wizard_status = normalize_curation_status(
+                    get_wizard_value("wizard_curation_status", "curated")
+                )
+                st.selectbox(
+                    "Curation Status",
+                    CURATION_STATUS_OPTIONS,
+                    index=CURATION_STATUS_OPTIONS.index(current_wizard_status),
+                    key="wizard_curation_status",
+                    help="Use curated for owner-reviewed manual submissions, reviewed for checked records, and imported for bulk-ingested records awaiting full curation.",
+                )
             with c2:
                 draft_row = {
                     "trivial_name": get_wizard_value("wizard_trivial_name", ""),
@@ -7763,6 +8622,7 @@ def show_compound_pages():
                         }
                     ),
                     "data_source": get_wizard_value("wizard_data_source_custom", "") or get_wizard_value("wizard_data_source_select", ""),
+                    "curation_status": normalize_curation_status(get_wizard_value("wizard_curation_status", "curated")),
                     "hrms_data": get_wizard_value("wizard_hrms_data", ""),
                     "doi": get_wizard_value("wizard_doi", ""),
                     "journal_name": get_wizard_value("wizard_journal_name", ""),
@@ -7786,20 +8646,21 @@ def show_compound_pages():
                 st.write(f"**Source Organism:** {clean_text(draft_row['source_organism'])}")
                 st.write(f"**Source Summary:** {clean_text(draft_row['source_material'])}")
                 st.write(f"**Data Source:** {clean_text(draft_row['data_source'])}")
+                st.write(f"**Curation Status:** {clean_text(draft_row['curation_status']).title()}")
                 st.write(f"**Journal:** {clean_text(get_wizard_value('wizard_journal_name'))}")
                 st.write(f"**Article:** {clean_text(get_wizard_value('wizard_article_title'))}")
                 st.markdown('</div>', unsafe_allow_html=True)
 
         nav_left, nav_right = st.columns([1, 1])
         with nav_left:
-            if wizard_step > 1 and st.button("Back", use_container_width=True, key=f"wizard_back_{wizard_step}"):
+            if wizard_step > 1 and st.button("Back", width="stretch", key=f"wizard_back_{wizard_step}"):
                 persist_wizard_inputs()
                 st.session_state["compound_wizard_step"] = wizard_step - 1
                 st.rerun()
 
         with nav_right:
             if wizard_step < 4:
-                if st.button("Continue", use_container_width=True, key=f"wizard_next_{wizard_step}"):
+                if st.button("Continue", width="stretch", key=f"wizard_next_{wizard_step}"):
                     persist_wizard_inputs()
                     if wizard_step == 1 and not maybe_blank(get_wizard_value("wizard_trivial_name")):
                         st.error("Trivial Name is required before moving to the next step.")
@@ -7807,7 +8668,7 @@ def show_compound_pages():
                         st.session_state["compound_wizard_step"] = wizard_step + 1
                         st.rerun()
             else:
-                if st.button("Save New Record", use_container_width=True, key="wizard_submit_compound"):
+                if st.button("Save New Record", width="stretch", key="wizard_submit_compound"):
                     persist_wizard_inputs()
                     trivial_name = maybe_blank(get_wizard_value("wizard_trivial_name"))
                     iupac_name = maybe_blank(get_wizard_value("wizard_iupac_name"))
@@ -7843,6 +8704,7 @@ def show_compound_pages():
                     molecular_weight_text = maybe_blank(get_wizard_value("wizard_molecular_weight"))
                     hrms_data = maybe_blank(get_wizard_value("wizard_hrms_data"))
                     data_source = maybe_blank(get_wizard_value("wizard_data_source_custom")) or maybe_blank(get_wizard_value("wizard_data_source_select"))
+                    curation_status = normalize_curation_status(get_wizard_value("wizard_curation_status", "curated"))
                     note = maybe_blank(get_wizard_value("wizard_note"))
                     uploaded_spectra = get_wizard_value("wizard_submission_spectra_uploads") or []
                     uploaded_spectrum_type = maybe_blank(get_wizard_value("wizard_submission_spectrum_type_custom")) or maybe_blank(get_wizard_value("wizard_submission_spectrum_type_select")) or "Supporting Data"
@@ -7903,6 +8765,7 @@ def show_compound_pages():
                         molecular_weight=molecular_weight_value,
                         hrms_data=hrms_data,
                         data_source=data_source,
+                        curation_status=curation_status,
                         note=note,
                     )
 
@@ -8031,6 +8894,14 @@ def show_compound_pages():
                         f"edit_data_source_{edit_compound_id}",
                         value=maybe_blank(row["data_source"]),
                     )
+                    current_curation_status = normalize_curation_status(row.get("curation_status"), default="curated")
+                    curation_status = st.selectbox(
+                        "Curation Status",
+                        CURATION_STATUS_OPTIONS,
+                        index=CURATION_STATUS_OPTIONS.index(current_curation_status),
+                        key=f"edit_curation_status_{edit_compound_id}",
+                        help="Use imported for bulk-ingested records, reviewed for checked records, and curated for records ready as trusted NPDB entries.",
+                    )
 
                 note = st.text_area("Note", value=maybe_blank(row["note"]))
                 submitted_edit = st.button("Save Changes", key="edit_compound_submit")
@@ -8103,6 +8974,7 @@ def show_compound_pages():
                             molecular_weight=molecular_weight_value,
                             hrms_data=hrms_data.strip(),
                             data_source=data_source.strip(),
+                            curation_status=normalize_curation_status(curation_status, default="curated"),
                             note=note.strip()
                         )
 
@@ -9374,7 +10246,31 @@ def get_supabase_service_role_key() -> str:
     return get_secret_setting("SUPABASE_SERVICE_ROLE_KEY")
 
 
+def get_npdb_read_backend() -> str:
+    backend = get_secret_setting("NPDB_READ_BACKEND", "npdb_read_backend").strip().lower()
+    if not backend:
+        local_secrets = PROJECT_DIR / ".streamlit" / "secrets.toml"
+        if local_secrets.exists():
+            try:
+                match = re.search(r'NPDB_READ_BACKEND\s*=\s*["\']?([A-Za-z0-9_-]+)', local_secrets.read_text())
+                if match:
+                    backend = match.group(1).strip().lower()
+            except Exception:
+                backend = ""
+    if backend in {"local", "sqlite", "desktop"}:
+        return "local"
+    if backend in {"supabase", "cloud", "remote"}:
+        return "supabase"
+    return "local" if DB_PATH.exists() else "supabase"
+
+
+def use_local_read_backend() -> bool:
+    return get_npdb_read_backend() == "local" and DB_PATH.exists()
+
+
 def use_supabase_backend() -> bool:
+    if use_local_read_backend():
+        return False
     return bool(get_supabase_url() and (get_supabase_service_role_key() or get_supabase_anon_key()))
 
 
@@ -9477,6 +10373,71 @@ def supabase_select_df(table: str, columns: str = "*", filters: dict | None = No
         query["order"] = order
     rows = _supabase_request("GET", f"/rest/v1/{table}", query=query, write=False) or []
     return pd.DataFrame(rows)
+
+
+@st.cache_data(show_spinner=False)
+def supabase_column_available(table: str, column: str) -> bool:
+    if not use_supabase_backend():
+        return False
+    try:
+        _supabase_request(
+            "GET",
+            f"/rest/v1/{table}",
+            query={"select": column, "limit": 1},
+            write=False,
+        )
+        return True
+    except RuntimeError as exc:
+        message = str(exc).lower()
+        if "column" in message and column.lower() in message:
+            return False
+        raise
+
+
+def compound_select_columns() -> str:
+    columns = [
+        "id",
+        "trivial_name",
+        "iupac_name",
+        "molecular_formula",
+        "smiles",
+        "inchi",
+        "inchikey",
+        "compound_class",
+        "compound_subclass",
+        "source_category",
+        "source_organism",
+        "source_material",
+        "sample_code",
+        "collection_location",
+        "gps_coordinates",
+        "depth_m",
+        "uv_data",
+        "ftir_data",
+        "cd_data",
+        "optical_rotation",
+        "melting_point",
+        "crystallization_method",
+        "structure_image_path",
+        "journal_name",
+        "article_title",
+        "publication_year",
+        "volume",
+        "issue",
+        "pages",
+        "doi",
+        "ccdc_number",
+        "molecular_weight",
+        "hrms_data",
+        "data_source",
+        "curation_status",
+        "note",
+        "created_at",
+        "updated_at",
+    ]
+    if use_supabase_backend() and not supabase_column_available("compounds", "curation_status"):
+        columns = [column for column in columns if column != "curation_status"]
+    return ",".join(columns)
 
 
 def supabase_insert_row(table: str, row: dict):
@@ -9608,13 +10569,6 @@ def _local_binary_path(target_dir: Path, base_name: str, suffix: str) -> Path:
 def save_uploaded_asset(uploaded_file, target_dir: Path, base_name: str) -> str:
     suffix = Path(uploaded_file.name).suffix.lower() or ".bin"
     data = uploaded_file.getbuffer().tobytes()
-    candidate = _local_binary_path(target_dir, base_name, suffix)
-    candidate.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with open(candidate, "wb") as output_file:
-            output_file.write(data)
-    except Exception:
-        pass
     if use_supabase_write_backend():
         bucket = "exports"
         public_bucket = False
@@ -9624,14 +10578,24 @@ def save_uploaded_asset(uploaded_file, target_dir: Path, base_name: str) -> str:
         elif target_dir == SPECTRA_DIR:
             bucket = "spectra"
             public_bucket = True
-        object_path = f"{datetime.utcnow().strftime('%Y/%m/%d')}/{candidate.name}"
-        content_type = getattr(uploaded_file, "type", None) or mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
+        upload_time = datetime.now(UTC)
+        original_stem = Path(uploaded_file.name).stem
+        object_name = f"{slugify_value(base_name + '_' + original_stem, fallback='asset')}_{upload_time.strftime('%H%M%S_%f')}{suffix}"
+        object_path = f"{upload_time.strftime('%Y/%m/%d')}/{object_name}"
+        content_type = getattr(uploaded_file, "type", None) or mimetypes.guess_type(object_name)[0] or "application/octet-stream"
         try:
             return supabase_upload_bytes(bucket, object_path, data, content_type=content_type, public_bucket=public_bucket)
         except Exception as exc:
             raise RuntimeError(
                 f"Cloud asset upload failed for '{uploaded_file.name}'. The file was not committed as a cloud-backed record."
             ) from exc
+    candidate = _local_binary_path(target_dir, base_name, suffix)
+    candidate.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(candidate, "wb") as output_file:
+            output_file.write(data)
+    except Exception:
+        pass
     return relative_project_path(candidate) if candidate.exists() else str(candidate)
 
 
@@ -9653,7 +10617,7 @@ def get_db_signature():
 
 @st.cache_data(show_spinner=False)
 def load_all_compounds():
-    columns = "id,trivial_name,iupac_name,molecular_formula,smiles,inchi,inchikey,compound_class,compound_subclass,source_category,source_organism,source_material,sample_code,collection_location,gps_coordinates,depth_m,uv_data,ftir_data,cd_data,optical_rotation,melting_point,crystallization_method,structure_image_path,journal_name,article_title,publication_year,volume,issue,pages,doi,ccdc_number,molecular_weight,hrms_data,data_source,note,created_at,updated_at"
+    columns = compound_select_columns()
     if use_supabase_backend():
         df = supabase_select_df("compounds", columns=columns, order="id.asc")
         return enrich_compounds_dataframe(df)
@@ -9662,7 +10626,7 @@ def load_all_compounds():
 
 @st.cache_data(show_spinner=False)
 def load_compound_row(compound_id):
-    columns = "id,trivial_name,iupac_name,molecular_formula,smiles,inchi,inchikey,compound_class,compound_subclass,source_category,source_organism,source_material,sample_code,collection_location,gps_coordinates,depth_m,uv_data,ftir_data,cd_data,optical_rotation,melting_point,crystallization_method,structure_image_path,journal_name,article_title,publication_year,volume,issue,pages,doi,ccdc_number,molecular_weight,hrms_data,data_source,note,created_at,updated_at"
+    columns = compound_select_columns()
     if use_supabase_backend():
         df = supabase_select_df("compounds", columns=columns, filters={"id": ("eq", compound_id)})
         return enrich_compounds_dataframe(df)
@@ -9770,31 +10734,34 @@ def load_bioactivity_row(bioactivity_id):
 
 
 def count_related_records(filtered_ids):
+    filtered_ids = [int(item) for item in filtered_ids if str(item).strip()]
     if not filtered_ids:
         return 0, 0, 0
-    proton_df = load_all_proton_data()
-    carbon_df = load_all_carbon_data()
-    spectra_df = load_all_spectra_files()
-    if "compound_id" not in proton_df.columns:
-        proton_df = pd.DataFrame(columns=["compound_id"])
-    if "compound_id" not in carbon_df.columns:
-        carbon_df = pd.DataFrame(columns=["compound_id"])
-    if "compound_id" not in spectra_df.columns:
-        spectra_df = pd.DataFrame(columns=["compound_id"])
-    return (
-        int(proton_df[proton_df["compound_id"].isin(filtered_ids)].shape[0]) if not proton_df.empty else 0,
-        int(carbon_df[carbon_df["compound_id"].isin(filtered_ids)].shape[0]) if not carbon_df.empty else 0,
-        int(spectra_df[spectra_df["compound_id"].isin(filtered_ids)].shape[0]) if not spectra_df.empty else 0,
-    )
+    conn = get_connection()
+    try:
+        placeholders = ",".join("?" * len(filtered_ids))
+        proton_query = f"SELECT COUNT(*) AS n FROM proton_nmr WHERE compound_id IN ({placeholders})"
+        carbon_query = f"SELECT COUNT(*) AS n FROM carbon_nmr WHERE compound_id IN ({placeholders})"
+        spectra_query = f"SELECT COUNT(*) AS n FROM spectra_files WHERE compound_id IN ({placeholders})"
+        proton_count = int(pd.read_sql_query(proton_query, conn, params=filtered_ids)["n"][0])
+        carbon_count = int(pd.read_sql_query(carbon_query, conn, params=filtered_ids)["n"][0])
+        spectra_count = int(pd.read_sql_query(spectra_query, conn, params=filtered_ids)["n"][0])
+        return proton_count, carbon_count, spectra_count
+    finally:
+        conn.close()
 
 
 def count_bioactivity_records(filtered_ids):
+    filtered_ids = [int(item) for item in filtered_ids if str(item).strip()]
     if not filtered_ids:
         return 0
-    bio_df = load_all_bioactivity_data()
-    if bio_df.empty or "compound_id" not in bio_df.columns:
-        return 0
-    return int(bio_df[bio_df["compound_id"].isin(filtered_ids)].shape[0])
+    conn = get_connection()
+    try:
+        placeholders = ",".join("?" * len(filtered_ids))
+        query = f"SELECT COUNT(*) AS n FROM bioactivity_records WHERE compound_id IN ({placeholders})"
+        return int(pd.read_sql_query(query, conn, params=filtered_ids)["n"][0])
+    finally:
+        conn.close()
 
 
 @st.cache_data(show_spinner=False)
@@ -9832,7 +10799,7 @@ def _upsert_compound_local(row: dict):
     return _sqlite_upsert_row("compounds", row)
 
 
-def insert_compound_record(trivial_name, iupac_name, molecular_formula, compound_class, compound_subclass, smiles, inchi, inchikey, source_category, source_organism, source_material, sample_code, collection_location, gps_coordinates, depth_m, uv_data, ftir_data, cd_data, optical_rotation, melting_point, crystallization_method, structure_image_path, journal_name, article_title, publication_year, volume, issue, pages, doi, ccdc_number, molecular_weight, hrms_data, data_source, note):
+def insert_compound_record(trivial_name, iupac_name, molecular_formula, compound_class, compound_subclass, smiles, inchi, inchikey, source_category, source_organism, source_material, sample_code, collection_location, gps_coordinates, depth_m, uv_data, ftir_data, cd_data, optical_rotation, melting_point, crystallization_method, structure_image_path, journal_name, article_title, publication_year, volume, issue, pages, doi, ccdc_number, molecular_weight, hrms_data, data_source, curation_status, note):
     ensure_write_target_ready()
     row = {
         "trivial_name": trivial_name,
@@ -9868,10 +10835,13 @@ def insert_compound_record(trivial_name, iupac_name, molecular_formula, compound
         "molecular_weight": molecular_weight,
         "hrms_data": hrms_data,
         "data_source": data_source,
+        "curation_status": normalize_curation_status(curation_status, default="curated"),
         "note": note,
-        "updated_at": datetime.utcnow().isoformat(),
+        "updated_at": datetime.now(UTC).isoformat(),
     }
     if use_supabase_write_backend():
+        if not supabase_column_available("compounds", "curation_status"):
+            row.pop("curation_status", None)
         inserted = supabase_insert_row("compounds", row)
         row_id = int(inserted.get("id")) if inserted and inserted.get("id") is not None else None
         if row_id is None:
@@ -9885,7 +10855,7 @@ def insert_compound_record(trivial_name, iupac_name, molecular_formula, compound
     return row_id
 
 
-def update_compound_record(compound_id, trivial_name, iupac_name, molecular_formula, compound_class, compound_subclass, smiles, inchi, inchikey, source_category, source_organism, source_material, sample_code, collection_location, gps_coordinates, depth_m, uv_data, ftir_data, cd_data, optical_rotation, melting_point, crystallization_method, structure_image_path, journal_name, article_title, publication_year, volume, issue, pages, doi, ccdc_number, molecular_weight, hrms_data, data_source, note):
+def update_compound_record(compound_id, trivial_name, iupac_name, molecular_formula, compound_class, compound_subclass, smiles, inchi, inchikey, source_category, source_organism, source_material, sample_code, collection_location, gps_coordinates, depth_m, uv_data, ftir_data, cd_data, optical_rotation, melting_point, crystallization_method, structure_image_path, journal_name, article_title, publication_year, volume, issue, pages, doi, ccdc_number, molecular_weight, hrms_data, data_source, curation_status, note):
     ensure_write_target_ready()
     row = {
         "id": compound_id,
@@ -9922,10 +10892,13 @@ def update_compound_record(compound_id, trivial_name, iupac_name, molecular_form
         "molecular_weight": molecular_weight,
         "hrms_data": hrms_data,
         "data_source": data_source,
+        "curation_status": normalize_curation_status(curation_status, default="curated"),
         "note": note,
-        "updated_at": datetime.utcnow().isoformat(),
+        "updated_at": datetime.now(UTC).isoformat(),
     }
     if use_supabase_write_backend():
+        if not supabase_column_available("compounds", "curation_status"):
+            row.pop("curation_status", None)
         supabase_update_row("compounds", compound_id, row)
     _upsert_compound_local(row)
     invalidate_cached_views()
@@ -10073,24 +11046,22 @@ def _save_generated_structure_image(compound_id: int, mol) -> str:
     if Draw is None or Image is None or mol is None:
         return ""
     image = normalize_structure_image(Draw.MolToImage(mol, size=(720, 540)), size=(720, 540))
-    buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
-    data = buffer.getvalue()
-    candidate = _local_binary_path(STRUCTURES_DIR, f"compound_{compound_id}_structure", ".png")
-    candidate.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with open(candidate, "wb") as output_file:
-            output_file.write(data)
-    except Exception:
-        pass
+    output = io.BytesIO()
+    image.save(output, format="PNG", optimize=True)
+    data = output.getvalue()
+    file_name = f"compound_{compound_id}_structure_{datetime.now(UTC).strftime('%H%M%S_%f')}.png"
+
     if use_supabase_write_backend():
         try:
-            return supabase_upload_bytes("structures", f"generated/{candidate.name}", data, content_type="image/png")
+            return supabase_upload_bytes("structures", f"generated/{file_name}", data, content_type="image/png")
         except Exception as exc:
             raise RuntimeError(
                 f"Cloud structure image upload failed for compound ID {compound_id}. The structure metadata was not saved."
             ) from exc
-    return relative_project_path(candidate) if candidate.exists() else ""
+
+    candidate = _local_binary_path(STRUCTURES_DIR, f"compound_{compound_id}_structure", ".png")
+    candidate.write_bytes(data)
+    return str(candidate.relative_to(PROJECT_DIR))
 
 
 def save_structure_query_to_compound(compound_id: int, query_text: str) -> tuple[bool, str]:
@@ -10103,11 +11074,11 @@ def save_structure_query_to_compound(compound_id: int, query_text: str) -> tuple
         "smiles": identifiers.get("smiles"),
         "inchi": identifiers.get("inchi"),
         "inchikey": identifiers.get("inchikey"),
-        "updated_at": datetime.utcnow().isoformat(),
+        "updated_at": datetime.now(UTC).isoformat(),
     }
     if structure_image_path:
         payload["structure_image_path"] = structure_image_path
-    if use_supabase_backend():
+    if use_supabase_write_backend():
         supabase_update_row("compounds", compound_id, payload)
     conn = get_connection()
     try:
@@ -10125,7 +11096,7 @@ def save_structure_query_to_compound(compound_id: int, query_text: str) -> tuple
 # =========================
 # App boot
 # =========================
-show_app_header()
+apply_navigation_query_params()
 all_compounds_df = load_all_compounds()
 render_cloud_sync_notice()
 if use_supabase_backend() and all_compounds_df.empty:

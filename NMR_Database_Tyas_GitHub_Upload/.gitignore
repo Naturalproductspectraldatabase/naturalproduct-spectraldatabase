@@ -1,9 +1,17 @@
 .streamlit/secrets.toml
+secrets.toml
+.env
+.env.*
+*.key
+*service_role*
+*service-role*
 __pycache__/
 *.pyc
 .DS_Store
 database/backups/*.db
+database/backups/*.zip
 data/exports/*.csv
+data/exports/*.zip
 data/branding/header.png
 data/branding/header1.png
 data/branding/header_main.png
