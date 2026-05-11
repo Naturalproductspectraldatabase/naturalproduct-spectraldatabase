@@ -2194,6 +2194,11 @@ st.markdown("""
     margin-bottom: 1rem;
 }
 
+.record-badge-strip.compact {
+    margin-top: -0.35rem;
+    margin-bottom: 0.85rem;
+}
+
 .record-badge {
     display: inline-flex;
     align-items: center;
@@ -7757,13 +7762,14 @@ def show_compound_detail(compound_id):
     bioactivity_df_raw = load_bioactivity_data(compound_id)
     row_data = row.iloc[0]
 
-    section_header(
-        clean_text(row_data["trivial_name"]),
-        f"Record ID {row_data['id']} · full metadata, structure, peak tables, and linked spectra arranged in one review page"
-    )
+    section_header(clean_text(row_data["trivial_name"]))
     st.markdown('<div class="record-shell">', unsafe_allow_html=True)
     st.markdown(
-        '<div class="record-section-note">All submitted metadata, structure information, NMR tables, spectra files, and bioactivity records are displayed together here so the compound can be reviewed as one complete dossier.</div>',
+        f"""
+        <div class="record-badge-strip compact">
+            <span class="record-badge">Status: {clean_text(normalize_curation_status(row_data.get('curation_status'))).title()}</span>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
 
@@ -7825,27 +7831,6 @@ def show_compound_detail(compound_id):
             st.button("Read-only Access", key=f"readonly_detail_{row_data['id']}", disabled=True, width="stretch")
     st.markdown('</div>', unsafe_allow_html=True)
 
-    completeness_score = calculate_completeness_score(row, proton_df_raw, carbon_df_raw, spectra_df_raw)
-
-    m1, m2, m3, m4, m5 = st.columns(5)
-    render_metric_card("1H NMR Peaks", len(proton_df_raw), m1)
-    render_metric_card("13C NMR Peaks", len(carbon_df_raw), m2)
-    render_metric_card("Spectra Files", len(spectra_df_raw), m3)
-    render_metric_card("Bioactivity Records", len(bioactivity_df_raw), m4)
-    render_metric_card("Completeness", f"{completeness_score}%", m5)
-    st.markdown(
-        f"""
-        <div class="record-badge-strip">
-            <span class="record-badge">Class: {clean_text(row_data['compound_class'])}</span>
-            <span class="record-badge">Source: {clean_text(source_summary_from_record(row_data))}</span>
-            <span class="record-badge">Data Source: {clean_text(row_data['data_source'])}</span>
-            <span class="record-badge">Status: {clean_text(normalize_curation_status(row_data.get('curation_status'))).title()}</span>
-            <span class="record-badge">Completeness: {completeness_score}%</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
     info_left, info_mid, info_right = st.columns([1.12, 1.12, 0.96])
 
     with info_left:
@@ -7887,12 +7872,6 @@ def show_compound_detail(compound_id):
             standardized_image = load_standardized_structure_source(structure_path, size=(520, 360))
             if standardized_image is not None:
                 st.image(standardized_image, width="stretch")
-                if is_external_url(str(structure_path).strip()):
-                    st.caption("Stored in cloud structure library")
-                else:
-                    full_path = get_full_file_path(structure_path)
-                    if full_path:
-                        st.caption(full_path.name)
             else:
                 st.warning("Structure image file not found.")
                 if is_external_url(str(structure_path).strip()):
@@ -7902,14 +7881,7 @@ def show_compound_detail(compound_id):
                     if full_path:
                         st.code(str(full_path))
         else:
-            render_structure_preview(row_data.get("smiles"), caption="Rendered from SMILES", size=(520, 360))
-        st.markdown('</div>', unsafe_allow_html=True)
-        st.markdown('<div class="panel-card">', unsafe_allow_html=True)
-        st.markdown("**Record Snapshot**")
-        st.caption(f"Created: {clean_text(row_data.get('created_at'))}")
-        st.caption(f"Updated: {clean_text(row_data.get('updated_at'))}")
-        st.caption(f"Source summary: {clean_text(source_summary_from_record(row_data))}")
-        st.caption(f"Bioactivity records linked: {len(bioactivity_df_raw)}")
+            render_structure_preview(row_data.get("smiles"), caption=None, size=(520, 360))
         st.markdown('</div>', unsafe_allow_html=True)
 
     section_header("Physical, Spectral & Supporting Data")
@@ -8121,7 +8093,7 @@ def render_candidate_cards(results, mode="13C", limit=10):
 # Search page
 # =========================
 def show_search_page(all_compounds_df):
-    section_header("Search & Match", "Switch between keyword lookup and spectral similarity ranking without leaving the same workspace.")
+    section_header("Search & Match")
 
     if "structure_editor_nonce" not in st.session_state:
         st.session_state["structure_editor_nonce"] = 0
@@ -8360,7 +8332,6 @@ def show_search_page(all_compounds_df):
                     key="search_name_keyword",
                     placeholder="Name, formula, DOI, sample code, source, or other indexed metadata",
                 )
-                st.caption("This is the NPDB equivalent of molecule-property searching: use the field selector and match style to narrow the expression.")
                 st.markdown('</div>', unsafe_allow_html=True)
             with right:
                 st.markdown('<div class="panel-card">', unsafe_allow_html=True)
@@ -8856,15 +8827,11 @@ def show_compound_pages():
     compound_page = st.radio(**compound_radio_kwargs)
     st.session_state["compound_page"] = compound_page
 
-    render_helper_card(
-        "Compound workspace",
-        "Browse full records, create new submissions, import batches, update metadata, and remove outdated entries from one consistent workflow. The editor now lives in a single clear place instead of appearing as a duplicated menu.",
-    )
     if not can_edit_database():
         render_read_only_notice("submit, edit, import, or delete compound records")
 
     if compound_page == "Browse Record":
-        section_header("Compound Browser", "Inspect the full record, structure, spectral tables, and attached spectra from one focused review page.")
+        section_header("Compound Browser")
         compounds_df = load_all_compounds()
 
         if compounds_df.empty:
@@ -8879,17 +8846,13 @@ def show_compound_pages():
             if selected_id is not None and selected_id in options["id"].tolist():
                 default_index = options.index[options["id"] == selected_id][0]
 
-            render_selector_card(
-                "Record selector",
-                "Choose a compound to inspect. The selected record is also reused in the edit and peak-management workspaces.",
-            )
             selected = st.selectbox("Choose compound record", label_list, index=default_index)
             current_selected_id = int(selected.split(" - ")[0])
             st.session_state["selected_compound_id"] = current_selected_id
             show_compound_detail(current_selected_id)
 
     elif compound_page == "New Submission":
-        section_header("New Submission", "Submit a new compound with a guided workflow, automatic file upload, and a review step before saving.")
+        section_header("New Submission")
 
         compounds_df = load_all_compounds()
         spectra_df = load_all_spectra_files()
@@ -8947,10 +8910,7 @@ def show_compound_pages():
         }
 
         st.progress(wizard_step / 4)
-        st.caption(
-            f"Step {wizard_step} of 4: {step_labels[wizard_step]}. "
-            "Your inputs stay in place while you move between steps."
-        )
+        st.caption(f"Step {wizard_step} of 4 · {step_labels[wizard_step]}")
 
         if wizard_step == 1:
             c1, c2 = st.columns(2)
