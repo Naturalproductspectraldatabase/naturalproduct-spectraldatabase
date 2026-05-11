@@ -1363,7 +1363,7 @@ def render_read_only_notice(feature_label: str):
         st.warning(
             "Cloud write mode is not active in this deployment yet. "
             "To prevent data divergence, editing is temporarily disabled until "
-            "`SUPABASE_SERVICE_ROLE_KEY` is configured in secure server-side secrets."
+            "`SUPABASE_SERVICE_ROLE_KEY` or `SUPABASE_SECRET_KEY` is configured in secure server-side secrets."
         )
         return
     st.info(
@@ -10243,7 +10243,10 @@ def get_supabase_anon_key() -> str:
 
 
 def get_supabase_service_role_key() -> str:
-    return get_secret_setting("SUPABASE_SERVICE_ROLE_KEY")
+    return (
+        get_secret_setting("SUPABASE_SERVICE_ROLE_KEY")
+        or get_secret_setting("SUPABASE_SECRET_KEY")
+    )
 
 
 def get_npdb_read_backend() -> str:
@@ -10260,6 +10263,8 @@ def get_npdb_read_backend() -> str:
     if backend in {"local", "sqlite", "desktop"}:
         return "local"
     if backend in {"supabase", "cloud", "remote"}:
+        return "supabase"
+    if get_supabase_url() and (get_supabase_service_role_key() or get_supabase_anon_key()):
         return "supabase"
     return "local" if DB_PATH.exists() else "supabase"
 
@@ -10287,7 +10292,7 @@ def _supabase_ssl_context():
 def ensure_write_target_ready():
     if use_supabase_backend() and not use_supabase_write_backend():
         raise RuntimeError(
-            "Cloud write mode is not configured. To keep Supabase as the single source of truth, editing is blocked until SUPABASE_SERVICE_ROLE_KEY is available."
+            "Cloud write mode is not configured. To keep Supabase as the single source of truth, editing is blocked until SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SECRET_KEY is available."
         )
 
 
@@ -10307,7 +10312,7 @@ def _json_ready(value):
 def _supabase_headers(write: bool = False, json_body: bool = True, extra: dict | None = None):
     api_key = get_supabase_service_role_key() if write else (get_supabase_service_role_key() or get_supabase_anon_key())
     if write and not api_key:
-        raise RuntimeError("Supabase writes require SUPABASE_SERVICE_ROLE_KEY in server-side secrets.")
+        raise RuntimeError("Supabase writes require SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SECRET_KEY in server-side secrets.")
     headers = {
         "apikey": api_key,
         "Authorization": f"Bearer {api_key}",
@@ -10321,7 +10326,7 @@ def _supabase_headers(write: bool = False, json_body: bool = True, extra: dict |
 
 def _supabase_request(method: str, path: str, query: dict | None = None, body=None, write: bool = False, json_body: bool = True, extra_headers: dict | None = None, return_json: bool = True):
     if write and not use_supabase_write_backend():
-        raise RuntimeError("Supabase write mode is disabled because SUPABASE_SERVICE_ROLE_KEY is missing.")
+        raise RuntimeError("Supabase write mode is disabled because SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SECRET_KEY is missing.")
     base = get_supabase_url().rstrip("/")
     url = f"{base}{path}"
     if query:
