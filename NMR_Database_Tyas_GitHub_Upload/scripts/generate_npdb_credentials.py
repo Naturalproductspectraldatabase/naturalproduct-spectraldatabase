@@ -61,6 +61,16 @@ def main() -> int:
     parser.add_argument("--viewer-prefix", default="npdb_user", help="Viewer username prefix.")
     parser.add_argument("--viewer-password-prefix", default="Onnamide", help="Viewer password prefix.")
     parser.add_argument("--suffix-length", type=int, default=5, help="Random suffix length for viewer passwords.")
+    parser.add_argument(
+        "--first-viewer-username",
+        default="",
+        help="Optional username for the first viewer account, for example npdb_tjomori.",
+    )
+    parser.add_argument(
+        "--first-viewer-password",
+        default="",
+        help="Optional password for the first viewer account. If omitted, the normal random pattern is used.",
+    )
     parser.add_argument("--owner-username", default="npdb_tyas", help="Owner username.")
     parser.add_argument("--owner-password", default="", help="Owner password. Omit to skip owner block.")
     parser.add_argument(
@@ -75,13 +85,17 @@ def main() -> int:
         parser.error("--viewer-count must be zero or greater.")
     if args.suffix_length < 4:
         parser.error("--suffix-length should be at least 4 characters.")
+    if args.first_viewer_password and not args.first_viewer_username:
+        parser.error("--first-viewer-password requires --first-viewer-username.")
 
     rows: list[dict[str, str]] = []
     blocks: list[str] = []
+    usernames: set[str] = set()
 
     if args.owner_password:
         owner_hash = password_hash(args.owner_password)
         blocks.append(user_block(args.owner_username, owner_hash, "owner_editor"))
+        usernames.add(args.owner_username)
         rows.append(
             {
                 "username": args.owner_username,
@@ -91,8 +105,15 @@ def main() -> int:
         )
 
     for index in range(1, args.viewer_count + 1):
-        username = f"{args.viewer_prefix}{index}"
-        password = f"{args.viewer_password_prefix}{random_suffix(args.suffix_length)}"
+        if index == 1 and args.first_viewer_username:
+            username = args.first_viewer_username
+            password = args.first_viewer_password or f"{args.viewer_password_prefix}{random_suffix(args.suffix_length)}"
+        else:
+            username = f"{args.viewer_prefix}{index}"
+            password = f"{args.viewer_password_prefix}{random_suffix(args.suffix_length)}"
+        if username in usernames:
+            parser.error(f"Duplicate username generated: {username}")
+        usernames.add(username)
         blocks.append(user_block(username, password_hash(password), "viewer"))
         rows.append({"username": username, "password": password, "role": "viewer"})
 
