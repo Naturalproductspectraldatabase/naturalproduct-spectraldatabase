@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import hmac
 import html
 import io
@@ -109,6 +110,7 @@ MAX_PAGE_ICON_BYTES = 5 * 1024 * 1024
 OWNER_CREDIT = "© Trianda Ayuning Tyas_project"
 OWNER_EDITOR_USERNAME = "npdb_tyas"
 OWNER_EDITOR_ROLES = {"owner", "owner_editor", "admin", "editor"}
+PASSWORD_HASH_SCHEME = "pbkdf2_sha256"
 SUPABASE_PAGE_SIZE = 1000
 
 
@@ -665,10 +667,41 @@ def get_secret_object(*keys: str):
     return None
 
 
+def verify_password_secret(submitted_password: str, plain_secret: str = "", hashed_secret: str = "") -> bool:
+    submitted_password = "" if submitted_password is None else str(submitted_password)
+    hashed_secret = str(hashed_secret or "").strip()
+    if hashed_secret:
+        try:
+            scheme, iterations_text, salt, expected_digest = hashed_secret.split("$", 3)
+            if scheme != PASSWORD_HASH_SCHEME:
+                return False
+            iterations = int(iterations_text)
+            digest = hashlib.pbkdf2_hmac(
+                "sha256",
+                submitted_password.encode("utf-8"),
+                salt.encode("utf-8"),
+                iterations,
+            )
+            candidate_digest = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+            return hmac.compare_digest(candidate_digest, expected_digest)
+        except Exception:
+            return False
+
+    plain_secret = str(plain_secret or "")
+    return bool(plain_secret) and hmac.compare_digest(submitted_password, plain_secret)
+
+
 def load_approved_users() -> list[dict[str, str]]:
     raw_users = get_secret_object("NPDB_APPROVED_USERS", "approved_users")
     if isinstance(raw_users, dict):
-        iterable = [{"username": username, "password": password} for username, password in raw_users.items()]
+        iterable = []
+        for username, value in raw_users.items():
+            if isinstance(value, dict):
+                item = dict(value)
+                item.setdefault("username", username)
+                iterable.append(item)
+            else:
+                iterable.append({"username": username, "password": value})
     elif isinstance(raw_users, list):
         iterable = raw_users
     else:
@@ -680,9 +713,17 @@ def load_approved_users() -> list[dict[str, str]]:
             continue
         username = str(item.get("username", "")).strip()
         password = str(item.get("password", "")).strip()
+        password_hash = str(item.get("password_hash", "")).strip()
         role = str(item.get("role", "viewer")).strip() or "viewer"
-        if username and password:
-            users.append({"username": username, "password": password, "role": role})
+        if username and (password or password_hash):
+            users.append(
+                {
+                    "username": username,
+                    "password": password,
+                    "password_hash": password_hash,
+                    "role": role,
+                }
+            )
     return users
 
 
@@ -759,7 +800,9 @@ def _normalize_html_block(markup: str) -> str:
 def is_access_gate_enabled() -> bool:
     return bool(
         get_secret_setting("NPDB_ACCESS_PASSWORD", "access_password")
+        or get_secret_setting("NPDB_ACCESS_PASSWORD_HASH", "access_password_hash")
         or get_secret_setting("NPDB_APPROVED_PASSWORD", "approved_password")
+        or get_secret_setting("NPDB_APPROVED_PASSWORD_HASH", "approved_password_hash")
         or load_approved_users()
         or load_approved_names()
     )
@@ -870,7 +913,9 @@ def verify_access_gate():
 
     expected_username = get_secret_setting("NPDB_ACCESS_USERNAME", "access_username")
     expected_password = get_secret_setting("NPDB_ACCESS_PASSWORD", "access_password")
+    expected_password_hash = get_secret_setting("NPDB_ACCESS_PASSWORD_HASH", "access_password_hash")
     approved_password = get_secret_setting("NPDB_APPROVED_PASSWORD", "approved_password")
+    approved_password_hash = get_secret_setting("NPDB_APPROVED_PASSWORD_HASH", "approved_password_hash")
     approved_users = load_approved_users()
     approved_names = load_approved_names()
     login_background_uri = inline_asset_data_uri(LOGIN_BACKGROUND_PATH, max_px=1600)
@@ -1332,7 +1377,11 @@ def verify_access_gate():
         if approved_users:
             for user in approved_users:
                 username_ok = hmac.compare_digest(username.strip(), user["username"])
-                password_ok = hmac.compare_digest(password, user["password"])
+                password_ok = verify_password_secret(
+                    password,
+                    plain_secret=user.get("password", ""),
+                    hashed_secret=user.get("password_hash", ""),
+                )
                 if username_ok and password_ok:
                     authenticated = True
                     matched_role = user.get("role", "viewer")
@@ -1344,13 +1393,21 @@ def verify_access_gate():
                 submitted_name = submitted_username[5:]
                 submitted_slug = normalize_login_slug(submitted_name)
                 allowed_slugs = {normalize_login_slug(name) for name in approved_names}
-                if submitted_slug in allowed_slugs and hmac.compare_digest(password, approved_password):
+                if submitted_slug in allowed_slugs and verify_password_secret(
+                    password,
+                    plain_secret=approved_password,
+                    hashed_secret=approved_password_hash,
+                ):
                     authenticated = True
                     matched_role = "approved-viewer"
                     matched_auth_mode = "approved_names"
         else:
             username_ok = True if not expected_username else hmac.compare_digest(username.strip(), expected_username)
-            password_ok = hmac.compare_digest(password, expected_password)
+            password_ok = verify_password_secret(
+                password,
+                plain_secret=expected_password,
+                hashed_secret=expected_password_hash,
+            )
             authenticated = username_ok and password_ok
             if authenticated:
                 matched_auth_mode = "single_user"
