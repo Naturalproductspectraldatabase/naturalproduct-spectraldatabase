@@ -4609,6 +4609,13 @@ def structure_smiles_data_uri(smiles_text: str, size=(300, 220)) -> str:
         return ""
 
 
+def structure_smiles_image_url(smiles_text: str) -> str:
+    smiles_value = maybe_blank(smiles_text)
+    if not smiles_value:
+        return ""
+    return f"https://cactus.nci.nih.gov/chemical/structure/{quote(smiles_value, safe='')}/image"
+
+
 def load_standardized_structure_image(image_path: Path, size=(520, 360)):
     if Image is None or image_path is None or not image_path.exists():
         return None
@@ -5518,9 +5525,10 @@ def render_compound_card(row, show_preview: bool = True):
                 )
             else:
                 structure_uri = structure_smiles_data_uri(row.get("smiles"), size=(300, 220))
-                if structure_uri:
+                structure_src = structure_uri or structure_smiles_image_url(row.get("smiles"))
+                if structure_src:
                     st.markdown(
-                        f'<div class="compound-thumb-shell"><img src="{structure_uri}" alt="{html.escape(title)} structure"/></div>',
+                        f'<div class="compound-thumb-shell"><img src="{structure_src}" alt="{html.escape(title)} structure"/></div>',
                         unsafe_allow_html=True,
                     )
     with info_col:
