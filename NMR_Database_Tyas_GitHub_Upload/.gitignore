@@ -10,6 +10,9 @@ __pycache__/
 .DS_Store
 database/backups/*.db
 database/backups/*.zip
+database/*.db
+database/*.sqlite
+database/*.sqlite3
 data/exports/*.csv
 data/exports/*.zip
 data/branding/header.png
