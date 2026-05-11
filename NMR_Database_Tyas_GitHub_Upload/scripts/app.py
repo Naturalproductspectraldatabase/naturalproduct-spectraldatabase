@@ -108,6 +108,7 @@ DB_PATH = PROJECT_DIR / "database" / "nmr.db"
 MAX_PAGE_ICON_BYTES = 5 * 1024 * 1024
 OWNER_CREDIT = "© Trianda Ayuning Tyas_project"
 OWNER_EDITOR_USERNAME = "npdb_tyas"
+OWNER_EDITOR_ROLES = {"owner", "owner_editor", "admin", "editor"}
 SUPABASE_PAGE_SIZE = 1000
 
 
@@ -1326,6 +1327,7 @@ def verify_access_gate():
     if submitted:
         authenticated = False
         matched_role = "viewer"
+        matched_auth_mode = ""
 
         if approved_users:
             for user in approved_users:
@@ -1334,6 +1336,7 @@ def verify_access_gate():
                 if username_ok and password_ok:
                     authenticated = True
                     matched_role = user.get("role", "viewer")
+                    matched_auth_mode = "approved_users"
                     break
         elif approved_names and approved_password:
             submitted_username = str(username).strip() if username is not None else ""
@@ -1344,15 +1347,19 @@ def verify_access_gate():
                 if submitted_slug in allowed_slugs and hmac.compare_digest(password, approved_password):
                     authenticated = True
                     matched_role = "approved-viewer"
+                    matched_auth_mode = "approved_names"
         else:
             username_ok = True if not expected_username else hmac.compare_digest(username.strip(), expected_username)
             password_ok = hmac.compare_digest(password, expected_password)
             authenticated = username_ok and password_ok
+            if authenticated:
+                matched_auth_mode = "single_user"
 
         if authenticated:
             st.session_state["npdb_authenticated"] = True
             st.session_state["npdb_username"] = username.strip()
             st.session_state["npdb_role"] = matched_role
+            st.session_state["npdb_auth_mode"] = matched_auth_mode
             st.session_state["npdb_remember_requested"] = bool(remember_me)
             st.session_state["npdb_show_transition"] = True
             st.rerun()
@@ -1365,7 +1372,20 @@ verify_access_gate()
 
 def is_owner_editor() -> bool:
     current_username = normalize_login_slug(st.session_state.get("npdb_username", ""))
-    return current_username == normalize_login_slug(OWNER_EDITOR_USERNAME)
+    if current_username != normalize_login_slug(OWNER_EDITOR_USERNAME):
+        return False
+
+    role = str(st.session_state.get("npdb_role", "")).strip().lower()
+    if role in OWNER_EDITOR_ROLES:
+        return True
+
+    auth_mode = str(st.session_state.get("npdb_auth_mode", "")).strip().lower()
+    expected_username = get_secret_setting("NPDB_ACCESS_USERNAME", "access_username")
+    return (
+        auth_mode == "single_user"
+        and bool(expected_username)
+        and normalize_login_slug(expected_username) == normalize_login_slug(OWNER_EDITOR_USERNAME)
+    )
 
 
 def can_edit_database() -> bool:
