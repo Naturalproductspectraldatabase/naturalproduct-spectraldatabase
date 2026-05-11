@@ -625,6 +625,26 @@ def get_secret_setting(*keys: str) -> str:
     return ""
 
 
+def cloud_backend_is_configured() -> bool:
+    return bool(
+        get_secret_setting("SUPABASE_URL")
+        and (
+            get_secret_setting("SUPABASE_SERVICE_ROLE_KEY")
+            or get_secret_setting("SUPABASE_SECRET_KEY")
+            or get_secret_setting("SUPABASE_ANON_KEY")
+        )
+    )
+
+
+def should_initialize_sqlite_schema() -> bool:
+    backend = get_secret_setting("NPDB_READ_BACKEND", "npdb_read_backend").strip().lower()
+    if backend in {"local", "sqlite", "desktop"}:
+        return True
+    if backend in {"supabase", "cloud", "remote"}:
+        return False
+    return not cloud_backend_is_configured()
+
+
 def get_secret_object(*keys: str):
     for key in keys:
         value = os.environ.get(key)
@@ -3500,9 +3520,10 @@ def ensure_bioactivity_schema():
         conn.close()
 
 
-ensure_database_schema()
-ensure_compounds_schema()
-ensure_bioactivity_schema()
+if should_initialize_sqlite_schema():
+    ensure_database_schema()
+    ensure_compounds_schema()
+    ensure_bioactivity_schema()
 
 # =========================
 # Generic helpers
@@ -4649,6 +4670,33 @@ def count_bioactivity_records(filtered_ids):
 
 @st.cache_data(show_spinner=False)
 def count_database_totals(_db_signature: float):
+    if use_supabase_backend():
+        compounds_df = load_all_compounds()
+        proton_df = load_all_proton_data()
+        carbon_df = load_all_carbon_data()
+        spectra_df = load_all_spectra_files()
+        bioactivity_df = load_all_bioactivity_data()
+        structure_columns = ["smiles", "inchi", "inchikey", "structure_image_path"]
+        structures_count = 0
+        if not compounds_df.empty:
+            available_columns = [column for column in structure_columns if column in compounds_df.columns]
+            if available_columns:
+                structures_count = int(
+                    compounds_df[available_columns]
+                    .fillna("")
+                    .astype(str)
+                    .apply(lambda row: any(value.strip() for value in row), axis=1)
+                    .sum()
+                )
+        return {
+            "compounds": int(len(compounds_df)),
+            "structures": structures_count,
+            "proton": int(len(proton_df)),
+            "carbon": int(len(carbon_df)),
+            "spectra": int(len(spectra_df)),
+            "bioactivity": int(len(bioactivity_df)),
+        }
+
     conn = get_connection()
     try:
         cursor = conn.cursor()
@@ -5044,7 +5092,7 @@ def build_backup_bundle_bytes() -> tuple[bytes, str]:
         archive.writestr("manifest.json", json.dumps(manifest, indent=2))
         for table_name, df in tables.items():
             archive.writestr(f"tables/{table_name}.csv", df.to_csv(index=False))
-        if DB_PATH.exists():
+        if use_local_read_backend() and DB_PATH.exists():
             archive.writestr("database/nmr.db", get_backup_bytes())
     output.seek(0)
     return output.getvalue(), bundle_name
@@ -5059,7 +5107,8 @@ def save_backup_bundle_locally(bundle_bytes: bytes, file_name: str) -> Path:
 
 def upload_backup_bundle_to_cloud(bundle_bytes: bytes, file_name: str) -> str:
     ensure_write_target_ready()
-    save_backup_bundle_locally(bundle_bytes, file_name)
+    if use_local_read_backend():
+        save_backup_bundle_locally(bundle_bytes, file_name)
     return supabase_upload_bytes(
         "backups",
         f"snapshots/{datetime.now(UTC).strftime('%Y/%m/%d')}/{file_name}",
@@ -10264,7 +10313,7 @@ def get_npdb_read_backend() -> str:
         return "local"
     if backend in {"supabase", "cloud", "remote"}:
         return "supabase"
-    if get_supabase_url() and (get_supabase_service_role_key() or get_supabase_anon_key()):
+    if cloud_backend_is_configured():
         return "supabase"
     return "local" if DB_PATH.exists() else "supabase"
 
@@ -10742,6 +10791,16 @@ def count_related_records(filtered_ids):
     filtered_ids = [int(item) for item in filtered_ids if str(item).strip()]
     if not filtered_ids:
         return 0, 0, 0
+    if use_supabase_backend():
+        filtered_id_set = set(filtered_ids)
+        proton_df = load_all_proton_data()
+        carbon_df = load_all_carbon_data()
+        spectra_df = load_all_spectra_files()
+        proton_count = int(proton_df["compound_id"].isin(filtered_id_set).sum()) if "compound_id" in proton_df else 0
+        carbon_count = int(carbon_df["compound_id"].isin(filtered_id_set).sum()) if "compound_id" in carbon_df else 0
+        spectra_count = int(spectra_df["compound_id"].isin(filtered_id_set).sum()) if "compound_id" in spectra_df else 0
+        return proton_count, carbon_count, spectra_count
+
     conn = get_connection()
     try:
         placeholders = ",".join("?" * len(filtered_ids))
@@ -10760,6 +10819,11 @@ def count_bioactivity_records(filtered_ids):
     filtered_ids = [int(item) for item in filtered_ids if str(item).strip()]
     if not filtered_ids:
         return 0
+    if use_supabase_backend():
+        filtered_id_set = set(filtered_ids)
+        bioactivity_df = load_all_bioactivity_data()
+        return int(bioactivity_df["compound_id"].isin(filtered_id_set).sum()) if "compound_id" in bioactivity_df else 0
+
     conn = get_connection()
     try:
         placeholders = ",".join("?" * len(filtered_ids))
@@ -10851,8 +10915,9 @@ def insert_compound_record(trivial_name, iupac_name, molecular_formula, compound
         row_id = int(inserted.get("id")) if inserted and inserted.get("id") is not None else None
         if row_id is None:
             raise RuntimeError("Supabase insert for the compound did not return an ID, so the local mirror was not updated.")
-        row["id"] = row_id
-        _upsert_compound_local(row)
+        if use_local_read_backend():
+            row["id"] = row_id
+            _upsert_compound_local(row)
         invalidate_cached_views()
         return row_id
     row_id = _sqlite_upsert_row("compounds", row)
@@ -10905,6 +10970,9 @@ def update_compound_record(compound_id, trivial_name, iupac_name, molecular_form
         if not supabase_column_available("compounds", "curation_status"):
             row.pop("curation_status", None)
         supabase_update_row("compounds", compound_id, row)
+        if not use_local_read_backend():
+            invalidate_cached_views()
+            return
     _upsert_compound_local(row)
     invalidate_cached_views()
 
@@ -10913,6 +10981,9 @@ def delete_compound_record(compound_id):
     ensure_write_target_ready()
     if use_supabase_write_backend():
         supabase_delete_row("compounds", compound_id)
+        if not use_local_read_backend():
+            invalidate_cached_views()
+            return
     conn = get_connection()
     try:
         cursor = conn.cursor()
@@ -10939,6 +11010,8 @@ def _write_child_row(table: str, row: dict, row_id: int | None = None):
         else:
             supabase_update_row(table, row_id, row)
             row["id"] = row_id
+        if not use_local_read_backend():
+            return int(row["id"]) if row.get("id") is not None else None
     return _sqlite_upsert_row(table, row)
 
 
@@ -10959,6 +11032,9 @@ def delete_proton_record_by_id(proton_id):
     ensure_write_target_ready()
     if use_supabase_write_backend():
         supabase_delete_row("proton_nmr", proton_id)
+        if not use_local_read_backend():
+            invalidate_cached_views()
+            return
     _sqlite_delete_row("proton_nmr", proton_id)
     invalidate_cached_views()
 
@@ -10980,6 +11056,9 @@ def delete_carbon_record_by_id(carbon_id):
     ensure_write_target_ready()
     if use_supabase_write_backend():
         supabase_delete_row("carbon_nmr", carbon_id)
+        if not use_local_read_backend():
+            invalidate_cached_views()
+            return
     _sqlite_delete_row("carbon_nmr", carbon_id)
     invalidate_cached_views()
 
@@ -11001,6 +11080,9 @@ def delete_spectrum_file_record_by_id(file_id):
     ensure_write_target_ready()
     if use_supabase_write_backend():
         supabase_delete_row("spectra_files", file_id)
+        if not use_local_read_backend():
+            invalidate_cached_views()
+            return
     _sqlite_delete_row("spectra_files", file_id)
     invalidate_cached_views()
 
@@ -11022,6 +11104,9 @@ def delete_bioactivity_record_by_id(bioactivity_id):
     ensure_write_target_ready()
     if use_supabase_write_backend():
         supabase_delete_row("bioactivity_records", bioactivity_id)
+        if not use_local_read_backend():
+            invalidate_cached_views()
+            return
     _sqlite_delete_row("bioactivity_records", bioactivity_id)
     invalidate_cached_views()
 
