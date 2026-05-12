@@ -3538,6 +3538,14 @@ def get_table_columns(table_name: str):
         conn.close()
 
 
+def ensure_columns_with_cursor(cursor, table_name: str, required_columns: dict[str, str]):
+    cursor.execute(f"PRAGMA table_info({table_name})")
+    existing = {row[1] for row in cursor.fetchall()}
+    for column_name, data_type in required_columns.items():
+        if column_name not in existing:
+            cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {data_type}")
+
+
 def ensure_database_schema():
     conn = get_connection()
     try:
@@ -3650,6 +3658,53 @@ def ensure_database_schema():
                 note TEXT,
                 FOREIGN KEY (compound_id) REFERENCES compounds(id) ON DELETE CASCADE
             )
+            """
+        )
+        ensure_columns_with_cursor(
+            cursor,
+            "compounds",
+            {
+                "issue": "TEXT",
+                "ccdc_number": "TEXT",
+                "molecular_weight": "REAL",
+                "smiles": "TEXT",
+                "inchi": "TEXT",
+                "inchikey": "TEXT",
+                "hrms_data": "TEXT",
+                "source_category": "TEXT",
+                "source_organism": "TEXT",
+                "source_material": "TEXT",
+                "cd_data": "TEXT",
+                "article_title": "TEXT",
+                "curation_status": "TEXT DEFAULT 'curated'",
+                "created_at": "TEXT",
+                "updated_at": "TEXT",
+            },
+        )
+        ensure_columns_with_cursor(
+            cursor,
+            "bioactivity_records",
+            {
+                "activity_label": "TEXT",
+                "target_name": "TEXT",
+                "target_category": "TEXT",
+                "assay_type": "TEXT",
+                "potency_type": "TEXT",
+                "potency_relation": "TEXT",
+                "potency_value": "REAL",
+                "potency_unit": "TEXT",
+                "outcome": "TEXT",
+                "assay_medium": "TEXT",
+                "selectivity": "TEXT",
+                "assay_source": "TEXT",
+                "note": "TEXT",
+            },
+        )
+        cursor.execute(
+            """
+            UPDATE compounds
+            SET curation_status = 'curated'
+            WHERE curation_status IS NULL OR TRIM(curation_status) = ''
             """
         )
         cursor.execute(
