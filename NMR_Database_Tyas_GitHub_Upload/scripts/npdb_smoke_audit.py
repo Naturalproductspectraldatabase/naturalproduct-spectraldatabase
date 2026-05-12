@@ -323,7 +323,8 @@ def main() -> int:
         else:
             audit.fail("git tracked-file audit", "git ls-files failed")
 
-        token_scan = run_command(["git", "grep", "-Il", "eyJhbGciOi"], cwd=REPO_ROOT)
+        jwt_header_probe = "eyJ" + "hbGciOi"
+        token_scan = run_command(["git", "grep", "-Il", jwt_header_probe], cwd=REPO_ROOT)
         audit.require(token_scan.returncode in {1}, "no JWT-like keys tracked")
 
     return audit.report()

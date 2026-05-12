@@ -112,6 +112,7 @@ OWNER_EDITOR_USERNAME = "npdb_tyas"
 OWNER_EDITOR_ROLES = {"owner", "owner_editor", "admin", "editor"}
 PASSWORD_HASH_SCHEME = "pbkdf2_sha256"
 SUPABASE_PAGE_SIZE = 1000
+DATA_CACHE_TTL_SECONDS = 300
 
 
 def pick_branding_asset(*filenames: str) -> Path:
@@ -380,7 +381,7 @@ MARINE_SOURCE_ORGANISM_HINTS = [
     "oscillatoria",
     "stylissa",
 ]
-SOURCE_NORMALIZATION_CACHE_VERSION = "marine-source-v4"
+SOURCE_NORMALIZATION_CACHE_VERSION = "marine-source-v5"
 DEFAULT_DATA_SOURCE_OPTIONS = ["Experimental", "Literature", "In-house Archive"]
 DEFAULT_SOLVENT_OPTIONS = ["CDCl3", "DMSO-d6", "CD3OD", "Acetone-d6", "Pyridine-d5"]
 DEFAULT_SPECTRUM_TYPES = [
@@ -2361,8 +2362,9 @@ div[data-testid="stButton"] button[data-testid="stBaseButton-primary"] {
     display: flex !important;
     align-items: center !important;
     justify-content: flex-start !important;
+    gap: 0.76rem !important;
     text-align: left !important;
-    padding: 0.48rem 0.78rem !important;
+    padding: 0.52rem 0.86rem !important;
     border-radius: 14px !important;
     background: transparent !important;
     border: 1px solid transparent !important;
@@ -2372,15 +2374,17 @@ div[data-testid="stButton"] button[data-testid="stBaseButton-primary"] {
 }
 
 [data-testid="stSidebar"] div[data-testid="stButton"] button > div {
-    width: 100% !important;
+    width: auto !important;
+    flex: 1 1 auto !important;
     display: flex !important;
     align-items: center !important;
-    justify-content: start !important;
-    gap: 0.72rem !important;
+    justify-content: flex-start !important;
+    gap: 0 !important;
     min-width: 0 !important;
 }
 
 [data-testid="stSidebar"] div[data-testid="stButton"] button p {
+    flex: 1 1 auto !important;
     margin: 0 !important;
     text-align: left !important;
     white-space: normal !important;
@@ -2393,8 +2397,8 @@ div[data-testid="stButton"] button[data-testid="stBaseButton-primary"] {
 [data-testid="stSidebar"] div[data-testid="stButton"] button span[data-testid="stIconMaterial"] {
     width: 1.36rem !important;
     height: 1.36rem !important;
-    min-width: 1.36rem !important;
-    flex: 0 0 1.56rem !important;
+    min-width: 1.72rem !important;
+    flex: 0 0 1.72rem !important;
     margin: 0 !important;
     font-size: 1.34rem !important;
     line-height: 1 !important;
@@ -5086,7 +5090,7 @@ def count_bioactivity_records(filtered_ids):
         conn.close()
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def count_database_totals(_db_signature: float):
     if use_supabase_backend():
         compounds_df = load_all_compounds()
@@ -11369,7 +11373,7 @@ def get_db_signature():
     return DB_PATH.stat().st_mtime
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_all_compounds(source_normalization_version: str = SOURCE_NORMALIZATION_CACHE_VERSION):
     _ = source_normalization_version
     columns = compound_select_columns()
@@ -11379,7 +11383,7 @@ def load_all_compounds(source_normalization_version: str = SOURCE_NORMALIZATION_
     return enrich_compounds_dataframe(_sqlite_dataframe(f"SELECT {columns} FROM compounds ORDER BY id ASC"))
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_compound_row(compound_id, source_normalization_version: str = SOURCE_NORMALIZATION_CACHE_VERSION):
     _ = source_normalization_version
     columns = compound_select_columns()
@@ -11389,7 +11393,7 @@ def load_compound_row(compound_id, source_normalization_version: str = SOURCE_NO
     return enrich_compounds_dataframe(_sqlite_dataframe(f"SELECT {columns} FROM compounds WHERE id = ?", (compound_id,)))
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_proton_data(compound_id):
     columns = "id,compound_id,delta_ppm,multiplicity,j_value,proton_count,assignment,solvent,instrument_mhz,note"
     if use_supabase_backend():
@@ -11397,7 +11401,7 @@ def load_proton_data(compound_id):
     return _sqlite_dataframe(f"SELECT {columns} FROM proton_nmr WHERE compound_id = ? ORDER BY delta_ppm DESC", (compound_id,))
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_all_proton_data():
     columns = "id,compound_id,delta_ppm,multiplicity,j_value,proton_count,assignment,solvent,instrument_mhz,note"
     if use_supabase_backend():
@@ -11406,7 +11410,7 @@ def load_all_proton_data():
     return _sqlite_dataframe("SELECT p.id, p.compound_id, c.trivial_name, p.delta_ppm, p.multiplicity, p.j_value, p.proton_count, p.assignment, p.solvent, p.instrument_mhz, p.note FROM proton_nmr p LEFT JOIN compounds c ON p.compound_id = c.id ORDER BY p.id ASC")
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_proton_row(proton_id):
     columns = "id,compound_id,delta_ppm,multiplicity,j_value,proton_count,assignment,solvent,instrument_mhz,note"
     if use_supabase_backend():
@@ -11414,7 +11418,7 @@ def load_proton_row(proton_id):
     return _sqlite_dataframe(f"SELECT {columns} FROM proton_nmr WHERE id = ?", (proton_id,))
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_carbon_data(compound_id):
     columns = "id,compound_id,delta_ppm,carbon_type,assignment,solvent,instrument_mhz,note"
     if use_supabase_backend():
@@ -11422,7 +11426,7 @@ def load_carbon_data(compound_id):
     return _sqlite_dataframe(f"SELECT {columns} FROM carbon_nmr WHERE compound_id = ? ORDER BY delta_ppm DESC", (compound_id,))
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_all_carbon_data():
     columns = "id,compound_id,delta_ppm,carbon_type,assignment,solvent,instrument_mhz,note"
     if use_supabase_backend():
@@ -11431,7 +11435,7 @@ def load_all_carbon_data():
     return _sqlite_dataframe("SELECT c.id, c.compound_id, cp.trivial_name, c.delta_ppm, c.carbon_type, c.assignment, c.solvent, c.instrument_mhz, c.note FROM carbon_nmr c LEFT JOIN compounds cp ON c.compound_id = cp.id ORDER BY c.id ASC")
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_carbon_row(carbon_id):
     columns = "id,compound_id,delta_ppm,carbon_type,assignment,solvent,instrument_mhz,note"
     if use_supabase_backend():
@@ -11439,7 +11443,7 @@ def load_carbon_row(carbon_id):
     return _sqlite_dataframe(f"SELECT {columns} FROM carbon_nmr WHERE id = ?", (carbon_id,))
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_spectra_files(compound_id):
     columns = "id,compound_id,spectrum_type,file_path,note"
     if use_supabase_backend():
@@ -11447,7 +11451,7 @@ def load_spectra_files(compound_id):
     return _sqlite_dataframe(f"SELECT {columns} FROM spectra_files WHERE compound_id = ? ORDER BY id ASC", (compound_id,))
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_all_spectra_files():
     columns = "id,compound_id,spectrum_type,file_path,note"
     if use_supabase_backend():
@@ -11456,7 +11460,7 @@ def load_all_spectra_files():
     return _sqlite_dataframe("SELECT s.id, s.compound_id, c.trivial_name, s.spectrum_type, s.file_path, s.note FROM spectra_files s LEFT JOIN compounds c ON s.compound_id = c.id ORDER BY s.id ASC")
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_spectrum_file_row(file_id):
     columns = "id,compound_id,spectrum_type,file_path,note"
     if use_supabase_backend():
@@ -11464,7 +11468,7 @@ def load_spectrum_file_row(file_id):
     return _sqlite_dataframe(f"SELECT {columns} FROM spectra_files WHERE id = ?", (file_id,))
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_bioactivity_data(compound_id):
     columns = "id,compound_id,activity_label,target_name,target_category,assay_type,potency_type,potency_relation,potency_value,potency_unit,outcome,assay_medium,selectivity,assay_source,note"
     if use_supabase_backend():
@@ -11472,7 +11476,7 @@ def load_bioactivity_data(compound_id):
     return _sqlite_dataframe(f"SELECT {columns} FROM bioactivity_records WHERE compound_id = ? ORDER BY id ASC", (compound_id,))
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_all_bioactivity_data():
     columns = "id,compound_id,activity_label,target_name,target_category,assay_type,potency_type,potency_relation,potency_value,potency_unit,outcome,assay_medium,selectivity,assay_source,note"
     if use_supabase_backend():
@@ -11481,7 +11485,7 @@ def load_all_bioactivity_data():
     return _sqlite_dataframe("SELECT b.id, b.compound_id, c.trivial_name, b.activity_label, b.target_name, b.target_category, b.assay_type, b.potency_type, b.potency_relation, b.potency_value, b.potency_unit, b.outcome, b.assay_medium, b.selectivity, b.assay_source, b.note FROM bioactivity_records b LEFT JOIN compounds c ON b.compound_id = c.id ORDER BY b.id ASC")
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_bioactivity_row(bioactivity_id):
     columns = "id,compound_id,activity_label,target_name,target_category,assay_type,potency_type,potency_relation,potency_value,potency_unit,outcome,assay_medium,selectivity,assay_source,note"
     if use_supabase_backend():
@@ -11535,7 +11539,7 @@ def count_bioactivity_records(filtered_ids):
         conn.close()
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_search_index(_db_signature: float):
     compounds_df = load_all_compounds()
     all_proton_df = load_all_proton_data()
