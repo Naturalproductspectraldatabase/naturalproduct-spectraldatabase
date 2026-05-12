@@ -4657,7 +4657,10 @@ def signed_supabase_storage_url(bucket: str, object_path: str, expires_in: int =
         return ""
     if signed_url.startswith("http"):
         return signed_url
-    return f"{get_supabase_url().rstrip()}{signed_url}"
+    signed_path = signed_url if signed_url.startswith("/") else f"/{signed_url}"
+    if signed_path.startswith("/storage/v1/"):
+        return f"{get_supabase_url().rstrip('/')}{signed_path}"
+    return f"{get_supabase_url().rstrip('/')}/storage/v1{signed_path}"
 
 
 def display_asset_url(value) -> str:
@@ -10923,7 +10926,11 @@ def use_supabase_write_backend() -> bool:
 def _supabase_ssl_context():
     if get_secret_setting("NPDB_SKIP_SSL_VERIFY") == "1":
         return ssl._create_unverified_context()
-    return None
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return None
 
 
 def ensure_write_target_ready():
