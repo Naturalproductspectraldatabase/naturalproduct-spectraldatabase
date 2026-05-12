@@ -380,7 +380,7 @@ MARINE_SOURCE_ORGANISM_HINTS = [
     "oscillatoria",
     "stylissa",
 ]
-SOURCE_NORMALIZATION_CACHE_VERSION = "marine-source-v3"
+SOURCE_NORMALIZATION_CACHE_VERSION = "marine-source-v4"
 DEFAULT_DATA_SOURCE_OPTIONS = ["Experimental", "Literature", "In-house Archive"]
 DEFAULT_SOLVENT_OPTIONS = ["CDCl3", "DMSO-d6", "CD3OD", "Acetone-d6", "Pyridine-d5"]
 DEFAULT_SPECTRUM_TYPES = [
