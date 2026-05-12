@@ -113,6 +113,8 @@ OWNER_EDITOR_ROLES = {"owner", "owner_editor", "admin", "editor"}
 PASSWORD_HASH_SCHEME = "pbkdf2_sha256"
 SUPABASE_PAGE_SIZE = 1000
 DATA_CACHE_TTL_SECONDS = 300
+EXTERNAL_ASSET_CACHE_TTL_SECONDS = 3600
+AUDIT_EVENTS_TABLE = "audit_events"
 
 
 def pick_branding_asset(*filenames: str) -> Path:
@@ -664,6 +666,31 @@ def cloud_backend_is_configured() -> bool:
             or get_secret_setting("SUPABASE_ANON_KEY")
         )
     )
+
+
+def decode_supabase_jwt_role(api_key: str) -> str:
+    token = str(api_key or "").strip()
+    if token.count(".") < 2:
+        return ""
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * ((4 - len(payload) % 4) % 4)
+        decoded = json.loads(base64.urlsafe_b64decode(payload.encode("ascii")))
+        return str(decoded.get("role", "")).strip()
+    except Exception:
+        return ""
+
+
+def is_server_write_key(api_key: str) -> bool:
+    token = str(api_key or "").strip()
+    if not token:
+        return False
+    jwt_role = decode_supabase_jwt_role(token)
+    if jwt_role:
+        return jwt_role == "service_role"
+    if token.startswith("sb_publishable_"):
+        return False
+    return token.startswith("sb_secret_")
 
 
 def should_initialize_sqlite_schema() -> bool:
@@ -1412,7 +1439,7 @@ def render_read_only_notice(feature_label: str):
         st.warning(
             "Cloud write mode is not active in this deployment yet. "
             "To prevent data divergence, editing is temporarily disabled until "
-            "`SUPABASE_SERVICE_ROLE_KEY` or `SUPABASE_SECRET_KEY` is configured in secure server-side secrets."
+            "a server-side Supabase service role key or secret key is configured in secure server-side secrets."
         )
         return
     st.info(
@@ -3453,10 +3480,35 @@ def get_connection():
 
 
 def invalidate_cached_views():
-    try:
-        st.cache_data.clear()
-    except Exception:
-        pass
+    cached_function_names = [
+        "count_database_totals",
+        "supabase_count_rows",
+        "load_all_compounds",
+        "load_compound_row",
+        "load_all_proton_data",
+        "load_proton_data",
+        "load_proton_row",
+        "load_all_carbon_data",
+        "load_carbon_data",
+        "load_carbon_row",
+        "load_all_spectra_files",
+        "load_spectra_files",
+        "load_spectrum_file_row",
+        "load_all_bioactivity_data",
+        "load_bioactivity_data",
+        "load_bioactivity_row",
+        "load_search_index",
+        "load_dashboard_preview_records",
+        "load_structure_search_index",
+    ]
+    for function_name in cached_function_names:
+        cached_function = globals().get(function_name)
+        clear_cache = getattr(cached_function, "clear", None)
+        if callable(clear_cache):
+            try:
+                clear_cache()
+            except Exception:
+                pass
 
 
 def table_exists(table_name: str) -> bool:
@@ -3789,6 +3841,15 @@ def render_cloud_sync_notice():
         )
     elif use_supabase_write_backend():
         return
+
+
+def stop_after_save_error(action_label: str, exc: Exception):
+    st.error(f"{action_label} belum tersimpan. Tidak ada perubahan yang dianggap berhasil.")
+    detail = str(exc).strip()
+    if detail:
+        st.caption(f"Detail teknis: {detail[:600]}")
+    st.stop()
+
 
 def safe_float_or_none(value):
     text = maybe_blank(value)
@@ -4996,6 +5057,27 @@ def load_standardized_structure_image(image_path: Path, size=STRUCTURE_DETAIL_IM
         return None
 
 
+@st.cache_data(show_spinner=False, ttl=EXTERNAL_ASSET_CACHE_TTL_SECONDS)
+def load_external_structure_png_bytes(source_text: str, size=STRUCTURE_DETAIL_IMAGE_SIZE, fallback_smiles: str = "") -> bytes:
+    if Image is None:
+        return b""
+    url = display_asset_url(source_text)
+    if not url:
+        return b""
+    try:
+        with urllib.request.urlopen(url, timeout=8, context=_supabase_ssl_context()) as response:
+            raw = response.read()
+        with Image.open(io.BytesIO(raw)) as image:
+            if fallback_smiles and max(image.size) < STRUCTURE_MIN_CRISP_ASSET_EDGE:
+                generated = standardized_structure_from_smiles(fallback_smiles, size=size)
+                if generated is not None:
+                    return pil_image_to_png_bytes(generated)
+            normalized = normalize_structure_image(image, size=size)
+            return pil_image_to_png_bytes(normalized)
+    except Exception:
+        return b""
+
+
 def load_standardized_structure_source(source_value, size=STRUCTURE_DETAIL_IMAGE_SIZE, fallback_smiles: str = ""):
     if Image is None or source_value is None:
         return None
@@ -5004,15 +5086,12 @@ def load_standardized_structure_source(source_value, size=STRUCTURE_DETAIL_IMAGE
         return None
 
     if is_external_url(source_text):
+        raw_png = load_external_structure_png_bytes(source_text, size=size, fallback_smiles=fallback_smiles)
+        if not raw_png:
+            return None
         try:
-            with urllib.request.urlopen(display_asset_url(source_text), timeout=30, context=_supabase_ssl_context()) as response:
-                raw = response.read()
-            with Image.open(io.BytesIO(raw)) as image:
-                if fallback_smiles and max(image.size) < STRUCTURE_MIN_CRISP_ASSET_EDGE:
-                    generated = standardized_structure_from_smiles(fallback_smiles, size=size)
-                    if generated is not None:
-                        return generated
-                return normalize_structure_image(image, size=size)
+            with Image.open(io.BytesIO(raw_png)) as image:
+                return image.copy()
         except Exception:
             return None
 
@@ -5091,32 +5170,48 @@ def count_bioactivity_records(filtered_ids):
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
+def supabase_count_rows(table: str, filters: dict | None = None) -> int:
+    if not use_supabase_backend():
+        return 0
+    query = {"select": "id"}
+    query.update(_supabase_filter_query(filters))
+    base = get_supabase_url().rstrip("/")
+    url = f"{base}/rest/v1/{table}?{urlencode(query, doseq=True, safe=',().:*+-')}"
+    request = urllib.request.Request(
+        url,
+        method="GET",
+        headers=_supabase_headers(
+            write=False,
+            extra={"Prefer": "count=exact", "Range-Unit": "items", "Range": "0-0"},
+        ),
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20, context=_supabase_ssl_context()) as response:
+            raw = response.read()
+            content_range = response.headers.get("Content-Range", "")
+    except urllib.error.HTTPError as exc:
+        details = exc.read().decode("utf-8", errors="ignore")
+        raise RuntimeError(f"Supabase count failed for '{table}' ({exc.code} {exc.reason}): {details}") from exc
+    if "/" in content_range:
+        total_text = content_range.rsplit("/", 1)[-1].strip()
+        if total_text and total_text != "*":
+            return int(total_text)
+    rows = json.loads(raw.decode("utf-8")) if raw else []
+    if isinstance(rows, dict):
+        return 1
+    return len(rows)
+
+
+@st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def count_database_totals(_db_signature: float):
     if use_supabase_backend():
-        compounds_df = load_all_compounds()
-        proton_df = load_all_proton_data()
-        carbon_df = load_all_carbon_data()
-        spectra_df = load_all_spectra_files()
-        bioactivity_df = load_all_bioactivity_data()
-        structure_columns = ["smiles", "inchi", "inchikey", "structure_image_path"]
-        structures_count = 0
-        if not compounds_df.empty:
-            available_columns = [column for column in structure_columns if column in compounds_df.columns]
-            if available_columns:
-                structures_count = int(
-                    compounds_df[available_columns]
-                    .fillna("")
-                    .astype(str)
-                    .apply(lambda row: any(value.strip() for value in row), axis=1)
-                    .sum()
-                )
         return {
-            "compounds": int(len(compounds_df)),
-            "structures": structures_count,
-            "proton": int(len(proton_df)),
-            "carbon": int(len(carbon_df)),
-            "spectra": int(len(spectra_df)),
-            "bioactivity": int(len(bioactivity_df)),
+            "compounds": supabase_count_rows("compounds"),
+            "structures": 0,
+            "proton": supabase_count_rows("proton_nmr"),
+            "carbon": supabase_count_rows("carbon_nmr"),
+            "spectra": supabase_count_rows("spectra_files"),
+            "bioactivity": supabase_count_rows("bioactivity_records"),
         }
 
     conn = get_connection()
@@ -5497,7 +5592,6 @@ def render_sidebar_nav_link(group_title: str, item: dict, is_active: bool):
         icon=SIDEBAR_NAV_LABEL_ICONS.get(item["label"]),
     ):
         navigate_internal(target_section, target_compound_page)
-        st.rerun()
 
 
 def clear_npdb_login_session():
@@ -5594,7 +5688,18 @@ def render_sidebar_workspace_summary(active_section: str, all_compounds_df: pd.D
     all_compounds_df = enrich_compounds_dataframe(all_compounds_df)
     totals_snapshot = count_database_totals(get_db_signature())
     total_compounds = int(totals_snapshot["compounds"])
-    structures_count = int(totals_snapshot.get("structures", 0))
+    structure_columns = ["smiles", "inchi", "inchikey", "structure_image_path"]
+    available_structure_columns = [column for column in structure_columns if column in all_compounds_df.columns]
+    if available_structure_columns and not all_compounds_df.empty:
+        structures_count = int(
+            all_compounds_df[available_structure_columns]
+            .fillna("")
+            .astype(str)
+            .apply(lambda row: any(value.strip() for value in row), axis=1)
+            .sum()
+        )
+    else:
+        structures_count = int(totals_snapshot.get("structures", 0))
     proton_count = int(totals_snapshot["proton"])
     carbon_count = int(totals_snapshot["carbon"])
     spectra_count = int(totals_snapshot["spectra"])
@@ -9461,63 +9566,66 @@ def show_compound_pages():
                         st.error("Mr must be a valid number.")
                         st.stop()
 
-                    if structure_upload is not None:
-                        structure_image_path = save_uploaded_asset(
-                            structure_upload,
-                            STRUCTURES_DIR,
-                            f"{trivial_name}_{sample_code or 'structure'}",
+                    try:
+                        if structure_upload is not None:
+                            structure_image_path = save_uploaded_asset(
+                                structure_upload,
+                                STRUCTURES_DIR,
+                                f"{trivial_name}_{sample_code or 'structure'}",
+                            )
+
+                        new_id = insert_compound_record(
+                            trivial_name=trivial_name,
+                            iupac_name=iupac_name,
+                            molecular_formula=molecular_formula,
+                            compound_class=compound_class,
+                            compound_subclass=compound_subclass,
+                            smiles=smiles,
+                            inchi=inchi,
+                            inchikey=inchikey,
+                            source_category=source_category,
+                            source_organism=source_organism,
+                            source_material=source_material,
+                            sample_code=sample_code,
+                            collection_location=collection_location,
+                            gps_coordinates=gps_coordinates,
+                            depth_m=depth_value,
+                            uv_data=uv_data,
+                            ftir_data=ftir_data,
+                            cd_data=cd_data,
+                            optical_rotation=optical_rotation,
+                            melting_point=melting_point,
+                            crystallization_method=crystallization_method,
+                            structure_image_path=structure_image_path,
+                            journal_name=journal_name,
+                            article_title=article_title,
+                            publication_year=publication_year,
+                            volume=volume,
+                            issue=issue,
+                            pages=pages,
+                            doi=doi,
+                            ccdc_number=ccdc_number,
+                            molecular_weight=molecular_weight_value,
+                            hrms_data=hrms_data,
+                            data_source=data_source,
+                            curation_status=curation_status,
+                            note=note,
                         )
 
-                    new_id = insert_compound_record(
-                        trivial_name=trivial_name,
-                        iupac_name=iupac_name,
-                        molecular_formula=molecular_formula,
-                        compound_class=compound_class,
-                        compound_subclass=compound_subclass,
-                        smiles=smiles,
-                        inchi=inchi,
-                        inchikey=inchikey,
-                        source_category=source_category,
-                        source_organism=source_organism,
-                        source_material=source_material,
-                        sample_code=sample_code,
-                        collection_location=collection_location,
-                        gps_coordinates=gps_coordinates,
-                        depth_m=depth_value,
-                        uv_data=uv_data,
-                        ftir_data=ftir_data,
-                        cd_data=cd_data,
-                        optical_rotation=optical_rotation,
-                        melting_point=melting_point,
-                        crystallization_method=crystallization_method,
-                        structure_image_path=structure_image_path,
-                        journal_name=journal_name,
-                        article_title=article_title,
-                        publication_year=publication_year,
-                        volume=volume,
-                        issue=issue,
-                        pages=pages,
-                        doi=doi,
-                        ccdc_number=ccdc_number,
-                        molecular_weight=molecular_weight_value,
-                        hrms_data=hrms_data,
-                        data_source=data_source,
-                        curation_status=curation_status,
-                        note=note,
-                    )
-
-                    for uploaded_file in uploaded_spectra:
-                        saved_path = save_uploaded_asset(
-                            uploaded_file,
-                            SPECTRA_DIR,
-                            f"compound_{new_id}_{uploaded_spectrum_type}_{uploaded_file.name}",
-                        )
-                        insert_spectrum_file_record(
-                            compound_id=new_id,
-                            spectrum_type=uploaded_spectrum_type,
-                            file_path=saved_path,
-                            note=uploaded_spectrum_note,
-                        )
+                        for uploaded_file in uploaded_spectra:
+                            saved_path = save_uploaded_asset(
+                                uploaded_file,
+                                SPECTRA_DIR,
+                                f"compound_{new_id}_{uploaded_spectrum_type}_{uploaded_file.name}",
+                            )
+                            insert_spectrum_file_record(
+                                compound_id=new_id,
+                                spectrum_type=uploaded_spectrum_type,
+                                file_path=saved_path,
+                                note=uploaded_spectrum_note,
+                            )
+                    except Exception as exc:
+                        stop_after_save_error("Record baru", exc)
 
                     st.success(f"Record saved successfully. New Compound ID: {new_id}")
                     reset_compound_wizard()
@@ -9659,57 +9767,60 @@ def show_compound_pages():
                                 st.error("Mr must be a valid number.")
                                 st.stop()
 
-                        if structure_upload is not None:
-                            structure_image_path = save_uploaded_asset(
-                                structure_upload,
-                                STRUCTURES_DIR,
-                                f"{trivial_name}_{sample_code or edit_compound_id}_structure",
+                        try:
+                            if structure_upload is not None:
+                                structure_image_path = save_uploaded_asset(
+                                    structure_upload,
+                                    STRUCTURES_DIR,
+                                    f"{trivial_name}_{sample_code or edit_compound_id}_structure",
+                                )
+
+                            source_category, source_organism, source_material = resolve_editor_source_fields(
+                                source_category.strip(),
+                                source_organism.strip(),
+                                row.get("source_material"),
                             )
 
-                        source_category, source_organism, source_material = resolve_editor_source_fields(
-                            source_category.strip(),
-                            source_organism.strip(),
-                            row.get("source_material"),
-                        )
-
-                        update_compound_record(
-                            compound_id=edit_compound_id,
-                            trivial_name=trivial_name.strip(),
-                            iupac_name=iupac_name.strip(),
-                            molecular_formula=molecular_formula.strip(),
-                            compound_class=compound_class.strip(),
-                            compound_subclass=compound_subclass.strip(),
-                            smiles=smiles.strip(),
-                            inchi=inchi.strip(),
-                            inchikey=inchikey.strip(),
-                            source_category=source_category.strip(),
-                            source_organism=source_organism.strip(),
-                            source_material=source_material.strip(),
-                            sample_code=sample_code.strip(),
-                            collection_location=collection_location.strip(),
-                            gps_coordinates=gps_coordinates.strip(),
-                            depth_m=depth_value,
-                            uv_data=uv_data.strip(),
-                            ftir_data=ftir_data.strip(),
-                            cd_data=cd_data.strip(),
-                            optical_rotation=optical_rotation.strip(),
-                            melting_point=melting_point.strip(),
-                            crystallization_method=crystallization_method.strip(),
-                            structure_image_path=structure_image_path.strip(),
-                            journal_name=journal_name.strip(),
-                            article_title=article_title.strip(),
-                            publication_year=publication_year.strip(),
-                            volume=volume.strip(),
-                            issue=issue.strip(),
-                            pages=pages.strip(),
-                            doi=doi.strip(),
-                            ccdc_number=ccdc_number.strip(),
-                            molecular_weight=molecular_weight_value,
-                            hrms_data=hrms_data.strip(),
-                            data_source=data_source.strip(),
-                            curation_status=normalize_curation_status(curation_status, default="curated"),
-                            note=note.strip()
-                        )
+                            update_compound_record(
+                                compound_id=edit_compound_id,
+                                trivial_name=trivial_name.strip(),
+                                iupac_name=iupac_name.strip(),
+                                molecular_formula=molecular_formula.strip(),
+                                compound_class=compound_class.strip(),
+                                compound_subclass=compound_subclass.strip(),
+                                smiles=smiles.strip(),
+                                inchi=inchi.strip(),
+                                inchikey=inchikey.strip(),
+                                source_category=source_category.strip(),
+                                source_organism=source_organism.strip(),
+                                source_material=source_material.strip(),
+                                sample_code=sample_code.strip(),
+                                collection_location=collection_location.strip(),
+                                gps_coordinates=gps_coordinates.strip(),
+                                depth_m=depth_value,
+                                uv_data=uv_data.strip(),
+                                ftir_data=ftir_data.strip(),
+                                cd_data=cd_data.strip(),
+                                optical_rotation=optical_rotation.strip(),
+                                melting_point=melting_point.strip(),
+                                crystallization_method=crystallization_method.strip(),
+                                structure_image_path=structure_image_path.strip(),
+                                journal_name=journal_name.strip(),
+                                article_title=article_title.strip(),
+                                publication_year=publication_year.strip(),
+                                volume=volume.strip(),
+                                issue=issue.strip(),
+                                pages=pages.strip(),
+                                doi=doi.strip(),
+                                ccdc_number=ccdc_number.strip(),
+                                molecular_weight=molecular_weight_value,
+                                hrms_data=hrms_data.strip(),
+                                data_source=data_source.strip(),
+                                curation_status=normalize_curation_status(curation_status, default="curated"),
+                                note=note.strip()
+                            )
+                        except Exception as exc:
+                            stop_after_save_error("Perubahan record", exc)
 
                         st.success(f"Record ID {edit_compound_id} updated successfully.")
 
@@ -10976,10 +11087,11 @@ def get_supabase_anon_key() -> str:
 
 
 def get_supabase_service_role_key() -> str:
-    return (
-        get_secret_setting("SUPABASE_SERVICE_ROLE_KEY")
-        or get_secret_setting("SUPABASE_SECRET_KEY")
-    )
+    for key_name in ("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SECRET_KEY"):
+        candidate = get_secret_setting(key_name)
+        if is_server_write_key(candidate):
+            return candidate
+    return ""
 
 
 def get_npdb_read_backend() -> str:
@@ -11029,7 +11141,7 @@ def _supabase_ssl_context():
 def ensure_write_target_ready():
     if use_supabase_backend() and not use_supabase_write_backend():
         raise RuntimeError(
-            "Cloud write mode is not configured. To keep Supabase as the single source of truth, editing is blocked until SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SECRET_KEY is available."
+            "Cloud write mode is not configured. To keep Supabase as the single source of truth, editing is blocked until a server-side Supabase service role key or secret key is available."
         )
 
 
@@ -11046,10 +11158,119 @@ def _json_ready(value):
     return value
 
 
+def _audit_actor_context() -> dict:
+    try:
+        username = maybe_blank(st.session_state.get("npdb_username")) or "system"
+        role = maybe_blank(st.session_state.get("npdb_role")) or "system"
+    except Exception:
+        username = "system"
+        role = "system"
+    return {
+        "actor_username": username[:120],
+        "actor_role": role[:80],
+    }
+
+
+def _audit_details_for_row(row: dict | None) -> dict:
+    if not row:
+        return {"fields": []}
+    fields = sorted(str(key) for key, value in row.items() if key != "id" and value is not None)
+    return {"fields": fields}
+
+
+def _ensure_local_audit_schema():
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS audit_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_time TEXT NOT NULL,
+                actor_username TEXT,
+                actor_role TEXT,
+                action TEXT NOT NULL,
+                table_name TEXT NOT NULL,
+                row_id INTEGER,
+                backend TEXT NOT NULL,
+                details TEXT
+            )
+            """
+        )
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_events_time ON audit_events(event_time)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_events_table_row ON audit_events(table_name, row_id)")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _write_local_audit_event(payload: dict):
+    try:
+        _ensure_local_audit_schema()
+        conn = get_connection()
+        try:
+            conn.execute(
+                """
+                INSERT INTO audit_events (
+                    event_time, actor_username, actor_role, action, table_name, row_id, backend, details
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    payload.get("event_time"),
+                    payload.get("actor_username"),
+                    payload.get("actor_role"),
+                    payload.get("action"),
+                    payload.get("table_name"),
+                    payload.get("row_id"),
+                    payload.get("backend"),
+                    json.dumps(payload.get("details") or {}, sort_keys=True),
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
+
+def _write_supabase_audit_event(payload: dict):
+    try:
+        _supabase_request(
+            "POST",
+            f"/rest/v1/{AUDIT_EVENTS_TABLE}",
+            body=payload,
+            write=True,
+            extra_headers={"Prefer": "return=minimal"},
+            return_json=False,
+        )
+    except Exception:
+        pass
+
+
+def record_audit_event(action: str, table_name: str, row_id: int | None, backend: str, row: dict | None = None):
+    if table_name == AUDIT_EVENTS_TABLE:
+        return
+    actor = _audit_actor_context()
+    payload = {
+        "event_time": datetime.now(UTC).isoformat(),
+        "actor_username": actor["actor_username"],
+        "actor_role": actor["actor_role"],
+        "action": action,
+        "table_name": table_name,
+        "row_id": int(row_id) if row_id is not None else None,
+        "backend": backend,
+        "details": _audit_details_for_row(row),
+    }
+    if backend == "supabase" and use_supabase_write_backend():
+        _write_supabase_audit_event(payload)
+    elif backend == "sqlite":
+        _write_local_audit_event(payload)
+
+
 def _supabase_headers(write: bool = False, json_body: bool = True, extra: dict | None = None):
     api_key = get_supabase_service_role_key() if write else (get_supabase_service_role_key() or get_supabase_anon_key())
     if write and not api_key:
-        raise RuntimeError("Supabase writes require SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SECRET_KEY in server-side secrets.")
+        raise RuntimeError("Supabase writes require a server-side Supabase service role key or secret key.")
     headers = {
         "apikey": api_key,
         "Authorization": f"Bearer {api_key}",
@@ -11063,7 +11284,7 @@ def _supabase_headers(write: bool = False, json_body: bool = True, extra: dict |
 
 def _supabase_request(method: str, path: str, query: dict | None = None, body=None, write: bool = False, json_body: bool = True, extra_headers: dict | None = None, return_json: bool = True):
     if write and not use_supabase_write_backend():
-        raise RuntimeError("Supabase write mode is disabled because SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SECRET_KEY is missing.")
+        raise RuntimeError("Supabase write mode is disabled because a valid server-side write key is missing.")
     base = get_supabase_url().rstrip("/")
     url = f"{base}{path}"
     if query:
@@ -11133,6 +11354,34 @@ def supabase_select_df(table: str, columns: str = "*", filters: dict | None = No
     return pd.DataFrame(rows)
 
 
+def _supabase_insert_request(table: str, payload: dict):
+    return _supabase_request(
+        "POST",
+        f"/rest/v1/{table}",
+        query={"select": "id"},
+        body=payload,
+        write=True,
+        extra_headers={"Prefer": "return=representation"},
+    ) or []
+
+
+def supabase_next_table_id(table: str) -> int:
+    rows = _supabase_request(
+        "GET",
+        f"/rest/v1/{table}",
+        query={"select": "id", "order": "id.desc", "limit": 1},
+        write=False,
+    ) or []
+    if rows and rows[0].get("id") is not None:
+        return int(rows[0]["id"]) + 1
+    return 1
+
+
+def is_duplicate_primary_key_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "23505" in message and ("duplicate key" in message or "_pkey" in message)
+
+
 @st.cache_data(show_spinner=False)
 def supabase_column_available(table: str, column: str) -> bool:
     if not use_supabase_backend():
@@ -11200,15 +11449,15 @@ def compound_select_columns() -> str:
 
 def supabase_insert_row(table: str, row: dict):
     payload = {k: _json_ready(v) for k, v in row.items() if k and v is not None}
-    response = _supabase_request(
-        "POST",
-        f"/rest/v1/{table}",
-        query={"select": "id"},
-        body=payload,
-        write=True,
-        extra_headers={"Prefer": "return=representation"},
-    ) or []
+    try:
+        response = _supabase_insert_request(table, payload)
+    except RuntimeError as exc:
+        if "id" in payload or not is_duplicate_primary_key_error(exc):
+            raise
+        payload["id"] = supabase_next_table_id(table)
+        response = _supabase_insert_request(table, payload)
     if response:
+        record_audit_event("insert", table, response[0].get("id"), "supabase", payload)
         return response[0]
     return {}
 
@@ -11224,6 +11473,7 @@ def supabase_update_row(table: str, row_id: int, row: dict):
         extra_headers={"Prefer": "return=representation"},
     ) or []
     if response:
+        record_audit_event("update", table, row_id, "supabase", payload)
         return response[0]
     return {}
 
@@ -11237,6 +11487,7 @@ def supabase_delete_row(table: str, row_id: int):
         write=True,
         extra_headers={"Prefer": "return=minimal"},
     )
+    record_audit_event("delete", table, row_id, "supabase")
 
 
 def supabase_upload_bytes(bucket: str, object_path: str, data: bytes, content_type: str = "application/octet-stream", public_bucket: bool = True) -> str:
@@ -11299,6 +11550,8 @@ def _sqlite_upsert_row(table: str, row: dict) -> int | None:
             )
             row_id = row_id if row_id is not None else cursor.lastrowid
         conn.commit()
+        if not use_supabase_write_backend():
+            record_audit_event("update" if exists else "insert", table, row_id, "sqlite", row)
         return int(row_id) if row_id is not None else None
     finally:
         conn.close()
@@ -11310,6 +11563,8 @@ def _sqlite_delete_row(table: str, row_id: int):
         cursor = conn.cursor()
         cursor.execute(f"DELETE FROM {table} WHERE id = ?", (row_id,))
         conn.commit()
+        if not use_supabase_write_backend():
+            record_audit_event("delete", table, row_id, "sqlite")
     finally:
         conn.close()
 
@@ -11332,10 +11587,8 @@ def save_uploaded_asset(uploaded_file, target_dir: Path, base_name: str) -> str:
         public_bucket = False
         if target_dir == STRUCTURES_DIR:
             bucket = "structures"
-            public_bucket = True
         elif target_dir == SPECTRA_DIR:
             bucket = "spectra"
-            public_bucket = True
         upload_time = datetime.now(UTC)
         original_stem = Path(uploaded_file.name).stem
         object_name = f"{slugify_value(base_name + '_' + original_stem, fallback='asset')}_{upload_time.strftime('%H%M%S_%f')}{suffix}"
@@ -11849,7 +12102,13 @@ def _save_generated_structure_image(compound_id: int, mol) -> str:
 
     if use_supabase_write_backend():
         try:
-            return supabase_upload_bytes("structures", f"generated/{file_name}", data, content_type="image/png")
+            return supabase_upload_bytes(
+                "structures",
+                f"generated/{file_name}",
+                data,
+                content_type="image/png",
+                public_bucket=False,
+            )
         except Exception as exc:
             raise RuntimeError(
                 f"Cloud structure image upload failed for compound ID {compound_id}. The structure metadata was not saved."

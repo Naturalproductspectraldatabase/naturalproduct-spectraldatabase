@@ -7,7 +7,7 @@ import pandas as pd
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 DB_PATH = PROJECT_DIR / "database" / "nmr.db"
 EXPORT_DIR = PROJECT_DIR / "data" / "exports" / "supabase_import"
-TABLES = ["compounds", "proton_nmr", "carbon_nmr", "spectra_files"]
+TABLES = ["compounds", "proton_nmr", "carbon_nmr", "spectra_files", "bioactivity_records"]
 
 
 def main():

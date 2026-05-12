@@ -58,6 +58,12 @@ EXPECTED_SOURCE_ROWS = {
     4: ("Marine Cyanobacteria", "Oscillatoria sp."),
     5: ("Marine Sponge", "Haliclona sp."),
 }
+EXPECTED_SPECTRA_TYPES = {
+    6: {"1H", "13C"},
+}
+FORBIDDEN_SPECTRA_TYPES = {
+    6: {"Supporting Data"},
+}
 HTTP_CONTEXT = ssl.create_default_context(cafile=certifi.where()) if certifi else None
 
 
@@ -173,6 +179,28 @@ def rest_compound_source(url: str, key: str, compound_id: int) -> tuple[str, str
     return str(row.get("source_category") or ""), str(row.get("source_organism") or "")
 
 
+def rest_spectra_types(url: str, key: str, compound_id: int) -> set[str]:
+    query = urllib.parse.urlencode(
+        {
+            "select": "spectrum_type",
+            "compound_id": f"eq.{compound_id}",
+        }
+    )
+    endpoint = f"{url.rstrip('/')}/rest/v1/spectra_files?{query}"
+    request = urllib.request.Request(
+        endpoint,
+        headers={
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+        },
+        method="GET",
+    )
+    with urllib.request.urlopen(request, timeout=30, context=HTTP_CONTEXT) as response:
+        payload = response.read().decode("utf-8")
+    rows = __import__("json").loads(payload)
+    return {str(row.get("spectrum_type") or "") for row in rows}
+
+
 def sqlite_count(db_path: Path, table: str) -> int:
     with sqlite3.connect(db_path) as connection:
         return int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
@@ -187,6 +215,15 @@ def sqlite_source(db_path: Path, compound_id: int) -> tuple[str, str]:
     if row is None:
         raise RuntimeError(f"Compound {compound_id} not found")
     return str(row[0] or ""), str(row[1] or "")
+
+
+def sqlite_spectra_types(db_path: Path, compound_id: int) -> set[str]:
+    with sqlite3.connect(db_path) as connection:
+        rows = connection.execute(
+            "SELECT spectrum_type FROM spectra_files WHERE compound_id = ?",
+            (compound_id,),
+        ).fetchall()
+    return {str(row[0] or "") for row in rows}
 
 
 def run_command(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -291,6 +328,15 @@ def main() -> int:
             except Exception as exc:
                 audit.fail(f"Supabase source fields for compound {compound_id}", exc.__class__.__name__)
 
+        for compound_id, expected_types in EXPECTED_SPECTRA_TYPES.items():
+            try:
+                cloud_types = rest_spectra_types(url, service_key, compound_id)
+                forbidden_types = FORBIDDEN_SPECTRA_TYPES.get(compound_id, set())
+                audit.require(expected_types.issubset(cloud_types), f"Supabase spectra labels for compound {compound_id}", f"has {', '.join(sorted(expected_types))}")
+                audit.require(not forbidden_types.intersection(cloud_types), f"Supabase spectra has no obsolete labels for compound {compound_id}")
+            except Exception as exc:
+                audit.fail(f"Supabase spectra labels for compound {compound_id}", exc.__class__.__name__)
+
     if url and anon_key:
         for table in CORE_TABLES:
             try:
@@ -307,6 +353,15 @@ def main() -> int:
             audit.require(local_value == expected, f"local source fields for compound {compound_id}", "matches expected curated source")
         except Exception as exc:
             audit.fail(f"local source fields for compound {compound_id}", exc.__class__.__name__)
+
+    for compound_id, expected_types in EXPECTED_SPECTRA_TYPES.items():
+        try:
+            local_types = sqlite_spectra_types(LOCAL_DB, compound_id)
+            forbidden_types = FORBIDDEN_SPECTRA_TYPES.get(compound_id, set())
+            audit.require(expected_types.issubset(local_types), f"local spectra labels for compound {compound_id}", f"has {', '.join(sorted(expected_types))}")
+            audit.require(not forbidden_types.intersection(local_types), f"local spectra has no obsolete labels for compound {compound_id}")
+        except Exception as exc:
+            audit.fail(f"local spectra labels for compound {compound_id}", exc.__class__.__name__)
 
     if (REPO_ROOT / ".git").exists():
         tracked_files = run_command(["git", "ls-files"], cwd=REPO_ROOT)
