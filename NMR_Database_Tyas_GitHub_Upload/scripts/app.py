@@ -1246,6 +1246,12 @@ def verify_access_gate():
         unsafe_allow_html=True,
     )
 
+    locked_until = float(st.session_state.get("npdb_login_locked_until", 0) or 0)
+    login_locked = locked_until > time.time()
+    if login_locked:
+        remaining_seconds = max(1, int(locked_until - time.time()))
+        st.warning(f"Too many failed login attempts. Please try again in {remaining_seconds} second(s).")
+
     with st.form("npdb_access_gate"):
         badge_uri = inline_asset_data_uri(LOGIN_BADGE_PATH, max_px=120)
         badge_markup = (
@@ -1268,9 +1274,9 @@ def verify_access_gate():
             st.markdown(
                 '<div style="text-align:right; padding-top: 1.85rem;"><a class="auth-forgot-link" href="#login-access-help">Forgot password?</a></div>',
                 unsafe_allow_html=True,
-            )
+        )
         st.markdown('<div class="auth-meta"><div class="auth-meta-note">Approved users only. Contact the database owner if you need access.</div></div>', unsafe_allow_html=True)
-        submitted = st.form_submit_button("Open Database  →", width="stretch")
+        submitted = st.form_submit_button("Open Database  →", width="stretch", disabled=login_locked)
         st.markdown(
             '<div class="auth-footer">This access gate protects the curated NPDB workspace.</div>',
             unsafe_allow_html=True,
@@ -1338,8 +1344,17 @@ def verify_access_gate():
             st.session_state["npdb_role"] = matched_role
             st.session_state["npdb_auth_mode"] = matched_auth_mode
             st.session_state["npdb_remember_requested"] = bool(remember_me)
+            st.session_state["npdb_login_failures"] = 0
+            st.session_state["npdb_login_locked_until"] = 0.0
             st.rerun()
-        st.error("Access denied. Please check the approved credentials.")
+        failures = int(st.session_state.get("npdb_login_failures", 0) or 0) + 1
+        st.session_state["npdb_login_failures"] = failures
+        if failures >= 5:
+            lock_seconds = min(300, 30 * (2 ** min(failures - 5, 3)))
+            st.session_state["npdb_login_locked_until"] = time.time() + lock_seconds
+            st.error(f"Access denied. Too many failed attempts; login is paused for {lock_seconds} seconds.")
+        else:
+            st.error("Access denied. Please check the approved credentials.")
 
     st.stop()
 
