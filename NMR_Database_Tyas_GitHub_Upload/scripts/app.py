@@ -7996,15 +7996,14 @@ def render_spectra_section(compound_id):
                             st.caption(warning_message)
 
                 if is_external_url(file_path_value):
+                    preview_rendered = False
                     if can_preview_external_image(file_path_value, spectrum_type):
                         preview_url = google_drive_preview_url(file_path_value) if is_google_drive_url(file_path_value) else display_asset_url(file_path_value)
                         if preview_url:
                             st.image(preview_url, caption=f"{spectrum_type} preview", width="stretch")
-                    if is_google_drive_url(file_path_value):
-                        external_note = None
-                    else:
-                        external_note = None
-                    render_external_link_card("Remote file", display_asset_url(file_path_value), external_note)
+                            preview_rendered = True
+                    if not preview_rendered:
+                        render_external_link_card("Remote file", display_asset_url(file_path_value), None)
                     continue
 
                 if full_path is None or not full_path.exists():
