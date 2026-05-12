@@ -4656,8 +4656,18 @@ def signed_supabase_storage_url(bucket: str, object_path: str, expires_in: int =
     if not signed_url:
         return ""
     if signed_url.startswith("http"):
-        return signed_url
+        parsed = urlparse(signed_url)
+        encoded_path = quote(unquote(parsed.path), safe="/")
+        query = f"?{parsed.query}" if parsed.query else ""
+        fragment = f"#{parsed.fragment}" if parsed.fragment else ""
+        return f"{parsed.scheme}://{parsed.netloc}{encoded_path}{query}{fragment}"
     signed_path = signed_url if signed_url.startswith("/") else f"/{signed_url}"
+    parsed = urlparse(signed_path)
+    signed_path = quote(unquote(parsed.path), safe="/")
+    if parsed.query:
+        signed_path = f"{signed_path}?{parsed.query}"
+    if parsed.fragment:
+        signed_path = f"{signed_path}#{parsed.fragment}"
     if signed_path.startswith("/storage/v1/"):
         return f"{get_supabase_url().rstrip('/')}{signed_path}"
     return f"{get_supabase_url().rstrip('/')}/storage/v1{signed_path}"
