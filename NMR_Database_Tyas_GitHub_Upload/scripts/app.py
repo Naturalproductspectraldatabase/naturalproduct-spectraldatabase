@@ -399,6 +399,14 @@ DEFAULT_SPECTRUM_TYPES = [
     "HRMS",
     "Supporting Data",
 ]
+
+STRUCTURE_THUMBNAIL_IMAGE_SIZE = (720, 528)
+STRUCTURE_QUERY_PREVIEW_SIZE = (640, 460)
+STRUCTURE_RESULT_IMAGE_SIZE = (900, 620)
+STRUCTURE_DETAIL_IMAGE_SIZE = (1280, 920)
+STRUCTURE_DOWNLOAD_IMAGE_SIZE = (1280, 920)
+STRUCTURE_SAVE_IMAGE_SIZE = (1600, 1200)
+STRUCTURE_MIN_CRISP_ASSET_EDGE = 700
 DEFAULT_BIOACTIVITY_CATEGORIES = [
     "Cytotoxicity",
     "Antibacterial",
@@ -4506,7 +4514,7 @@ def render_structure_search_results(results: list[dict], search_type: str, limit
             )
             preview_col, meta_col = st.columns([1, 1.3])
             with preview_col:
-                render_structure_preview(item.get("matched_smiles"), caption=f"Query candidate #{i}", size=(380, 260))
+                render_structure_preview(item.get("matched_smiles"), caption=f"Query candidate #{i}", size=STRUCTURE_RESULT_IMAGE_SIZE)
             with meta_col:
                 st.markdown('<div class="structure-result-meta">', unsafe_allow_html=True)
                 st.markdown(f'<div class="structure-result-stat"><strong>Compound ID:</strong> {compound_id}</div>', unsafe_allow_html=True)
@@ -4881,7 +4889,7 @@ def render_sidebar_credit():
     )
 
 
-def normalize_structure_image(image_obj, size=(520, 360)):
+def normalize_structure_image(image_obj, size=STRUCTURE_DETAIL_IMAGE_SIZE):
     if Image is None or ImageOps is None or image_obj is None:
         return image_obj
     try:
@@ -4917,24 +4925,28 @@ def pil_image_to_png_bytes(image_obj) -> bytes:
 
 
 @st.cache_data(show_spinner=False)
-def structure_smiles_png_bytes(smiles_text: str, size=(300, 220)) -> bytes:
+def structure_smiles_png_bytes(smiles_text: str, size=STRUCTURE_THUMBNAIL_IMAGE_SIZE) -> bytes:
+    image = standardized_structure_from_smiles(smiles_text, size=size)
+    return pil_image_to_png_bytes(image)
+
+
+def standardized_structure_from_smiles(smiles_text: str, size=STRUCTURE_DETAIL_IMAGE_SIZE):
     if Chem is None or Draw is None:
-        return b""
+        return None
     smiles_value = maybe_blank(smiles_text)
     if not smiles_value:
-        return b""
+        return None
     try:
         mol = structure_text_to_mol(smiles_value)
         if mol is None:
-            return b""
-        image = normalize_structure_image(Draw.MolToImage(mol, size=size), size=size)
-        return pil_image_to_png_bytes(image)
+            return None
+        return normalize_structure_image(Draw.MolToImage(mol, size=size), size=size)
     except Exception:
-        return b""
+        return None
 
 
 @st.cache_data(show_spinner=False)
-def structure_smiles_data_uri(smiles_text: str, size=(300, 220)) -> str:
+def structure_smiles_data_uri(smiles_text: str, size=STRUCTURE_THUMBNAIL_IMAGE_SIZE) -> str:
     data = structure_smiles_png_bytes(smiles_text, size=size)
     if not data:
         return ""
@@ -4949,17 +4961,21 @@ def structure_smiles_image_url(smiles_text: str) -> str:
     return f"https://cactus.nci.nih.gov/chemical/structure/{quote(smiles_value, safe='')}/image"
 
 
-def load_standardized_structure_image(image_path: Path, size=(520, 360)):
+def load_standardized_structure_image(image_path: Path, size=STRUCTURE_DETAIL_IMAGE_SIZE, fallback_smiles: str = ""):
     if Image is None or image_path is None or not image_path.exists():
         return None
     try:
         with Image.open(image_path) as image:
+            if fallback_smiles and max(image.size) < STRUCTURE_MIN_CRISP_ASSET_EDGE:
+                generated = standardized_structure_from_smiles(fallback_smiles, size=size)
+                if generated is not None:
+                    return generated
             return normalize_structure_image(image, size=size)
     except Exception:
         return None
 
 
-def load_standardized_structure_source(source_value, size=(520, 360)):
+def load_standardized_structure_source(source_value, size=STRUCTURE_DETAIL_IMAGE_SIZE, fallback_smiles: str = ""):
     if Image is None or source_value is None:
         return None
     source_text = str(source_value).strip()
@@ -4971,6 +4987,10 @@ def load_standardized_structure_source(source_value, size=(520, 360)):
             with urllib.request.urlopen(display_asset_url(source_text), timeout=30, context=_supabase_ssl_context()) as response:
                 raw = response.read()
             with Image.open(io.BytesIO(raw)) as image:
+                if fallback_smiles and max(image.size) < STRUCTURE_MIN_CRISP_ASSET_EDGE:
+                    generated = standardized_structure_from_smiles(fallback_smiles, size=size)
+                    if generated is not None:
+                        return generated
                 return normalize_structure_image(image, size=size)
         except Exception:
             return None
@@ -4978,10 +4998,10 @@ def load_standardized_structure_source(source_value, size=(520, 360)):
     full_path = get_full_file_path(source_text)
     if full_path is None or not full_path.exists():
         return None
-    return load_standardized_structure_image(full_path, size=size)
+    return load_standardized_structure_image(full_path, size=size, fallback_smiles=fallback_smiles)
 
 
-def render_structure_preview(smiles_text: str, caption: str | None = None, empty_message: bool = True, size=(520, 360)):
+def render_structure_preview(smiles_text: str, caption: str | None = None, empty_message: bool = True, size=STRUCTURE_DETAIL_IMAGE_SIZE):
     smiles_value = maybe_blank(smiles_text)
     if not smiles_value:
         if empty_message:
@@ -5913,14 +5933,18 @@ def render_compound_card(row, show_preview: bool = True):
     if show_preview and preview_col is not None:
         with preview_col:
             source_value = row.get("structure_image_path")
-            standardized_image = load_standardized_structure_source(source_value, size=(300, 220))
+            standardized_image = load_standardized_structure_source(
+                source_value,
+                size=STRUCTURE_THUMBNAIL_IMAGE_SIZE,
+                fallback_smiles=row.get("smiles"),
+            )
             if standardized_image is not None:
                 st.image(standardized_image, width="stretch")
             elif source_value and is_external_url(str(source_value).strip()):
                 safe_url = display_asset_url(source_value).replace('"', "&quot;")
                 st.image(safe_url, width="stretch")
             else:
-                structure_png = structure_smiles_png_bytes(row.get("smiles"), size=(300, 220))
+                structure_png = structure_smiles_png_bytes(row.get("smiles"), size=STRUCTURE_THUMBNAIL_IMAGE_SIZE)
                 if structure_png:
                     st.image(structure_png, width="stretch")
                 else:
@@ -7642,7 +7666,7 @@ def _compound_structure_asset(row_data) -> tuple[bytes, str]:
         return structure_bytes, suffix or ".png"
     smiles_value = maybe_blank(row_data.get("smiles"))
     if smiles_value:
-        generated = structure_smiles_png_bytes(smiles_value, size=(900, 650))
+        generated = structure_smiles_png_bytes(smiles_value, size=STRUCTURE_DOWNLOAD_IMAGE_SIZE)
         if generated:
             return generated, ".png"
         fallback_url = structure_smiles_image_url(smiles_value)
@@ -8131,7 +8155,11 @@ def show_compound_detail(compound_id):
         st.markdown('<div class="structure-card">', unsafe_allow_html=True)
         structure_path = row_data["structure_image_path"]
         if pd.notna(structure_path) and str(structure_path).strip():
-            standardized_image = load_standardized_structure_source(structure_path, size=(520, 360))
+            standardized_image = load_standardized_structure_source(
+                structure_path,
+                size=STRUCTURE_DETAIL_IMAGE_SIZE,
+                fallback_smiles=row_data.get("smiles"),
+            )
             if standardized_image is not None:
                 st.image(standardized_image, width="stretch")
             else:
@@ -8143,7 +8171,7 @@ def show_compound_detail(compound_id):
                     if full_path:
                         st.code(str(full_path))
         else:
-            render_structure_preview(row_data.get("smiles"), caption=None, size=(520, 360))
+            render_structure_preview(row_data.get("smiles"), caption=None, size=STRUCTURE_DETAIL_IMAGE_SIZE)
         st.markdown('</div>', unsafe_allow_html=True)
 
     section_header("Physical, Spectral & Supporting Data")
@@ -8499,7 +8527,7 @@ def show_search_page(all_compounds_df):
                 preview_col, spacer_col = st.columns([0.78, 4.12], gap="small")
                 admin_col = save_col = None
             with preview_col:
-                render_structure_preview(query_smiles, caption="Current query", empty_message=False, size=(210, 150))
+                render_structure_preview(query_smiles, caption="Current query", empty_message=False, size=STRUCTURE_QUERY_PREVIEW_SIZE)
         else:
             preview_col = admin_col = save_col = spacer_col = None
 
@@ -11787,7 +11815,7 @@ def derive_structure_identifiers(structure_text: str) -> dict | None:
 def _save_generated_structure_image(compound_id: int, mol) -> str:
     if Draw is None or Image is None or mol is None:
         return ""
-    image = normalize_structure_image(Draw.MolToImage(mol, size=(720, 540)), size=(720, 540))
+    image = normalize_structure_image(Draw.MolToImage(mol, size=STRUCTURE_SAVE_IMAGE_SIZE), size=STRUCTURE_SAVE_IMAGE_SIZE)
     output = io.BytesIO()
     image.save(output, format="PNG", optimize=True)
     data = output.getvalue()
