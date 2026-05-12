@@ -354,6 +354,13 @@ DEFAULT_CLASS_OPTIONS = [
 ]
 DEFAULT_SOURCE_OPTIONS = [
     "Marine",
+    "Marine Sponge",
+    "Marine Cyanobacteria",
+    "Marine Soft Coral",
+    "Marine Hard Coral",
+    "Marine Tunicate",
+    "Marine Bacteria",
+    "Marine Fungus",
     "Sponge",
     "Soft Coral",
     "Hard Coral",
@@ -373,7 +380,7 @@ MARINE_SOURCE_ORGANISM_HINTS = [
     "oscillatoria",
     "stylissa",
 ]
-SOURCE_NORMALIZATION_CACHE_VERSION = "marine-source-v2"
+SOURCE_NORMALIZATION_CACHE_VERSION = "marine-source-v3"
 DEFAULT_DATA_SOURCE_OPTIONS = ["Experimental", "Literature", "In-house Archive"]
 DEFAULT_SOLVENT_OPTIONS = ["CDCl3", "DMSO-d6", "CD3OD", "Acetone-d6", "Pyridine-d5"]
 DEFAULT_SPECTRUM_TYPES = [
@@ -3791,17 +3798,30 @@ def normalize_source_category(value: str) -> str:
     return text
 
 
+def is_explicit_marine_source_category(value: str) -> bool:
+    text = maybe_blank(value).casefold()
+    if not text or "natural product" in text:
+        return False
+    return text.startswith("marine ")
+
+
 def infer_source_fields(source_category="", source_organism="", source_material="") -> tuple[str, str, str]:
     raw_category = maybe_blank(source_category)
     category = normalize_source_category(raw_category)
     organism = maybe_blank(source_organism)
     legacy = maybe_blank(source_material)
     raw_category_is_source_option = any(raw_category.casefold() == option.casefold() for option in DEFAULT_SOURCE_OPTIONS)
+    raw_category_is_explicit_marine_category = is_explicit_marine_source_category(raw_category)
     raw_category_has_marine_hint = any(token in raw_category.casefold() for token in MARINE_SOURCE_ORGANISM_HINTS)
     legacy_is_source_option = any(legacy.casefold() == option.casefold() for option in DEFAULT_SOURCE_OPTIONS)
     legacy_has_marine_hint = any(token in legacy.casefold() for token in MARINE_SOURCE_ORGANISM_HINTS)
 
-    if raw_category and raw_category_has_marine_hint and not raw_category_is_source_option:
+    if (
+        raw_category
+        and raw_category_has_marine_hint
+        and not raw_category_is_source_option
+        and not raw_category_is_explicit_marine_category
+    ):
         category = "Marine"
         if not organism and "natural product" not in raw_category.casefold():
             organism = raw_category
@@ -4011,7 +4031,7 @@ def select_or_custom(label: str, options: list[str], key: str, value: str = "", 
     if select_key not in st.session_state:
         selectbox_kwargs["index"] = select_options.index(default_value)
     selected = st.selectbox(**selectbox_kwargs)
-    show_custom_input = selected == "Custom..." or bool(custom_default)
+    show_custom_input = selected == "Custom..."
     if show_custom_input:
         custom_key = f"{key}_custom"
         custom_kwargs = {
