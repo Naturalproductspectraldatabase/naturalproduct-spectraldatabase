@@ -3861,6 +3861,23 @@ def infer_source_fields(source_category="", source_organism="", source_material=
     return category, organism, summary
 
 
+def resolve_editor_source_fields(source_category="", source_organism="", source_material="") -> tuple[str, str, str]:
+    raw_category = maybe_blank(source_category)
+    organism = maybe_blank(source_organism)
+    if raw_category:
+        category = normalize_source_category(raw_category)
+        if category and organism:
+            summary = f"{category} | {organism}"
+        elif category:
+            summary = category
+        elif organism:
+            summary = organism
+        else:
+            summary = maybe_blank(source_material)
+        return category, organism, summary
+    return infer_source_fields("", organism, source_material)
+
+
 def source_summary_from_record(record) -> str:
     category, organism, summary = infer_source_fields(
         record.get("source_category"),
@@ -9396,7 +9413,7 @@ def show_compound_pages():
                     compound_subclass = maybe_blank(get_wizard_value("wizard_compound_subclass_custom")) or maybe_blank(get_wizard_value("wizard_compound_subclass_select"))
                     source_category = maybe_blank(get_wizard_value("wizard_source_category_custom")) or maybe_blank(get_wizard_value("wizard_source_category_select"))
                     source_organism = maybe_blank(get_wizard_value("wizard_source_organism"))
-                    _, _, source_material = infer_source_fields(source_category, source_organism, "")
+                    source_category, source_organism, source_material = resolve_editor_source_fields(source_category, source_organism, "")
                     sample_code = maybe_blank(get_wizard_value("wizard_sample_code"))
                     collection_location = maybe_blank(get_wizard_value("wizard_collection_location"))
                     gps_coordinates = maybe_blank(get_wizard_value("wizard_gps_coordinates"))
@@ -9645,7 +9662,7 @@ def show_compound_pages():
                                 f"{trivial_name}_{sample_code or edit_compound_id}_structure",
                             )
 
-                        source_category, source_organism, source_material = infer_source_fields(
+                        source_category, source_organism, source_material = resolve_editor_source_fields(
                             source_category.strip(),
                             source_organism.strip(),
                             row.get("source_material"),
