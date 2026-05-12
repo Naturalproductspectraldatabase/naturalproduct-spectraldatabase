@@ -8329,7 +8329,8 @@ def show_search_page(all_compounds_df):
     search_mode = st.radio(
         "Search Mode",
         ["Keyword Search", "Structure Search", "13C Match", "1H Match", "Combined Match"],
-        horizontal=True
+        horizontal=True,
+        label_visibility="collapsed",
     )
 
     with st.sidebar.expander("Search Filters", expanded=True):
@@ -8846,6 +8847,7 @@ def show_overview_page(all_compounds_df):
         options=[4, 6, 8, 10, 12],
         value=6,
         key="dashboard_quick_browse_limit",
+        label_visibility="collapsed",
     )
     if filtered_df.empty:
         st.info("No compounds available for the selected filters.")
