@@ -17,7 +17,7 @@ import urllib.request
 import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import quote, urlencode, urlparse
+from urllib.parse import quote, unquote, urlencode, urlparse
 
 import pandas as pd
 import streamlit as st
@@ -3924,6 +3924,8 @@ def classify_storage_type(file_path_value: str) -> str:
     text = maybe_blank(file_path_value)
     if not text:
         return "Unknown"
+    if is_supabase_storage_reference(text):
+        return "Supabase Storage"
     if is_google_drive_url(text):
         return "Google Drive"
     if is_external_url(text):
@@ -4596,6 +4598,63 @@ def google_drive_download_url(value) -> str:
     return f"https://drive.google.com/uc?export=download&id={file_id}"
 
 
+def parse_supabase_storage_reference(value) -> tuple[str, str] | None:
+    text = maybe_blank(value)
+    if not text:
+        return None
+    if text.startswith("storage://"):
+        bucket, _, object_path = text.removeprefix("storage://").partition("/")
+        return (bucket, object_path) if bucket and object_path else None
+    if not is_external_url(text):
+        return None
+    supabase_url = get_supabase_url()
+    if not supabase_url:
+        return None
+    parsed = urlparse(text)
+    supabase_host = urlparse(supabase_url).netloc
+    if parsed.netloc != supabase_host:
+        return None
+    marker = "/storage/v1/object/public/"
+    if marker not in parsed.path:
+        return None
+    bucket, _, object_path = parsed.path.split(marker, 1)[1].partition("/")
+    if not bucket or not object_path:
+        return None
+    return unquote(bucket), unquote(object_path)
+
+
+def is_supabase_storage_reference(value) -> bool:
+    return parse_supabase_storage_reference(value) is not None
+
+
+@st.cache_data(show_spinner=False, ttl=900)
+def signed_supabase_storage_url(bucket: str, object_path: str, expires_in: int = 3600) -> str:
+    if not use_supabase_write_backend():
+        return ""
+    response = _supabase_request(
+        "POST",
+        f"/storage/v1/object/sign/{bucket}/{quote(object_path, safe='/')}",
+        body={"expiresIn": expires_in},
+        write=True,
+    )
+    signed_url = response.get("signedURL", "") if isinstance(response, dict) else ""
+    if not signed_url:
+        return ""
+    if signed_url.startswith("http"):
+        return signed_url
+    return f"{get_supabase_url().rstrip()}{signed_url}"
+
+
+def display_asset_url(value) -> str:
+    text = maybe_blank(value)
+    reference = parse_supabase_storage_reference(text)
+    if not reference:
+        return text
+    bucket, object_path = reference
+    signed_url = signed_supabase_storage_url(bucket, object_path)
+    return signed_url or text
+
+
 def can_preview_external_image(file_path_value, spectrum_type_value="") -> bool:
     path_text = maybe_blank(file_path_value).lower()
     spectrum_text = maybe_blank(spectrum_type_value).lower()
@@ -4861,7 +4920,7 @@ def load_standardized_structure_source(source_value, size=(520, 360)):
 
     if is_external_url(source_text):
         try:
-            with urllib.request.urlopen(source_text, timeout=30, context=_supabase_ssl_context()) as response:
+            with urllib.request.urlopen(display_asset_url(source_text), timeout=30, context=_supabase_ssl_context()) as response:
                 raw = response.read()
             with Image.open(io.BytesIO(raw)) as image:
                 return normalize_structure_image(image, size=size)
@@ -5803,7 +5862,7 @@ def render_compound_card(row, show_preview: bool = True):
             if standardized_image is not None:
                 st.image(standardized_image, width="stretch")
             elif source_value and is_external_url(str(source_value).strip()):
-                safe_url = str(source_value).strip().replace('"', "&quot;")
+                safe_url = display_asset_url(source_value).replace('"', "&quot;")
                 st.image(safe_url, width="stretch")
             else:
                 structure_png = structure_smiles_png_bytes(row.get("smiles"), size=(300, 220))
@@ -7510,7 +7569,7 @@ def _asset_bytes_from_source(source_value: str) -> tuple[bytes, str]:
         return b"", ""
     try:
         if is_external_url(source_text):
-            with urllib.request.urlopen(source_text, timeout=30, context=_supabase_ssl_context()) as response:
+            with urllib.request.urlopen(display_asset_url(source_text), timeout=30, context=_supabase_ssl_context()) as response:
                 data = response.read()
                 suffix = Path(urlparse(source_text).path).suffix or mimetypes.guess_extension(response.headers.get_content_type()) or ".bin"
                 return data, suffix
@@ -7852,14 +7911,14 @@ def render_spectra_section(compound_id):
 
                 if is_external_url(file_path_value):
                     if can_preview_external_image(file_path_value, spectrum_type):
-                        preview_url = google_drive_preview_url(file_path_value) if is_google_drive_url(file_path_value) else file_path_value
+                        preview_url = google_drive_preview_url(file_path_value) if is_google_drive_url(file_path_value) else display_asset_url(file_path_value)
                         if preview_url:
                             st.image(preview_url, caption=f"{spectrum_type} preview", width="stretch")
                     if is_google_drive_url(file_path_value):
                         external_note = "Google Drive link detected. Preview works when the file is shared with viewer access."
                     else:
                         external_note = "External repository link detected."
-                    render_external_link_card("Remote file", file_path_value, external_note)
+                    render_external_link_card("Remote file", display_asset_url(file_path_value), external_note)
                     continue
 
                 if full_path is None or not full_path.exists():
