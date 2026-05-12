@@ -9288,11 +9288,20 @@ def show_guide_page():
 def show_compound_pages():
     compound_options = COMPOUND_PAGE_OPTIONS if can_edit_database() else ["Browse Record"]
 
+    pending_page = st.session_state.pop("_pending_compound_page_radio", None)
+    if pending_page in LEGACY_COMPOUND_PAGE_MAP:
+        pending_page = LEGACY_COMPOUND_PAGE_MAP[pending_page]
+    if pending_page in compound_options:
+        st.session_state["compound_page"] = pending_page
+        st.session_state["compound_page_radio"] = pending_page
+
     current_page = st.session_state.get("compound_page", "Browse Record")
     if current_page not in compound_options:
         current_page = "Browse Record"
         st.session_state["compound_page"] = current_page
-        st.session_state["_pending_compound_page_radio"] = current_page
+        st.session_state["compound_page_radio"] = current_page
+    elif st.session_state.get("compound_page_radio") not in compound_options:
+        st.session_state["compound_page_radio"] = current_page
 
     compound_radio_kwargs = {
         "label": "Compound Workflow",
