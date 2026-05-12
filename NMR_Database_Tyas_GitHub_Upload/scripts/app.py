@@ -5647,6 +5647,7 @@ def render_sidebar_nav_link(group_title: str, item: dict, is_active: bool):
         icon=SIDEBAR_NAV_LABEL_ICONS.get(item["label"]),
     ):
         navigate_internal(target_section, target_compound_page)
+        st.rerun()
 
 
 def clear_npdb_login_session():
