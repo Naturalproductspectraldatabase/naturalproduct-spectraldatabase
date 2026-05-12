@@ -7955,7 +7955,7 @@ def render_bioactivity_table(compound_id: int):
 def render_spectra_section(compound_id):
     spectra_df = load_spectra_files(compound_id)
 
-    section_header("Spectra Files", "Registered previews, PDFs, raw-data links, and downloadable files.")
+    section_header("Spectra Files")
 
     if spectra_df.empty:
         st.info("No spectra files available.")
@@ -7969,24 +7969,31 @@ def render_spectra_section(compound_id):
         with st.expander(f"{spectrum_type} ({len(sub_df)})", expanded=True):
             for _, row in sub_df.iterrows():
                 file_id = row["id"]
-                file_path_value = row["file_path"]
+                file_path_value = maybe_blank(row["file_path"])
                 note_value = clean_text(row["note"])
                 full_path = get_full_file_path(file_path_value)
                 _, file_warnings = validate_spectrum_entry(file_path_value, spectrum_type)
+                note_markup = (
+                    f'<div class="badge-row"><strong>Note:</strong> {html_text(note_value)}</div>'
+                    if note_value != "-"
+                    else ""
+                )
 
                 st.markdown(
                     f"""
                     <div class="panel-card">
-                        <div class="result-title">File ID {html_text(file_id)}</div>
-                        <div class="badge-row"><strong>Storage:</strong> {html_text(classify_storage_type(file_path_value))}</div>
-                        <div class="badge-row"><strong>Path:</strong> {html_text(file_path_value)}</div>
-                        <div class="badge-row"><strong>Note:</strong> {html_text(note_value)}</div>
+                        <div class="result-title">{html_text(spectrum_type)} spectrum</div>
+                        {note_markup}
                     </div>
                     """,
                     unsafe_allow_html=True
                 )
-                for warning_message in file_warnings:
-                    st.caption(warning_message)
+                if is_owner_editor():
+                    with st.expander(f"Technical file details #{file_id}", expanded=False):
+                        st.write(f"Storage: {classify_storage_type(file_path_value)}")
+                        st.write(f"Path: {file_path_value}")
+                        for warning_message in file_warnings:
+                            st.caption(warning_message)
 
                 if is_external_url(file_path_value):
                     if can_preview_external_image(file_path_value, spectrum_type):
@@ -7994,15 +8001,15 @@ def render_spectra_section(compound_id):
                         if preview_url:
                             st.image(preview_url, caption=f"{spectrum_type} preview", width="stretch")
                     if is_google_drive_url(file_path_value):
-                        external_note = "Google Drive link detected. Preview works when the file is shared with viewer access."
+                        external_note = None
                     else:
-                        external_note = "External repository link detected."
+                        external_note = None
                     render_external_link_card("Remote file", display_asset_url(file_path_value), external_note)
                     continue
 
                 if full_path is None or not full_path.exists():
                     st.warning("File not found.")
-                    if full_path is not None:
+                    if is_owner_editor() and full_path is not None:
                         st.code(str(full_path))
                     continue
 
@@ -8186,7 +8193,6 @@ def show_compound_detail(compound_id):
         render_kv("Melting Point", row_data["melting_point"])
     with spectral_col3:
         render_kv("Crystallization Method", row_data["crystallization_method"])
-        render_kv("Structure Image Path", row_data["structure_image_path"])
         render_kv("Reference DOI / Journal", f"{clean_text(row_data['doi'])} / {clean_text(row_data['journal_name'])}")
 
     section_header("1H NMR Table")
