@@ -5604,13 +5604,22 @@ def render_sidebar_navigation():
     current_compound_page = st.session_state.get("compound_page", "Browse Record")
 
     for group_title, items in SIDEBAR_NAV_GROUPS:
+        visible_items = [
+            item for item in items
+            if not (
+                item.get("compound_page")
+                and not can_edit_database()
+                and item.get("compound_page") != "Browse Record"
+            )
+        ]
+        if not visible_items:
+            continue
+
         if group_title == "Data Library":
             with st.expander("Additional Views", expanded=False):
-                for item in items:
+                for item in visible_items:
                     target_section = item["section"]
                     target_compound_page = item.get("compound_page")
-                    if target_compound_page and not can_edit_database() and target_compound_page != "Browse Record":
-                        continue
                     is_active = current_section == target_section
                     if target_compound_page:
                         is_active = is_active and current_compound_page == target_compound_page
@@ -5618,11 +5627,9 @@ def render_sidebar_navigation():
             continue
 
         st.markdown(f'<div class="sidebar-menu-caption">{group_title}</div>', unsafe_allow_html=True)
-        for item in items:
+        for item in visible_items:
             target_section = item["section"]
             target_compound_page = item.get("compound_page")
-            if target_compound_page and not can_edit_database() and target_compound_page != "Browse Record":
-                continue
             is_active = current_section == target_section
             if target_compound_page:
                 is_active = is_active and current_compound_page == target_compound_page
