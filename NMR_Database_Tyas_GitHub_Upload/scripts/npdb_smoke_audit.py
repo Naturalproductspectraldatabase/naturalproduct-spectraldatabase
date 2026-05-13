@@ -252,6 +252,55 @@ def rest_sequence_insert_healthcheck(url: str, key: str) -> tuple[bool, str]:
                 pass
 
 
+def rest_audit_event_healthcheck(url: str, key: str) -> tuple[bool, str]:
+    endpoint = f"{url.rstrip('/')}/rest/v1/audit_events?select=id"
+    headers = {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+    payload = {
+        "actor_username": "npdb_smoke_audit",
+        "actor_role": "system",
+        "action": "healthcheck",
+        "table_name": "audit_events",
+        "backend": "supabase",
+        "details": {"safe": "temporary"},
+    }
+    request = urllib.request.Request(
+        endpoint,
+        data=json.dumps(payload).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    row_id: int | None = None
+    try:
+        with urllib.request.urlopen(request, timeout=30, context=HTTP_CONTEXT) as response:
+            rows = json.loads(response.read().decode("utf-8") or "[]")
+        if rows and rows[0].get("id") is not None:
+            row_id = int(rows[0]["id"])
+            return True, f"temporary audit event {row_id} created and cleaned up"
+        return False, "insert returned no ID"
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="ignore")[:160]
+        return False, f"HTTP {exc.code}: {detail}"
+    except Exception as exc:
+        return False, exc.__class__.__name__
+    finally:
+        if row_id is not None:
+            delete_endpoint = f"{url.rstrip('/')}/rest/v1/audit_events?id=eq.{row_id}"
+            delete_request = urllib.request.Request(
+                delete_endpoint,
+                headers={**headers, "Prefer": "return=minimal"},
+                method="DELETE",
+            )
+            try:
+                urllib.request.urlopen(delete_request, timeout=30, context=HTTP_CONTEXT).close()
+            except Exception:
+                pass
+
+
 def rest_storage_buckets(url: str, key: str) -> dict[str, dict[str, Any]]:
     endpoint = f"{url.rstrip('/')}/storage/v1/bucket"
     request = urllib.request.Request(
@@ -387,6 +436,9 @@ def main() -> int:
     if url and service_key:
         ok, detail = rest_sequence_insert_healthcheck(url, service_key)
         audit.require(ok, "Supabase compound insert auto-ID healthcheck", detail)
+
+        ok, detail = rest_audit_event_healthcheck(url, service_key)
+        audit.require(ok, "Supabase audit_events write healthcheck", detail)
 
         try:
             buckets = rest_storage_buckets(url, service_key)
