@@ -55,6 +55,7 @@ BASELINE_TABLE_COUNTS = {
     "bioactivity_records": 14631,
 }
 CORE_TABLES = tuple(BASELINE_TABLE_COUNTS.keys())
+PRIVATE_STORAGE_BUCKETS = ("structures", "spectra", "exports")
 EXPECTED_SOURCE_ROWS = {
     4: ("Marine Cyanobacteria", "Oscillatoria sp."),
     5: ("Marine Sponge", "Haliclona sp."),
@@ -251,6 +252,39 @@ def rest_sequence_insert_healthcheck(url: str, key: str) -> tuple[bool, str]:
                 pass
 
 
+def rest_storage_buckets(url: str, key: str) -> dict[str, dict[str, Any]]:
+    endpoint = f"{url.rstrip('/')}/storage/v1/bucket"
+    request = urllib.request.Request(
+        endpoint,
+        headers={
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+        },
+        method="GET",
+    )
+    with urllib.request.urlopen(request, timeout=30, context=HTTP_CONTEXT) as response:
+        rows = json.loads(response.read().decode("utf-8") or "[]")
+    return {str(row.get("name") or ""): row for row in rows if isinstance(row, dict)}
+
+
+def rest_storage_list_count(url: str, key: str, bucket: str) -> int:
+    endpoint = f"{url.rstrip('/')}/storage/v1/object/list/{urllib.parse.quote(bucket)}"
+    body = json.dumps({"prefix": "", "limit": 1, "offset": 0}).encode("utf-8")
+    request = urllib.request.Request(
+        endpoint,
+        data=body,
+        headers={
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=30, context=HTTP_CONTEXT) as response:
+        rows = json.loads(response.read().decode("utf-8") or "[]")
+    return len(rows) if isinstance(rows, list) else 0
+
+
 def sqlite_count(db_path: Path, table: str) -> int:
     with sqlite3.connect(db_path) as connection:
         return int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
@@ -354,6 +388,16 @@ def main() -> int:
         ok, detail = rest_sequence_insert_healthcheck(url, service_key)
         audit.require(ok, "Supabase compound insert auto-ID healthcheck", detail)
 
+        try:
+            buckets = rest_storage_buckets(url, service_key)
+            for bucket in PRIVATE_STORAGE_BUCKETS:
+                info = buckets.get(bucket)
+                audit.require(info is not None, f"storage bucket {bucket} exists")
+                if info is not None:
+                    audit.require(info.get("public") is False, f"storage bucket {bucket} is private")
+        except Exception as exc:
+            audit.fail("Supabase storage bucket security audit", exc.__class__.__name__)
+
     local_counts: dict[str, int] = {}
     for table, baseline_count in BASELINE_TABLE_COUNTS.items():
         try:
@@ -400,6 +444,15 @@ def main() -> int:
                 audit.pass_(f"anon REST cannot read {table}", f"HTTP {exc.code}")
             except Exception as exc:
                 audit.fail(f"anon REST cannot read {table}", exc.__class__.__name__)
+
+        for bucket in PRIVATE_STORAGE_BUCKETS:
+            try:
+                count = rest_storage_list_count(url, anon_key, bucket)
+                audit.require(count == 0, f"anon storage cannot list {bucket}", "0 exposed objects")
+            except urllib.error.HTTPError as exc:
+                audit.pass_(f"anon storage cannot list {bucket}", f"HTTP {exc.code}")
+            except Exception as exc:
+                audit.fail(f"anon storage cannot list {bucket}", exc.__class__.__name__)
 
     for compound_id, expected in EXPECTED_SOURCE_ROWS.items():
         try:
