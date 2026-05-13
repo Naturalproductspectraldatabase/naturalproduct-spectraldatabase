@@ -12,6 +12,7 @@ import base64
 import csv
 import hashlib
 import hmac
+import json
 import os
 import re
 import sqlite3
@@ -172,7 +173,7 @@ def rest_compound_source(url: str, key: str, compound_id: int) -> tuple[str, str
     )
     with urllib.request.urlopen(request, timeout=30, context=HTTP_CONTEXT) as response:
         payload = response.read().decode("utf-8")
-    rows = __import__("json").loads(payload)
+    rows = json.loads(payload)
     if not rows:
         raise RuntimeError(f"Compound {compound_id} not found")
     row = rows[0]
@@ -197,8 +198,57 @@ def rest_spectra_types(url: str, key: str, compound_id: int) -> set[str]:
     )
     with urllib.request.urlopen(request, timeout=30, context=HTTP_CONTEXT) as response:
         payload = response.read().decode("utf-8")
-    rows = __import__("json").loads(payload)
+    rows = json.loads(payload)
     return {str(row.get("spectrum_type") or "") for row in rows}
+
+
+def rest_sequence_insert_healthcheck(url: str, key: str) -> tuple[bool, str]:
+    """Safely prove that Supabase can auto-assign a fresh compound ID."""
+    endpoint = f"{url.rstrip('/')}/rest/v1/compounds?select=id"
+    headers = {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+    payload = {
+        "trivial_name": "__NPDB_SEQUENCE_HEALTHCHECK__",
+        "iupac_name": "__NPDB_SEQUENCE_HEALTHCHECK__",
+        "molecular_formula": "H2O",
+        "data_source": "Healthcheck",
+        "curation_status": "Draft",
+    }
+    request = urllib.request.Request(
+        endpoint,
+        data=json.dumps(payload).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    inserted_id: int | None = None
+    try:
+        with urllib.request.urlopen(request, timeout=30, context=HTTP_CONTEXT) as response:
+            rows = json.loads(response.read().decode("utf-8") or "[]")
+        if rows and rows[0].get("id") is not None:
+            inserted_id = int(rows[0]["id"])
+            return True, f"auto ID {inserted_id} assigned and cleaned up"
+        return False, "insert returned no ID"
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="ignore")[:160]
+        return False, f"HTTP {exc.code}: {detail}"
+    except Exception as exc:
+        return False, exc.__class__.__name__
+    finally:
+        if inserted_id is not None:
+            delete_endpoint = f"{url.rstrip('/')}/rest/v1/compounds?id=eq.{inserted_id}"
+            delete_request = urllib.request.Request(
+                delete_endpoint,
+                headers={**headers, "Prefer": "return=minimal"},
+                method="DELETE",
+            )
+            try:
+                urllib.request.urlopen(delete_request, timeout=30, context=HTTP_CONTEXT).close()
+            except Exception:
+                pass
 
 
 def sqlite_count(db_path: Path, table: str) -> int:
@@ -299,6 +349,10 @@ def main() -> int:
     audit.require(bool(url), "Supabase URL configured")
     audit.require(bool(service_key), "server-side Supabase write key configured")
     audit.require(bool(anon_key), "Supabase anon key configured")
+
+    if url and service_key:
+        ok, detail = rest_sequence_insert_healthcheck(url, service_key)
+        audit.require(ok, "Supabase compound insert auto-ID healthcheck", detail)
 
     local_counts: dict[str, int] = {}
     for table, baseline_count in BASELINE_TABLE_COUNTS.items():

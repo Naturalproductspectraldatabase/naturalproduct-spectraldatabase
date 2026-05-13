@@ -9689,6 +9689,11 @@ def show_compound_pages():
                                 file_path=saved_path,
                                 note=uploaded_spectrum_note,
                             )
+                        confirm_new_submission_persisted(
+                            int(new_id),
+                            trivial_name,
+                            expected_spectra_count=len(uploaded_spectra),
+                        )
                     except Exception as exc:
                         stop_after_save_error("Record baru", exc)
 
@@ -11809,6 +11814,25 @@ def load_bioactivity_row(bioactivity_id):
     if use_supabase_backend():
         return supabase_select_df("bioactivity_records", columns=columns, filters={"id": ("eq", bioactivity_id)})
     return _sqlite_dataframe(f"SELECT {columns} FROM bioactivity_records WHERE id = ?", (bioactivity_id,))
+
+
+def confirm_new_submission_persisted(compound_id: int, trivial_name: str, expected_spectra_count: int = 0):
+    compound_df = load_compound_row(compound_id)
+    if compound_df.empty:
+        raise RuntimeError(
+            "The new compound was not found when the active database was read back. Please retry after checking the cloud write settings."
+        )
+    stored_name = maybe_blank(compound_df.iloc[0].get("trivial_name"))
+    if maybe_blank(trivial_name) and stored_name != maybe_blank(trivial_name):
+        raise RuntimeError(
+            "The saved compound could not be verified because the read-back record did not match the submitted name."
+        )
+    if expected_spectra_count:
+        spectra_df = load_spectra_files(compound_id)
+        if len(spectra_df) < expected_spectra_count:
+            raise RuntimeError(
+                "The compound was saved, but not all uploaded spectra file records were found during read-back verification."
+            )
 
 
 def count_related_records(filtered_ids):
