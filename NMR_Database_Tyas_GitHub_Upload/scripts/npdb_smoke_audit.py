@@ -22,6 +22,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -56,6 +57,9 @@ BASELINE_TABLE_COUNTS = {
 }
 CORE_TABLES = tuple(BASELINE_TABLE_COUNTS.keys())
 PRIVATE_STORAGE_BUCKETS = ("structures", "spectra", "exports")
+TINY_PNG_BYTES = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+)
 EXPECTED_SOURCE_ROWS = {
     4: ("Marine Cyanobacteria", "Oscillatoria sp."),
     5: ("Marine Sponge", "Haliclona sp."),
@@ -334,6 +338,56 @@ def rest_storage_list_count(url: str, key: str, bucket: str) -> int:
     return len(rows) if isinstance(rows, list) else 0
 
 
+def rest_storage_upload_sign_healthcheck(url: str, key: str, bucket: str) -> tuple[bool, str]:
+    suffix = ".png" if bucket == "structures" else ".txt"
+    content_type = "image/png" if bucket == "structures" else "text/plain"
+    data = TINY_PNG_BYTES if bucket == "structures" else b"npdb storage healthcheck"
+    object_path = f"healthcheck/{uuid.uuid4().hex}{suffix}"
+    headers = {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+    }
+    upload_request = urllib.request.Request(
+        f"{url.rstrip('/')}/storage/v1/object/{urllib.parse.quote(bucket)}/{urllib.parse.quote(object_path, safe='/')}",
+        data=data,
+        headers={**headers, "Content-Type": content_type, "x-upsert": "true"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(upload_request, timeout=30, context=HTTP_CONTEXT):
+            pass
+
+        sign_request = urllib.request.Request(
+            f"{url.rstrip('/')}/storage/v1/object/sign/{urllib.parse.quote(bucket)}/{urllib.parse.quote(object_path, safe='/')}",
+            data=json.dumps({"expiresIn": 60}).encode("utf-8"),
+            headers={**headers, "Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(sign_request, timeout=30, context=HTTP_CONTEXT) as response:
+            signed_payload = response.read().decode("utf-8")
+        signed_data = json.loads(signed_payload or "{}")
+        signed_url = signed_data.get("signedURL") or signed_data.get("signedUrl") or ""
+        if not signed_url:
+            return False, "upload worked but signed URL was not returned"
+        return True, "temporary object uploaded, signed, and cleaned up"
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="ignore")[:160]
+        return False, f"HTTP {exc.code}: {detail}"
+    except Exception as exc:
+        return False, exc.__class__.__name__
+    finally:
+        delete_request = urllib.request.Request(
+            f"{url.rstrip('/')}/storage/v1/object/{urllib.parse.quote(bucket)}",
+            data=json.dumps({"prefixes": [object_path]}).encode("utf-8"),
+            headers={**headers, "Content-Type": "application/json"},
+            method="DELETE",
+        )
+        try:
+            urllib.request.urlopen(delete_request, timeout=30, context=HTTP_CONTEXT).close()
+        except Exception:
+            pass
+
+
 def sqlite_count(db_path: Path, table: str) -> int:
     with sqlite3.connect(db_path) as connection:
         return int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
@@ -449,6 +503,10 @@ def main() -> int:
                     audit.require(info.get("public") is False, f"storage bucket {bucket} is private")
         except Exception as exc:
             audit.fail("Supabase storage bucket security audit", exc.__class__.__name__)
+
+        for bucket in ("structures", "spectra"):
+            ok, detail = rest_storage_upload_sign_healthcheck(url, service_key, bucket)
+            audit.require(ok, f"storage bucket {bucket} upload/sign healthcheck", detail)
 
     local_counts: dict[str, int] = {}
     for table, baseline_count in BASELINE_TABLE_COUNTS.items():
