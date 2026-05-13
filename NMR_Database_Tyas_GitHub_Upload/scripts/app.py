@@ -1310,13 +1310,10 @@ def verify_access_gate():
         )
         username = st.text_input("Username", value="", placeholder="Enter your username", icon=":material/person:")
         password = st.text_input("Password", value="", type="password", placeholder="Enter your password", icon=":material/lock:")
-        remember_col, forgot_col = st.columns([1.1, 1])
-        with remember_col:
-            remember_me = st.checkbox("Remember me", value=False)
-        with forgot_col:
-            st.markdown(
-                '<div style="text-align:right; padding-top: 1.85rem;"><a class="auth-forgot-link" href="#login-access-help">Forgot password?</a></div>',
-                unsafe_allow_html=True,
+        remember_me = False
+        st.markdown(
+            '<div style="text-align:right; padding-top: 0.2rem;"><a class="auth-forgot-link" href="#login-access-help">Forgot password?</a></div>',
+            unsafe_allow_html=True,
         )
         st.markdown('<div class="auth-meta"><div class="auth-meta-note">Approved users only. Contact the database owner if you need access.</div></div>', unsafe_allow_html=True)
         submitted = st.form_submit_button("Open Database  →", width="stretch", disabled=login_locked)
