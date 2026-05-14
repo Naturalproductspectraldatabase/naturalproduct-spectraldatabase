@@ -442,6 +442,23 @@ def main() -> int:
     audit.require(compile_result.returncode == 0, "app.py compiles with current Python")
 
     try:
+        app_source = LOCAL_APP.read_text(encoding="utf-8")
+        audit.require(
+            'href="{html.escape(card_href)}"' not in app_source,
+            "dashboard workflow cards do not use query-link anchors",
+        )
+        audit.require(
+            'st.container(key="dashboard_workflow_native")' in app_source,
+            "dashboard workflow cards use native Streamlit state",
+        )
+        audit.require(
+            "dashboard_workflow_open_" not in app_source,
+            "dashboard workflow has no duplicate fallback buttons",
+        )
+    except Exception as exc:
+        audit.fail("dashboard workflow static regression audit", exc.__class__.__name__)
+
+    try:
         secrets = read_toml(LOCAL_SECRETS)
         audit.pass_("local secrets parse as TOML")
     except Exception as exc:

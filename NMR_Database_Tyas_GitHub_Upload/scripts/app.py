@@ -2932,6 +2932,70 @@ div[data-testid="stRadio"] label:has(input:checked) {
     border-color: rgba(97,216,237,0.28);
 }
 
+.dashboard-workflow-native {
+    padding: 1.1rem 1.12rem 1.25rem 1.12rem;
+}
+
+.st-key-dashboard_workflow_native {
+    border-radius: 26px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.018));
+    box-shadow: var(--shadow-soft);
+    padding: 1.1rem 1.12rem 1.25rem 1.12rem;
+    margin-bottom: 0.5rem;
+}
+
+.st-key-dashboard_workflow_native .dashboard-workflow-title {
+    margin-bottom: 1rem;
+}
+
+.dashboard-workflow-native div[data-testid="stHorizontalBlock"] {
+    gap: 1rem;
+}
+
+.st-key-dashboard_workflow_native div[data-testid="stButton"] button {
+    min-height: 188px !important;
+    width: 100% !important;
+    border-radius: 22px !important;
+    padding: 3.1rem 1rem 1rem 1rem !important;
+    align-items: flex-start !important;
+    justify-content: flex-start !important;
+    text-align: left !important;
+    white-space: pre-line !important;
+    line-height: 1.35 !important;
+    color: #F6FAFF !important;
+    background: linear-gradient(180deg, rgba(20, 31, 51, 0.82), rgba(10, 18, 31, 0.92)) !important;
+    border: 1px solid rgba(255,255,255,0.08) !important;
+    box-shadow: 0 20px 42px rgba(0,0,0,0.22) !important;
+}
+
+.st-key-dashboard_workflow_native div[data-testid="stButton"] button:hover {
+    transform: translateY(-1px);
+    border-color: rgba(97,216,237,0.32) !important;
+}
+
+.workflow-native-step {
+    width: 2.5rem;
+    height: 2.5rem;
+    display: grid;
+    place-items: center;
+    border-radius: 999px;
+    margin: 0 auto -2.75rem auto;
+    position: relative;
+    z-index: 2;
+    color: #F7FBFF;
+    font-weight: 820;
+    background: linear-gradient(135deg, rgba(55, 108, 207, 0.88), rgba(77, 66, 155, 0.9));
+    border: 1px solid rgba(97,216,237,0.48);
+    box-shadow: 0 0 0 4px rgba(97,216,237,0.08);
+}
+
+.workflow-native-step.is-primary {
+    background: linear-gradient(135deg, rgba(16, 210, 232, 0.92), rgba(88, 72, 214, 0.92));
+    border-color: rgba(97, 216, 237, 0.72);
+    box-shadow: 0 0 0 4px rgba(16, 210, 232, 0.12), 0 0 24px rgba(97, 216, 237, 0.2);
+}
+
 .workflow-step {
     position: absolute;
     top: -0.08rem;
@@ -6072,42 +6136,45 @@ def render_dashboard_showcase(
                 ("Download Data", "Export important metadata, NMR tables, and bioactivity summaries."),
             ]
         )
-        workflow_cards = []
-        for idx, (title, copy) in enumerate(workflow_steps, start=1):
-            is_primary = idx == 1
-            icon_markup = build_workflow_card_icon_markup(title)
-            if title == "Search Spectra":
-                card_href = build_internal_nav_href("Search & Match")
-            elif title in {"Browse Record", "Download Data"}:
-                card_href = build_internal_nav_href("Compound Workspace", "Browse Record")
-            elif title == "New Submission":
-                card_href = build_internal_nav_href("Compound Workspace", "New Submission")
-            elif title == "Batch Import":
-                card_href = build_internal_nav_href("Compound Workspace", "Batch Import")
-            elif title == "Update Metadata":
-                card_href = build_internal_nav_href("Compound Workspace", "Update Metadata")
-            else:
-                card_href = build_internal_nav_href("Compound Workspace", "Browse Record")
-            workflow_cards.append(
-                f"""
-                <a class="workflow-card {'is-primary' if is_primary else ''}" href="{html.escape(card_href)}" target="_self" aria-label="Open {html_text(title)}">
-                    <div class="workflow-step">{idx}</div>
-                    {icon_markup}
-                    <div class="workflow-title">{title}</div>
-                    <div class="workflow-copy">{copy}</div>
-                </a>
-                """
+        with st.container(key="dashboard_workflow_native"):
+            st.markdown(
+                f'<div class="dashboard-workflow-title">{workflow_title}</div>',
+                unsafe_allow_html=True,
             )
-        render_raw_html(
-            f"""
-            <div class="dashboard-workflow-shell">
-                <div class="dashboard-workflow-title">{workflow_title}</div>
-                <div class="dashboard-workflow-grid">
-                    {''.join(workflow_cards)}
-                </div>
-            </div>
-            """
-        )
+            workflow_icon_map = {
+                "Search Spectra": ":material/search:",
+                "Browse Record": ":material/plagiarism:",
+                "Download Data": ":material/download:",
+                "New Submission": ":material/note_add:",
+                "Batch Import": ":material/upload_file:",
+                "Update Metadata": ":material/edit_note:",
+            }
+            workflow_button_cols = st.columns(len(workflow_steps), gap="medium")
+            for idx, (title, copy) in enumerate(workflow_steps, start=1):
+                with workflow_button_cols[idx - 1]:
+                    st.markdown(
+                        f'<div class="workflow-native-step {"is-primary" if idx == 1 else ""}">{idx}</div>',
+                        unsafe_allow_html=True,
+                    )
+                    if st.button(
+                        f"{title}\n{copy}",
+                        key=f"dashboard_workflow_card_{idx}_{slugify_value(title)}",
+                        width="stretch",
+                        icon=workflow_icon_map.get(title),
+                    ):
+                        if title == "Search Spectra":
+                            navigate_internal("Search & Match")
+                        elif title in {"Browse Record", "Download Data"}:
+                            navigate_internal("Compound Workspace", "Browse Record")
+                        elif title == "New Submission":
+                            navigate_internal("Compound Workspace", "New Submission")
+                        elif title == "Batch Import":
+                            navigate_internal("Compound Workspace", "Batch Import")
+                        elif title == "Update Metadata":
+                            navigate_internal("Compound Workspace", "Update Metadata")
+                        else:
+                            navigate_internal("Compound Workspace", "Browse Record")
+                        st.rerun()
 
     with workspace_col:
         art_markup = f'<img class="dashboard-workspace-art" src="{workspace_uri}" alt="Compound workspace visual" />' if workspace_uri else ""
