@@ -2865,6 +2865,8 @@ div[data-testid="stRadio"] label:has(input:checked) {
     position: relative;
     background: linear-gradient(180deg, rgba(20, 31, 51, 0.82), rgba(10, 18, 31, 0.92));
     text-decoration: none;
+    color: inherit;
+    cursor: pointer;
     z-index: 1;
 }
 
@@ -6074,14 +6076,26 @@ def render_dashboard_showcase(
         for idx, (title, copy) in enumerate(workflow_steps, start=1):
             is_primary = idx == 1
             icon_markup = build_workflow_card_icon_markup(title)
+            if title == "Search Spectra":
+                card_href = build_internal_nav_href("Search & Match")
+            elif title in {"Browse Record", "Download Data"}:
+                card_href = build_internal_nav_href("Compound Workspace", "Browse Record")
+            elif title == "New Submission":
+                card_href = build_internal_nav_href("Compound Workspace", "New Submission")
+            elif title == "Batch Import":
+                card_href = build_internal_nav_href("Compound Workspace", "Batch Import")
+            elif title == "Update Metadata":
+                card_href = build_internal_nav_href("Compound Workspace", "Update Metadata")
+            else:
+                card_href = build_internal_nav_href("Compound Workspace", "Browse Record")
             workflow_cards.append(
                 f"""
-                <div class="workflow-card {'is-primary' if is_primary else ''}">
+                <a class="workflow-card {'is-primary' if is_primary else ''}" href="{html.escape(card_href)}" target="_self" aria-label="Open {html_text(title)}">
                     <div class="workflow-step">{idx}</div>
                     {icon_markup}
                     <div class="workflow-title">{title}</div>
                     <div class="workflow-copy">{copy}</div>
-                </div>
+                </a>
                 """
             )
         render_raw_html(
@@ -6094,23 +6108,6 @@ def render_dashboard_showcase(
             </div>
             """
         )
-        workflow_button_cols = st.columns(len(workflow_steps), gap="small")
-        for idx, (title, _copy) in enumerate(workflow_steps):
-            with workflow_button_cols[idx]:
-                if st.button(title, key=f"dashboard_workflow_open_{idx}_{slugify_value(title)}", width="stretch"):
-                    if title == "Search Spectra":
-                        navigate_internal("Search & Match")
-                    elif title in {"Browse Record", "Download Data"}:
-                        navigate_internal("Compound Workspace", "Browse Record")
-                    elif title == "New Submission":
-                        navigate_internal("Compound Workspace", "New Submission")
-                    elif title == "Batch Import":
-                        navigate_internal("Compound Workspace", "Batch Import")
-                    elif title == "Update Metadata":
-                        navigate_internal("Compound Workspace", "Update Metadata")
-                    else:
-                        navigate_internal("Compound Workspace", "Browse Record")
-                    st.rerun()
 
     with workspace_col:
         art_markup = f'<img class="dashboard-workspace-art" src="{workspace_uri}" alt="Compound workspace visual" />' if workspace_uri else ""
