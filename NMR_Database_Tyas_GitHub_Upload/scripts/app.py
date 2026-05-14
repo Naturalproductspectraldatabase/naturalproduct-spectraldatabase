@@ -1386,6 +1386,7 @@ def verify_access_gate():
             st.session_state["npdb_remember_requested"] = bool(remember_me)
             st.session_state["npdb_login_failures"] = 0
             st.session_state["npdb_login_locked_until"] = 0.0
+            st.session_state["npdb_show_workspace_loading"] = True
             st.rerun()
         failures = int(st.session_state.get("npdb_login_failures", 0) or 0) + 1
         st.session_state["npdb_login_failures"] = failures
@@ -1399,6 +1400,84 @@ def verify_access_gate():
     st.stop()
 
 verify_access_gate()
+
+
+def render_workspace_loading_screen():
+    logo_uri = inline_asset_data_uri(SIDEBAR_LOGO_PATH if SIDEBAR_LOGO_PATH.exists() else LOGIN_LOGO_PATH, max_px=120)
+    logo_markup = f'<img src="{logo_uri}" alt="NPDB logo" />' if logo_uri else ""
+    st.markdown(
+        _normalize_html_block(
+            f"""
+            <style>
+            [data-testid="stAppViewContainer"] {{
+                background:
+                    radial-gradient(circle at 28% 38%, rgba(24, 229, 255, 0.08), transparent 28%),
+                    radial-gradient(circle at 75% 42%, rgba(179, 78, 255, 0.09), transparent 30%),
+                    linear-gradient(135deg, #03101C 0%, #080A1B 100%);
+            }}
+            [data-testid="stHeader"],
+            [data-testid="stSidebar"] {{
+                display: none;
+            }}
+            .block-container {{
+                max-width: none !important;
+                min-height: 100vh;
+                padding: 0 !important;
+                display: grid;
+                place-items: center;
+            }}
+            .workspace-loading-card {{
+                display: inline-flex;
+                align-items: center;
+                gap: 0.85rem;
+                padding: 0.82rem 1.05rem;
+                border-radius: 18px;
+                background: linear-gradient(135deg, rgba(9, 22, 39, 0.92), rgba(25, 24, 52, 0.88));
+                border: 1px solid rgba(120, 210, 255, 0.18);
+                box-shadow: 0 24px 70px rgba(0, 0, 0, 0.34);
+            }}
+            .workspace-loading-card img {{
+                width: 48px;
+                height: 48px;
+                object-fit: contain;
+            }}
+            .workspace-loading-title {{
+                color: #F6FAFF;
+                font-weight: 820;
+                line-height: 1.05;
+                font-size: 0.95rem;
+            }}
+            .workspace-loading-title span {{
+                background: linear-gradient(90deg, #18E5FF, #4C8EFF 48%, #B34EFF 100%);
+                -webkit-background-clip: text;
+                background-clip: text;
+                color: transparent;
+            }}
+            .workspace-loading-copy {{
+                margin-top: 0.24rem;
+                color: rgba(205, 218, 239, 0.72);
+                font-size: 0.6rem;
+                letter-spacing: 0.18em;
+                text-transform: uppercase;
+            }}
+            </style>
+            <div class="workspace-loading-card">
+                {logo_markup}
+                <div>
+                    <div class="workspace-loading-title">Natural Products<br><span>Spectral Database</span></div>
+                    <div class="workspace-loading-copy">Loading Workspace</div>
+                </div>
+            </div>
+            """
+        ),
+        unsafe_allow_html=True,
+    )
+    time.sleep(0.65)
+    st.rerun()
+
+
+if st.session_state.pop("npdb_show_workspace_loading", False):
+    render_workspace_loading_screen()
 
 
 def is_owner_editor() -> bool:
@@ -4120,6 +4199,9 @@ def validate_spectrum_entry(file_path_value: str, spectrum_type_value: str) -> t
         errors.append("File path or URL is required.")
         return errors, warnings
 
+    if is_supabase_storage_reference(path_text):
+        return errors, warnings
+
     if is_external_url(path_text):
         if is_google_drive_url(path_text):
             file_id = extract_google_drive_file_id(path_text)
@@ -4146,14 +4228,77 @@ def slugify_value(value: str, fallback: str = "file") -> str:
 def relative_project_path(path: Path) -> str:
     return str(path.relative_to(PROJECT_DIR))
 
+OPTION_SENTINEL_VALUES = {
+    "custom...",
+    "custom",
+    "none",
+    "nan",
+    "null",
+    "-",
+}
+
+
+def is_valid_existing_option(value) -> bool:
+    cleaned = maybe_blank(value)
+    return bool(cleaned) and cleaned.strip().casefold() not in OPTION_SENTINEL_VALUES
+
+
 def build_existing_options(df: pd.DataFrame, column_name: str, defaults=None):
-    values = set(defaults or [])
+    values = {maybe_blank(item) for item in (defaults or []) if is_valid_existing_option(item)}
     if column_name in df.columns:
         for value in df[column_name].dropna().astype(str):
             cleaned = value.strip()
-            if cleaned:
+            if is_valid_existing_option(cleaned):
                 values.add(cleaned)
-    return sorted(values)
+    return sorted(values, key=lambda item: item.casefold())
+
+
+def selected_or_custom_state_value(key: str, default: str = "") -> str:
+    selected = maybe_blank(get_wizard_value(f"{key}_select"))
+    custom = maybe_blank(get_wizard_value(f"{key}_custom"))
+    if selected.casefold() == "custom...":
+        return custom
+    return selected or default
+
+
+def infer_spectrum_type_from_name(name_value: str, fallback_type: str = "Supporting Data") -> str:
+    fallback = maybe_blank(fallback_type) or "Supporting Data"
+    text = maybe_blank(name_value)
+    if not text:
+        return fallback
+    normalized = re.sub(r"[^a-z0-9]+", " ", text.casefold())
+    padded = f" {normalized} "
+    compact = re.sub(r"[^a-z0-9]+", "", text.casefold())
+
+    patterns = [
+        ("13C", [r"\b13\s*c\b", r"\bc\s*13\b", "carbon nmr", "13cnmr", "c13nmr"]),
+        ("1H", [r"\b1\s*h\b", r"\bh\s*1\b", "proton nmr", "1hnmr", "h1nmr"]),
+        ("HSQC", [r"\bhsqc\b"]),
+        ("HMBC", [r"\bhmbc\b"]),
+        ("COSY", [r"\bcosy\b"]),
+        ("NOESY", [r"\bnoesy\b", r"\broesy\b"]),
+        ("HRMS", [r"\bhrms\b", r"\bhresims\b", r"\besims\b"]),
+        ("FTIR", [r"\bftir\b", r"\bir\b"]),
+        ("UV", [r"\buv\b"]),
+        ("JCAMP-DX", [r"\bjcamp\b", r"\bdx\b"]),
+        ("MNova", [r"\bmnova\b", r"\bmestrenova\b"]),
+    ]
+    for label, tokens in patterns:
+        for token in tokens:
+            if token.startswith("\\"):
+                if re.search(token, padded):
+                    return label
+            elif token in compact or token in padded:
+                return label
+    return fallback
+
+
+def summarize_spectrum_types(type_values: list[str]) -> str:
+    counts: dict[str, int] = {}
+    for value in type_values:
+        label = maybe_blank(value) or "Supporting Data"
+        counts[label] = counts.get(label, 0) + 1
+    return ", ".join(f"{label}: {count}" for label, count in sorted(counts.items(), key=lambda item: item[0].casefold()))
 
 def select_or_custom(label: str, options: list[str], key: str, value: str = "", help_text: str | None = None):
     normalized_value = maybe_blank(value)
@@ -5137,7 +5282,7 @@ def load_standardized_structure_source(source_value, size=STRUCTURE_DETAIL_IMAGE
     if not source_text:
         return None
 
-    if is_external_url(source_text):
+    if is_external_url(source_text) or is_supabase_storage_reference(source_text):
         raw_png = load_external_structure_png_bytes(source_text, size=size, fallback_smiles=fallback_smiles)
         if not raw_png:
             return None
@@ -5949,6 +6094,23 @@ def render_dashboard_showcase(
             </div>
             """
         )
+        workflow_button_cols = st.columns(len(workflow_steps), gap="small")
+        for idx, (title, _copy) in enumerate(workflow_steps):
+            with workflow_button_cols[idx]:
+                if st.button(title, key=f"dashboard_workflow_open_{idx}_{slugify_value(title)}", width="stretch"):
+                    if title == "Search Spectra":
+                        navigate_internal("Search & Match")
+                    elif title in {"Browse Record", "Download Data"}:
+                        navigate_internal("Compound Workspace", "Browse Record")
+                    elif title == "New Submission":
+                        navigate_internal("Compound Workspace", "New Submission")
+                    elif title == "Batch Import":
+                        navigate_internal("Compound Workspace", "Batch Import")
+                    elif title == "Update Metadata":
+                        navigate_internal("Compound Workspace", "Update Metadata")
+                    else:
+                        navigate_internal("Compound Workspace", "Browse Record")
+                    st.rerun()
 
     with workspace_col:
         art_markup = f'<img class="dashboard-workspace-art" src="{workspace_uri}" alt="Compound workspace visual" />' if workspace_uri else ""
@@ -6119,7 +6281,7 @@ def render_compound_card(row, show_preview: bool = True):
             )
             if standardized_image is not None:
                 st.image(standardized_image, width="stretch")
-            elif source_value and is_external_url(str(source_value).strip()):
+            elif source_value and (is_external_url(str(source_value).strip()) or is_supabase_storage_reference(source_value)):
                 safe_url = display_asset_url(source_value).replace('"', "&quot;")
                 st.image(safe_url, width="stretch")
             else:
@@ -7390,10 +7552,10 @@ def import_spectra_from_dataframe(df: pd.DataFrame):
             errors.append(f"Row {display_row}: {exc}")
             continue
 
-        spectrum_type = maybe_blank(row.get("spectrum_type"))
         file_path = maybe_blank(row.get("file_path"))
-        if not spectrum_type or not file_path:
-            errors.append(f"Row {display_row}: spectrum_type and file_path are required.")
+        spectrum_type = infer_spectrum_type_from_name(file_path, maybe_blank(row.get("spectrum_type")) or "Supporting Data")
+        if not file_path:
+            errors.append(f"Row {display_row}: file_path is required.")
             continue
 
         validation_errors, validation_warnings = validate_spectrum_entry(file_path, spectrum_type)
@@ -7826,7 +7988,7 @@ def _asset_bytes_from_source(source_value: str) -> tuple[bytes, str]:
     if not source_text:
         return b"", ""
     try:
-        if is_external_url(source_text):
+        if is_external_url(source_text) or is_supabase_storage_reference(source_text):
             with urllib.request.urlopen(display_asset_url(source_text), timeout=30, context=_supabase_ssl_context()) as response:
                 data = response.read()
                 suffix = Path(urlparse(source_text).path).suffix or mimetypes.guess_extension(response.headers.get_content_type()) or ".bin"
@@ -8174,7 +8336,7 @@ def render_spectra_section(compound_id):
                         for warning_message in file_warnings:
                             st.caption(warning_message)
 
-                if is_external_url(file_path_value):
+                if is_external_url(file_path_value) or is_supabase_storage_reference(file_path_value):
                     preview_rendered = False
                     if can_preview_external_image(file_path_value, spectrum_type):
                         preview_url = google_drive_preview_url(file_path_value) if is_google_drive_url(file_path_value) else display_asset_url(file_path_value)
@@ -8722,9 +8884,19 @@ def show_search_page(all_compounds_df):
                 & target_df["inchi"].fillna("").astype(str).str.strip().eq("")
                 & target_df["inchikey"].fillna("").astype(str).str.strip().eq("")
             ]
-            preferred_df = missing_df if not missing_df.empty else target_df
+            missing_ids = set(missing_df["id"].astype(int).tolist()) if not missing_df.empty else set()
+            preferred_df = pd.concat(
+                [missing_df, target_df[~target_df["id"].astype(int).isin(missing_ids)]],
+                ignore_index=True,
+            )
             preferred_df = preferred_df[["id", "trivial_name"]].copy()
-            preferred_df["label"] = preferred_df["id"].astype(str) + " - " + preferred_df["trivial_name"].fillna("Unnamed record").astype(str)
+            preferred_df["label"] = preferred_df.apply(
+                lambda item: (
+                    f"{int(item['id'])} - {maybe_blank(item.get('trivial_name')) or 'Unnamed record'}"
+                    + ("  [empty structure IDs]" if int(item["id"]) in missing_ids else "")
+                ),
+                axis=1,
+            )
             with admin_col:
                 selected_structure_label = st.selectbox(
                     "Save current structure to compound",
@@ -9408,9 +9580,9 @@ def show_compound_pages():
             with c2:
                 st.text_area("InChI", key="wizard_inchi", placeholder="e.g. InChI=1S/...")
                 st.text_input("InChIKey", key="wizard_inchikey", placeholder="e.g. BSYNRYMUTXBXSQ-UHFFFAOYSA-N")
-                class_options = build_existing_options(compounds_df, "compound_class", DEFAULT_CLASS_OPTIONS)
+                class_options = build_existing_options(compounds_df, "compound_class")
                 subclass_options = build_existing_options(compounds_df, "compound_subclass")
-                data_source_options = build_existing_options(compounds_df, "data_source", DEFAULT_DATA_SOURCE_OPTIONS)
+                data_source_options = build_existing_options(compounds_df, "data_source")
                 select_or_custom(
                     "Compound Class",
                     class_options,
@@ -9423,7 +9595,7 @@ def show_compound_pages():
         elif wizard_step == 2:
             c1, c2 = st.columns(2)
             with c1:
-                source_options = build_existing_options(compounds_df, "source_category", DEFAULT_SOURCE_OPTIONS)
+                source_options = build_existing_options(compounds_df, "source_category")
                 select_or_custom(
                     "Source Category",
                     source_options,
@@ -9478,7 +9650,7 @@ def show_compound_pages():
                     wizard_spectrum_options,
                     "wizard_submission_spectrum_type",
                     value="Supporting Data",
-                    help_text="All files uploaded in this step will use the same type label. You can fine-tune them later in the Spectra section.",
+                    help_text="Files named with 1H, 13C, HSQC, HMBC, COSY, and related labels are saved with that detected spectrum type automatically.",
                 )
                 st.file_uploader(
                     "Upload Supporting Spectra Files",
@@ -9515,17 +9687,17 @@ def show_compound_pages():
                     "smiles": get_wizard_value("wizard_smiles", ""),
                     "inchi": get_wizard_value("wizard_inchi", ""),
                     "inchikey": get_wizard_value("wizard_inchikey", ""),
-                    "compound_class": get_wizard_value("wizard_compound_class_custom", "") or get_wizard_value("wizard_compound_class_select", ""),
-                    "source_category": get_wizard_value("wizard_source_category_custom", "") or get_wizard_value("wizard_source_category_select", ""),
+                    "compound_class": selected_or_custom_state_value("wizard_compound_class"),
+                    "source_category": selected_or_custom_state_value("wizard_source_category"),
                     "source_organism": get_wizard_value("wizard_source_organism", ""),
                     "source_material": source_summary_from_record(
                         {
-                            "source_category": get_wizard_value("wizard_source_category_custom", "") or get_wizard_value("wizard_source_category_select", ""),
+                            "source_category": selected_or_custom_state_value("wizard_source_category"),
                             "source_organism": get_wizard_value("wizard_source_organism", ""),
                             "source_material": "",
                         }
                     ),
-                    "data_source": get_wizard_value("wizard_data_source_custom", "") or get_wizard_value("wizard_data_source_select", ""),
+                    "data_source": selected_or_custom_state_value("wizard_data_source"),
                     "curation_status": normalize_curation_status(get_wizard_value("wizard_curation_status", "curated")),
                     "hrms_data": get_wizard_value("wizard_hrms_data", ""),
                     "doi": get_wizard_value("wizard_doi", ""),
@@ -9580,9 +9752,9 @@ def show_compound_pages():
                     smiles = maybe_blank(get_wizard_value("wizard_smiles"))
                     inchi = maybe_blank(get_wizard_value("wizard_inchi"))
                     inchikey = maybe_blank(get_wizard_value("wizard_inchikey"))
-                    compound_class = maybe_blank(get_wizard_value("wizard_compound_class_custom")) or maybe_blank(get_wizard_value("wizard_compound_class_select"))
-                    compound_subclass = maybe_blank(get_wizard_value("wizard_compound_subclass_custom")) or maybe_blank(get_wizard_value("wizard_compound_subclass_select"))
-                    source_category = maybe_blank(get_wizard_value("wizard_source_category_custom")) or maybe_blank(get_wizard_value("wizard_source_category_select"))
+                    compound_class = selected_or_custom_state_value("wizard_compound_class")
+                    compound_subclass = selected_or_custom_state_value("wizard_compound_subclass")
+                    source_category = selected_or_custom_state_value("wizard_source_category")
                     source_organism = maybe_blank(get_wizard_value("wizard_source_organism"))
                     source_category, source_organism, source_material = resolve_editor_source_fields(source_category, source_organism, "")
                     sample_code = maybe_blank(get_wizard_value("wizard_sample_code"))
@@ -9607,11 +9779,11 @@ def show_compound_pages():
                     ccdc_number = maybe_blank(get_wizard_value("wizard_ccdc_number"))
                     molecular_weight_text = maybe_blank(get_wizard_value("wizard_molecular_weight"))
                     hrms_data = maybe_blank(get_wizard_value("wizard_hrms_data"))
-                    data_source = maybe_blank(get_wizard_value("wizard_data_source_custom")) or maybe_blank(get_wizard_value("wizard_data_source_select"))
+                    data_source = selected_or_custom_state_value("wizard_data_source")
                     curation_status = normalize_curation_status(get_wizard_value("wizard_curation_status", "curated"))
                     note = maybe_blank(get_wizard_value("wizard_note"))
                     uploaded_spectra = get_wizard_value("wizard_submission_spectra_uploads") or []
-                    uploaded_spectrum_type = maybe_blank(get_wizard_value("wizard_submission_spectrum_type_custom")) or maybe_blank(get_wizard_value("wizard_submission_spectrum_type_select")) or "Supporting Data"
+                    uploaded_spectrum_type = selected_or_custom_state_value("wizard_submission_spectrum_type", "Supporting Data")
                     uploaded_spectrum_note = maybe_blank(get_wizard_value("wizard_submission_spectra_note"))
 
                     if not trivial_name:
@@ -9674,18 +9846,21 @@ def show_compound_pages():
                             note=note,
                         )
 
+                        saved_spectrum_types = []
                         for uploaded_file in uploaded_spectra:
+                            detected_spectrum_type = infer_spectrum_type_from_name(uploaded_file.name, uploaded_spectrum_type)
                             saved_path = save_uploaded_asset(
                                 uploaded_file,
                                 SPECTRA_DIR,
-                                f"compound_{new_id}_{uploaded_spectrum_type}_{uploaded_file.name}",
+                                f"compound_{new_id}_{detected_spectrum_type}_{uploaded_file.name}",
                             )
                             insert_spectrum_file_record(
                                 compound_id=new_id,
-                                spectrum_type=uploaded_spectrum_type,
+                                spectrum_type=detected_spectrum_type,
                                 file_path=saved_path,
                                 note=uploaded_spectrum_note,
                             )
+                            saved_spectrum_types.append(detected_spectrum_type)
                         confirm_new_submission_persisted(
                             int(new_id),
                             trivial_name,
@@ -9694,7 +9869,9 @@ def show_compound_pages():
                     except Exception as exc:
                         stop_after_save_error("Record baru", exc)
 
-                    st.success(f"Record saved successfully. New Compound ID: {new_id}")
+                    type_summary = summarize_spectrum_types(saved_spectrum_types)
+                    spectra_note = f" Spectra saved as: {type_summary}." if type_summary else ""
+                    st.success(f"Record saved successfully. New Compound ID: {new_id}.{spectra_note}")
                     reset_compound_wizard()
                     open_compound_detail(new_id)
                     st.rerun()
@@ -9746,7 +9923,7 @@ def show_compound_pages():
                     inchikey = st.text_input("InChIKey", value=maybe_blank(row.get("inchikey")))
                     compound_class = select_or_custom(
                         "Compound Class",
-                        build_existing_options(compounds_df, "compound_class", DEFAULT_CLASS_OPTIONS),
+                        build_existing_options(compounds_df, "compound_class"),
                         f"edit_compound_class_{edit_compound_id}",
                         value=maybe_blank(row["compound_class"]),
                         help_text="Choose an existing class or use Custom... to add a new compound class.",
@@ -9759,7 +9936,7 @@ def show_compound_pages():
                     )
                     source_category = select_or_custom(
                         "Source Category",
-                        build_existing_options(compounds_df, "source_category", DEFAULT_SOURCE_OPTIONS),
+                        build_existing_options(compounds_df, "source_category"),
                         f"edit_source_category_{edit_compound_id}",
                         value=maybe_blank(row.get("source_category")),
                         help_text="Choose an existing source category or use Custom... to add a new one.",
@@ -9798,7 +9975,7 @@ def show_compound_pages():
                     hrms_data = st.text_area("HRMS Data", value=maybe_blank(row["hrms_data"]))
                     data_source = select_or_custom(
                         "Data Source",
-                        build_existing_options(compounds_df, "data_source", DEFAULT_DATA_SOURCE_OPTIONS),
+                        build_existing_options(compounds_df, "data_source"),
                         f"edit_data_source_{edit_compound_id}",
                         value=maybe_blank(row["data_source"]),
                     )
@@ -10835,9 +11012,11 @@ def show_spectra_library_overview():
 
     spectra_df = spectra_df.copy()
     spectra_df["storage_type"] = spectra_df["file_path"].fillna("").astype(str).apply(classify_storage_type)
-    spectra_df["is_remote"] = spectra_df["file_path"].fillna("").astype(str).apply(is_external_url)
+    spectra_df["is_remote"] = spectra_df["file_path"].fillna("").astype(str).apply(
+        lambda value: is_external_url(value) or is_supabase_storage_reference(value)
+    )
     spectra_df["exists_locally"] = spectra_df["file_path"].fillna("").astype(str).apply(
-        lambda value: True if is_external_url(value) else bool(get_full_file_path(value) and get_full_file_path(value).exists())
+        lambda value: True if (is_external_url(value) or is_supabase_storage_reference(value)) else bool(get_full_file_path(value) and get_full_file_path(value).exists())
     )
 
     m1, m2, m3, m4 = st.columns(4)
@@ -10896,7 +11075,7 @@ def show_spectra_pages():
         section_header("Add Spectra Files", "Upload files directly or register an existing file path for a selected compound.")
         render_helper_card(
             "Tip",
-            "Use Google Drive for large raw-data files and keep local uploads for lighter preview images only.",
+            "When filenames include 1H, 13C, HSQC, HMBC, COSY, or similar labels, NPDB saves each uploaded file with the detected spectrum type automatically.",
         )
         compounds_df = load_all_compounds()
         spectra_df = load_all_spectra_files()
@@ -10947,9 +11126,11 @@ def show_spectra_pages():
                     st.error("Provide at least one uploaded file or a file path.")
                 else:
                     created_records = []
+                    created_types = []
 
                     if file_path.strip():
-                        validation_errors, validation_warnings = validate_spectrum_entry(file_path.strip(), spectrum_type.strip())
+                        detected_type = infer_spectrum_type_from_name(file_path.strip(), spectrum_type.strip())
+                        validation_errors, validation_warnings = validate_spectrum_entry(file_path.strip(), detected_type)
                         for warning_message in validation_warnings:
                             st.warning(warning_message)
                         if validation_errors:
@@ -10960,28 +11141,32 @@ def show_spectra_pages():
                         created_records.append(
                             insert_spectrum_file_record(
                                 compound_id=selected_compound_id,
-                                spectrum_type=spectrum_type.strip(),
+                                spectrum_type=detected_type,
                                 file_path=file_path.strip(),
                                 note=note.strip()
                             )
                         )
+                        created_types.append(detected_type)
 
                     for uploaded_file in uploaded_files or []:
+                        detected_type = infer_spectrum_type_from_name(uploaded_file.name, spectrum_type.strip())
                         saved_path = save_uploaded_asset(
                             uploaded_file,
                             SPECTRA_DIR,
-                            f"compound_{selected_compound_id}_{spectrum_type}_{uploaded_file.name}",
+                            f"compound_{selected_compound_id}_{detected_type}_{uploaded_file.name}",
                         )
                         created_records.append(
                             insert_spectrum_file_record(
                                 compound_id=selected_compound_id,
-                                spectrum_type=spectrum_type.strip(),
+                                spectrum_type=detected_type,
                                 file_path=saved_path,
                                 note=note.strip()
                             )
                         )
+                        created_types.append(detected_type)
 
-                    st.success(f"Saved {len(created_records)} spectra file record(s).")
+                    type_summary = summarize_spectrum_types(created_types)
+                    st.success(f"Saved {len(created_records)} spectra file record(s)." + (f" Types: {type_summary}." if type_summary else ""))
 
                     if st.button("Open Record", key=f"open_detail_after_spectra_{selected_compound_id}"):
                         open_compound_detail(selected_compound_id)
