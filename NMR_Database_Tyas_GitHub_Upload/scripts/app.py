@@ -10046,7 +10046,7 @@ def show_compound_pages():
                         st.stop()
 
                     try:
-                        if structure_upload is not None:
+                        if structure_upload:
                             structure_image_path = save_uploaded_asset(
                                 structure_upload,
                                 STRUCTURES_DIR,
