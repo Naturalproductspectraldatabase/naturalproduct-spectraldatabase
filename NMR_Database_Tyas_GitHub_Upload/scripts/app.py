@@ -4397,6 +4397,18 @@ def select_or_custom(label: str, options: list[str], key: str, value: str = "", 
         return ""
     return selected
 
+
+def clear_edit_compound_form_state():
+    selected_label = maybe_blank(st.session_state.get("edit_compound_select"))
+    if selected_label:
+        try:
+            st.session_state["selected_compound_id"] = int(selected_label.split(" - ")[0])
+        except Exception:
+            pass
+    for state_key in list(st.session_state.keys()):
+        if state_key.startswith("edit_") and state_key != "edit_compound_select":
+            del st.session_state[state_key]
+
 def reset_compound_wizard():
     wizard_keys = [
         "compound_wizard_step",
@@ -10117,7 +10129,8 @@ def show_compound_pages():
                 "Select record to edit",
                 label_list,
                 index=default_index,
-                key="edit_compound_select"
+                key="edit_compound_select",
+                on_change=clear_edit_compound_form_state,
             )
 
             edit_compound_id = int(selected_label.split(" - ")[0])
