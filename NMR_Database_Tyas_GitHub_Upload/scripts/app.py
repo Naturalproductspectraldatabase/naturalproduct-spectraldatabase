@@ -2958,33 +2958,48 @@ div[data-testid="stRadio"] label:has(input:checked) {
 .st-key-dashboard_workflow_native div[data-testid="stHorizontalBlock"] {
     gap: 0.84rem;
     align-items: stretch;
+    flex-wrap: wrap;
 }
 
-[class*="st-key-dashboard_workflow_card_shell_"] {
+.st-key-dashboard_workflow_native div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+    flex: 1 1 10.8rem !important;
+    min-width: 10.8rem !important;
+}
+
+[class*="dashboard_workflow_card_shell"],
+[class*="dashboard-workflow-card-shell"] {
     position: relative;
     min-height: 150px;
 }
 
-[class*="st-key-dashboard_workflow_card_shell_"] .workflow-card {
+[class*="dashboard_workflow_card_shell"] .workflow-card,
+[class*="dashboard-workflow-card-shell"] .workflow-card {
     height: 100%;
     min-height: 150px;
     pointer-events: none;
 }
 
-[class*="st-key-dashboard_workflow_card_shell_"] div[data-testid="stButton"] {
+[class*="dashboard_workflow_card_shell"] div[data-testid="stButton"],
+[class*="dashboard-workflow-card-shell"] div[data-testid="stButton"] {
     position: absolute;
     inset: 0;
     z-index: 5;
     margin: 0 !important;
 }
 
-[class*="st-key-dashboard_workflow_card_shell_"] div[data-testid="stButton"] button {
+[class*="dashboard_workflow_card_shell"] div[data-testid="stButton"] button,
+[class*="dashboard-workflow-card-shell"] div[data-testid="stButton"] button {
     width: 100% !important;
     height: 100% !important;
     min-height: 150px !important;
     border-radius: 22px !important;
     opacity: 0 !important;
     cursor: pointer !important;
+}
+
+[class*="dashboard_workflow_card_shell"] div[data-testid="stButton"] button *,
+[class*="dashboard-workflow-card-shell"] div[data-testid="stButton"] button * {
+    opacity: 0 !important;
 }
 
 .workflow-step {
@@ -10090,6 +10105,42 @@ def show_compound_pages():
                             curation_status=curation_status,
                             note=note,
                         )
+                        expected_compound_fields = {
+                            "trivial_name": trivial_name,
+                            "iupac_name": iupac_name,
+                            "molecular_formula": molecular_formula,
+                            "compound_class": compound_class,
+                            "compound_subclass": compound_subclass,
+                            "smiles": smiles,
+                            "inchi": inchi,
+                            "inchikey": inchikey,
+                            "source_category": source_category,
+                            "source_organism": source_organism,
+                            "source_material": source_material,
+                            "sample_code": sample_code,
+                            "collection_location": collection_location,
+                            "gps_coordinates": gps_coordinates,
+                            "depth_m": depth_value,
+                            "uv_data": uv_data,
+                            "ftir_data": ftir_data,
+                            "cd_data": cd_data,
+                            "optical_rotation": optical_rotation,
+                            "melting_point": melting_point,
+                            "crystallization_method": crystallization_method,
+                            "journal_name": journal_name,
+                            "article_title": article_title,
+                            "publication_year": publication_year,
+                            "volume": volume,
+                            "issue": issue,
+                            "pages": pages,
+                            "doi": doi,
+                            "ccdc_number": ccdc_number,
+                            "molecular_weight": molecular_weight_value,
+                            "hrms_data": hrms_data,
+                            "data_source": data_source,
+                            "curation_status": curation_status,
+                            "note": note,
+                        }
 
                         saved_spectrum_types = []
                         for uploaded_file in uploaded_spectra:
@@ -10110,6 +10161,7 @@ def show_compound_pages():
                             int(new_id),
                             trivial_name,
                             expected_spectra_count=len(uploaded_spectra),
+                            expected_fields=expected_compound_fields,
                         )
                     except Exception as exc:
                         stop_after_save_error("Record baru", exc)
@@ -10310,6 +10362,46 @@ def show_compound_pages():
                                 data_source=data_source.strip(),
                                 curation_status=normalize_curation_status(curation_status, default="curated"),
                                 note=note.strip()
+                            )
+                            confirm_compound_fields_persisted(
+                                edit_compound_id,
+                                {
+                                    "trivial_name": trivial_name.strip(),
+                                    "iupac_name": iupac_name.strip(),
+                                    "molecular_formula": molecular_formula.strip(),
+                                    "compound_class": compound_class.strip(),
+                                    "compound_subclass": compound_subclass.strip(),
+                                    "smiles": smiles.strip(),
+                                    "inchi": inchi.strip(),
+                                    "inchikey": inchikey.strip(),
+                                    "source_category": source_category.strip(),
+                                    "source_organism": source_organism.strip(),
+                                    "source_material": source_material.strip(),
+                                    "sample_code": sample_code.strip(),
+                                    "collection_location": collection_location.strip(),
+                                    "gps_coordinates": gps_coordinates.strip(),
+                                    "depth_m": depth_value,
+                                    "uv_data": uv_data.strip(),
+                                    "ftir_data": ftir_data.strip(),
+                                    "cd_data": cd_data.strip(),
+                                    "optical_rotation": optical_rotation.strip(),
+                                    "melting_point": melting_point.strip(),
+                                    "crystallization_method": crystallization_method.strip(),
+                                    "journal_name": journal_name.strip(),
+                                    "article_title": article_title.strip(),
+                                    "publication_year": publication_year.strip(),
+                                    "volume": volume.strip(),
+                                    "issue": issue.strip(),
+                                    "pages": pages.strip(),
+                                    "doi": doi.strip(),
+                                    "ccdc_number": ccdc_number.strip(),
+                                    "molecular_weight": molecular_weight_value,
+                                    "hrms_data": hrms_data.strip(),
+                                    "data_source": data_source.strip(),
+                                    "curation_status": normalize_curation_status(curation_status, default="curated"),
+                                    "note": note.strip(),
+                                },
+                                "Perubahan record",
                             )
                         except Exception as exc:
                             stop_after_save_error("Perubahan record", exc)
@@ -12246,7 +12338,48 @@ def load_bioactivity_row(bioactivity_id):
     return _sqlite_dataframe(f"SELECT {columns} FROM bioactivity_records WHERE id = ?", (bioactivity_id,))
 
 
-def confirm_new_submission_persisted(compound_id: int, trivial_name: str, expected_spectra_count: int = 0):
+def _readback_value_matches(stored_value, expected_value) -> bool:
+    stored_text = maybe_blank(stored_value)
+    expected_text = maybe_blank(expected_value)
+    if not expected_text and not stored_text:
+        return True
+    stored_number = safe_float_or_none(stored_text)
+    expected_number = safe_float_or_none(expected_text)
+    if stored_number is not None and expected_number is not None:
+        return abs(float(stored_number) - float(expected_number)) < 0.000001
+    return re.sub(r"\s+", " ", stored_text).strip() == re.sub(r"\s+", " ", expected_text).strip()
+
+
+def confirm_compound_fields_persisted(compound_id: int, expected_fields: dict[str, object], action_label: str = "Record"):
+    compound_df = load_compound_row(compound_id)
+    if compound_df.empty:
+        raise RuntimeError(
+            f"{action_label} was not found during read-back verification. Please check the active cloud/local database."
+        )
+    stored_row = compound_df.iloc[0]
+    mismatches = []
+    for field, expected_value in expected_fields.items():
+        if field not in stored_row.index:
+            continue
+        if not _readback_value_matches(stored_row.get(field), expected_value):
+            mismatches.append(
+                f"{field}: expected {maybe_blank(expected_value)!r}, read back {maybe_blank(stored_row.get(field))!r}"
+            )
+    if mismatches:
+        mismatch_preview = "; ".join(mismatches[:6])
+        if len(mismatches) > 6:
+            mismatch_preview += f"; plus {len(mismatches) - 6} more field(s)"
+        raise RuntimeError(
+            f"{action_label} was written, but read-back verification found different values. {mismatch_preview}"
+        )
+
+
+def confirm_new_submission_persisted(
+    compound_id: int,
+    trivial_name: str,
+    expected_spectra_count: int = 0,
+    expected_fields: dict[str, object] | None = None,
+):
     compound_df = load_compound_row(compound_id)
     if compound_df.empty:
         raise RuntimeError(
@@ -12263,6 +12396,8 @@ def confirm_new_submission_persisted(compound_id: int, trivial_name: str, expect
             raise RuntimeError(
                 "The compound was saved, but not all uploaded spectra file records were found during read-back verification."
             )
+    if expected_fields:
+        confirm_compound_fields_persisted(compound_id, expected_fields, "Record baru")
 
 
 def count_related_records(filtered_ids):
