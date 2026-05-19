@@ -272,32 +272,39 @@ def markdown_summary(summary: list[dict[str, object]], report_dir: Path) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Validate NPDB batch-import files without modifying them.")
-    parser.add_argument("--compounds", type=Path, default=DEFAULT_EXPORT_DIR / "compounds_batch_import_template.csv")
-    parser.add_argument("--proton", type=Path, default=DEFAULT_EXPORT_DIR / "proton_nmr_batch_import_template_20260515-2csv.xlsx")
-    parser.add_argument("--carbon", type=Path, default=DEFAULT_EXPORT_DIR / "carbon_nmr_batch_import_template_20260515_2.xlsx")
-    parser.add_argument("--spectra", type=Path, default=DEFAULT_EXPORT_DIR / "spectra_files_batch_import_template.csv")
+    parser.add_argument("--compounds", type=Path)
+    parser.add_argument("--proton", type=Path)
+    parser.add_argument("--carbon", type=Path)
+    parser.add_argument("--spectra", type=Path)
     parser.add_argument("--report-root", type=Path, default=DEFAULT_REPORT_ROOT)
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    use_default_files = not any((args.compounds, args.proton, args.carbon, args.spectra))
+    compounds_path = args.compounds or (DEFAULT_EXPORT_DIR / "compounds_batch_import_template.csv" if use_default_files else None)
+    proton_path = args.proton or (DEFAULT_EXPORT_DIR / "proton_nmr_batch_import_template_20260515-2csv.xlsx" if use_default_files else None)
+    carbon_path = args.carbon or (DEFAULT_EXPORT_DIR / "carbon_nmr_batch_import_template_20260515_2.xlsx" if use_default_files else None)
+    spectra_path = args.spectra or (DEFAULT_EXPORT_DIR / "spectra_files_batch_import_template.csv" if use_default_files else None)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     report_dir = args.report_root / f"pre_import_validation_{timestamp}"
     report_dir.mkdir(parents=True, exist_ok=True)
 
     app = load_app_module()
-    compound_df_raw = read_table(args.compounds)
+    compound_df_raw = read_table(compounds_path) if compounds_path else pd.DataFrame()
     compound_df = app.normalize_import_dataframe(compound_df_raw) if not compound_df_raw.empty else pd.DataFrame()
     ctx = load_existing_context(app, app.align_import_columns(compound_df, app.COMPOUND_IMPORT_COLUMNS) if not compound_df.empty else pd.DataFrame())
 
-    jobs: list[tuple[str, Path, pd.DataFrame, Callable[[pd.DataFrame, ValidationContext], list[dict[str, str]]]]] = [
-        ("compounds", args.compounds, compound_df_raw, validate_compounds),
-        ("proton_nmr", args.proton, read_table(args.proton), lambda df, context: validate_peak_table(df, context, "1H")),
-        ("carbon_nmr", args.carbon, read_table(args.carbon), lambda df, context: validate_peak_table(df, context, "13C")),
-    ]
-    if args.spectra.exists():
-        jobs.append(("spectra_files", args.spectra, read_table(args.spectra), validate_spectra))
+    jobs: list[tuple[str, Path, pd.DataFrame, Callable[[pd.DataFrame, ValidationContext], list[dict[str, str]]]]] = []
+    if compounds_path:
+        jobs.append(("compounds", compounds_path, compound_df_raw, validate_compounds))
+    if proton_path:
+        jobs.append(("proton_nmr", proton_path, read_table(proton_path), lambda df, context: validate_peak_table(df, context, "1H")))
+    if carbon_path:
+        jobs.append(("carbon_nmr", carbon_path, read_table(carbon_path), lambda df, context: validate_peak_table(df, context, "13C")))
+    if spectra_path and spectra_path.exists():
+        jobs.append(("spectra_files", spectra_path, read_table(spectra_path), validate_spectra))
 
     summary: list[dict[str, object]] = []
     exit_code = 0
