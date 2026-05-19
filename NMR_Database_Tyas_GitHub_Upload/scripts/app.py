@@ -608,6 +608,9 @@ PROTON_IMPORT_COLUMNS = [
     "solvent",
     "instrument_mhz",
     "note",
+    "dataset_label",
+    "residue_note",
+    "reference",
 ]
 
 CARBON_IMPORT_COLUMNS = [
@@ -619,6 +622,9 @@ CARBON_IMPORT_COLUMNS = [
     "solvent",
     "instrument_mhz",
     "note",
+    "dataset_label",
+    "residue_note",
+    "reference",
 ]
 
 SPECTRA_IMPORT_COLUMNS = [
@@ -2949,51 +2955,36 @@ div[data-testid="stRadio"] label:has(input:checked) {
     margin-bottom: 1rem;
 }
 
-.dashboard-workflow-native div[data-testid="stHorizontalBlock"] {
-    gap: 1rem;
+.st-key-dashboard_workflow_native div[data-testid="stHorizontalBlock"] {
+    gap: 0.84rem;
+    align-items: stretch;
 }
 
-.st-key-dashboard_workflow_native div[data-testid="stButton"] button {
-    min-height: 188px !important;
-    width: 100% !important;
-    border-radius: 22px !important;
-    padding: 3.1rem 1rem 1rem 1rem !important;
-    align-items: flex-start !important;
-    justify-content: flex-start !important;
-    text-align: left !important;
-    white-space: pre-line !important;
-    line-height: 1.35 !important;
-    color: #F6FAFF !important;
-    background: linear-gradient(180deg, rgba(20, 31, 51, 0.82), rgba(10, 18, 31, 0.92)) !important;
-    border: 1px solid rgba(255,255,255,0.08) !important;
-    box-shadow: 0 20px 42px rgba(0,0,0,0.22) !important;
-}
-
-.st-key-dashboard_workflow_native div[data-testid="stButton"] button:hover {
-    transform: translateY(-1px);
-    border-color: rgba(97,216,237,0.32) !important;
-}
-
-.workflow-native-step {
-    width: 2.5rem;
-    height: 2.5rem;
-    display: grid;
-    place-items: center;
-    border-radius: 999px;
-    margin: 0 auto -2.75rem auto;
+[class*="st-key-dashboard_workflow_card_shell_"] {
     position: relative;
-    z-index: 2;
-    color: #F7FBFF;
-    font-weight: 820;
-    background: linear-gradient(135deg, rgba(55, 108, 207, 0.88), rgba(77, 66, 155, 0.9));
-    border: 1px solid rgba(97,216,237,0.48);
-    box-shadow: 0 0 0 4px rgba(97,216,237,0.08);
+    min-height: 150px;
 }
 
-.workflow-native-step.is-primary {
-    background: linear-gradient(135deg, rgba(16, 210, 232, 0.92), rgba(88, 72, 214, 0.92));
-    border-color: rgba(97, 216, 237, 0.72);
-    box-shadow: 0 0 0 4px rgba(16, 210, 232, 0.12), 0 0 24px rgba(97, 216, 237, 0.2);
+[class*="st-key-dashboard_workflow_card_shell_"] .workflow-card {
+    height: 100%;
+    min-height: 150px;
+    pointer-events: none;
+}
+
+[class*="st-key-dashboard_workflow_card_shell_"] div[data-testid="stButton"] {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    margin: 0 !important;
+}
+
+[class*="st-key-dashboard_workflow_card_shell_"] div[data-testid="stButton"] button {
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 150px !important;
+    border-radius: 22px !important;
+    opacity: 0 !important;
+    cursor: pointer !important;
 }
 
 .workflow-step {
@@ -3020,6 +3011,9 @@ div[data-testid="stRadio"] label:has(input:checked) {
     font-weight: 720;
     margin-bottom: 0.26rem;
     line-height: 1.22;
+    overflow-wrap: normal;
+    word-break: normal;
+    hyphens: none;
 }
 
 .workflow-card-icon-shell {
@@ -3046,6 +3040,9 @@ div[data-testid="stRadio"] label:has(input:checked) {
     color: var(--text-soft);
     font-size: 0.68rem;
     line-height: 1.34;
+    overflow-wrap: normal;
+    word-break: normal;
+    hyphens: none;
 }
 
 .dashboard-hero-header {
@@ -3577,7 +3574,6 @@ div[data-baseweb="select"] {
 .workspace-headbar-title,
 .dashboard-search-strip-title,
 .dashboard-workspace-title,
-.workflow-title,
 .result-title,
 .sidebar-nav-link-label,
 .info-chip,
@@ -4645,6 +4641,14 @@ def structure_text_to_mol(structure_value: str):
     if not structure_text:
         return None
 
+    if structure_text.startswith("InChI="):
+        try:
+            mol = Chem.MolFromInchi(structure_text)
+            if mol is not None:
+                return mol
+        except Exception:
+            pass
+
     mol = smiles_to_mol(structure_text)
     if mol is not None:
         return mol
@@ -5304,6 +5308,14 @@ def structure_smiles_image_url(smiles_text: str) -> str:
     if not smiles_value:
         return ""
     return f"https://cactus.nci.nih.gov/chemical/structure/{quote(smiles_value, safe='')}/image"
+
+
+def first_structure_identifier(smiles: str = "", inchi: str = "") -> str:
+    for value in (smiles, inchi):
+        text = maybe_blank(value)
+        if text:
+            return text
+    return ""
 
 
 def load_standardized_structure_image(image_path: Path, size=STRUCTURE_DETAIL_IMAGE_SIZE, fallback_smiles: str = ""):
@@ -6141,40 +6153,39 @@ def render_dashboard_showcase(
                 f'<div class="dashboard-workflow-title">{workflow_title}</div>',
                 unsafe_allow_html=True,
             )
-            workflow_icon_map = {
-                "Search Spectra": ":material/search:",
-                "Browse Record": ":material/plagiarism:",
-                "Download Data": ":material/download:",
-                "New Submission": ":material/note_add:",
-                "Batch Import": ":material/upload_file:",
-                "Update Metadata": ":material/edit_note:",
-            }
             workflow_button_cols = st.columns(len(workflow_steps), gap="medium")
             for idx, (title, copy) in enumerate(workflow_steps, start=1):
                 with workflow_button_cols[idx - 1]:
-                    st.markdown(
-                        f'<div class="workflow-native-step {"is-primary" if idx == 1 else ""}">{idx}</div>',
-                        unsafe_allow_html=True,
-                    )
-                    if st.button(
-                        f"{title}\n{copy}",
-                        key=f"dashboard_workflow_card_{idx}_{slugify_value(title)}",
-                        width="stretch",
-                        icon=workflow_icon_map.get(title),
-                    ):
-                        if title == "Search Spectra":
-                            navigate_internal("Search & Match")
-                        elif title in {"Browse Record", "Download Data"}:
-                            navigate_internal("Compound Workspace", "Browse Record")
-                        elif title == "New Submission":
-                            navigate_internal("Compound Workspace", "New Submission")
-                        elif title == "Batch Import":
-                            navigate_internal("Compound Workspace", "Batch Import")
-                        elif title == "Update Metadata":
-                            navigate_internal("Compound Workspace", "Update Metadata")
-                        else:
-                            navigate_internal("Compound Workspace", "Browse Record")
-                        st.rerun()
+                    card_slug = slugify_value(title)
+                    with st.container(key=f"dashboard_workflow_card_shell_{idx}_{card_slug}"):
+                        render_raw_html(
+                            f"""
+                            <div class="workflow-card {'is-primary' if idx == 1 else ''}">
+                                <div class="workflow-step">{idx}</div>
+                                {build_workflow_card_icon_markup(title)}
+                                <div class="workflow-title">{html_text(title)}</div>
+                                <div class="workflow-copy">{html_text(copy)}</div>
+                            </div>
+                            """
+                        )
+                        if st.button(
+                            f"Open {title}",
+                            key=f"dashboard_workflow_card_click_{idx}_{card_slug}",
+                            width="stretch",
+                        ):
+                            if title == "Search Spectra":
+                                navigate_internal("Search & Match")
+                            elif title in {"Browse Record", "Download Data"}:
+                                navigate_internal("Compound Workspace", "Browse Record")
+                            elif title == "New Submission":
+                                navigate_internal("Compound Workspace", "New Submission")
+                            elif title == "Batch Import":
+                                navigate_internal("Compound Workspace", "Batch Import")
+                            elif title == "Update Metadata":
+                                navigate_internal("Compound Workspace", "Update Metadata")
+                            else:
+                                navigate_internal("Compound Workspace", "Browse Record")
+                            st.rerun()
 
     with workspace_col:
         art_markup = f'<img class="dashboard-workspace-art" src="{workspace_uri}" alt="Compound workspace visual" />' if workspace_uri else ""
@@ -6275,7 +6286,7 @@ def render_batch_import_workspace():
 
             uploaded_file = st.file_uploader(
                 f"Upload completed {filename}",
-                type=["csv"],
+                type=["csv", "xlsx", "xls"],
                 key=f"upload_{filename}",
             )
 
@@ -6283,12 +6294,13 @@ def render_batch_import_workspace():
                 continue
 
             try:
-                uploaded_df = pd.read_csv(uploaded_file).fillna("")
+                uploaded_df = read_batch_import_upload(uploaded_file)
             except Exception as exc:
-                st.error(f"Could not read the CSV file: {exc}")
+                st.error(f"Could not read the import file: {exc}")
                 continue
 
-            missing_required_columns = validate_import_columns(uploaded_df, required_columns)
+            normalized_uploaded_df = normalize_import_dataframe(uploaded_df)
+            missing_required_columns = validate_import_columns(normalized_uploaded_df, required_columns)
             if missing_required_columns:
                 st.error(
                     "Missing required column(s): "
@@ -6297,18 +6309,25 @@ def render_batch_import_workspace():
                 )
                 continue
 
-            preview_df = align_import_columns(uploaded_df, expected_columns)
+            preview_df = align_import_columns(normalized_uploaded_df, expected_columns)
             st.markdown("**Preview before import**")
             st.dataframe(preview_df, width="stretch", hide_index=True)
 
             if st.button(f"Import {filename}", key=f"import_{filename}", width="stretch"):
-                inserted, skipped, errors = import_function(uploaded_df)
+                inserted, skipped, errors = import_function(normalized_uploaded_df)
                 status, headline = summarize_import_result(inserted, skipped, errors)
                 getattr(st, status)(headline)
 
                 if errors:
-                    note_df = pd.DataFrame({"Import notes": errors[:30]})
+                    note_df = import_errors_dataframe(errors)
                     st.dataframe(note_df, width="stretch", hide_index=True)
+                    st.download_button(
+                        label="Download import issue report",
+                        data=dataframe_to_csv_bytes(note_df),
+                        file_name=f"{Path(filename).stem}_import_issue_report.csv",
+                        mime="text/csv",
+                        key=f"download_import_issues_{filename}",
+                    )
 
 def render_kv(title, value):
     st.markdown(
@@ -7224,8 +7243,107 @@ def is_template_marker(value) -> bool:
 
 def normalize_import_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     normalized = df.copy()
-    normalized.columns = [str(column).strip() for column in normalized.columns]
+    all_known_columns = set(COMPOUND_IMPORT_COLUMNS + PROTON_IMPORT_COLUMNS + CARBON_IMPORT_COLUMNS + SPECTRA_IMPORT_COLUMNS)
+    canonical_to_column = {
+        re.sub(r"[^a-z0-9]+", "", column.casefold()): column
+        for column in all_known_columns
+    }
+    aliases = {
+        "compoundid": "compound_id",
+        "compoundname": "compound_name",
+        "trivialname": "trivial_name",
+        "deltappm": "delta_ppm",
+        "deltahppm": "delta_ppm",
+        "deltacppm": "delta_ppm",
+        "chemicalshift": "delta_ppm",
+        "chemicalshiftppm": "delta_ppm",
+        "jvaluemhz": "j_value",
+        "jvalue": "j_value",
+        "protoncount": "proton_count",
+        "carbontype": "carbon_type",
+        "instrumentmhz": "instrument_mhz",
+        "dataset": "dataset_label",
+        "datasetlabel": "dataset_label",
+        "nmrdata": "dataset_label",
+        "nmrdataset": "dataset_label",
+        "datasetid": "dataset_label",
+        "residue": "residue_note",
+        "residuenote": "residue_note",
+        "aminoacid": "residue_note",
+        "aminoacidresidue": "residue_note",
+        "references": "reference",
+        "reference": "reference",
+    }
+    cleaned_columns = []
+    for column in normalized.columns:
+        original = str(column).strip()
+        compact = re.sub(r"[^a-z0-9]+", "", original.casefold())
+        cleaned_columns.append(aliases.get(compact, canonical_to_column.get(compact, original)))
+    normalized.columns = cleaned_columns
     return normalized
+
+
+def combine_peak_note_from_import_row(row) -> str:
+    note = maybe_blank(row.get("note"))
+    dataset_label = maybe_blank(row.get("dataset_label"))
+    residue_note = maybe_blank(row.get("residue_note"))
+    reference = maybe_blank(row.get("reference"))
+    parts = []
+    if dataset_label:
+        parts.append(f"Dataset: {dataset_label}")
+    if note:
+        parts.append(note)
+    if residue_note and residue_note.casefold() not in note.casefold():
+        parts.append(residue_note)
+    combined = "; ".join(parts)
+    if reference and reference.casefold() not in combined.casefold():
+        combined = f"{combined}; Reference: {reference}" if combined else f"Reference: {reference}"
+    return combined
+
+
+def peak_import_dedupe_key(compound_id, delta_ppm, assignment, solvent="", instrument_mhz=None, note="") -> tuple:
+    instrument_value = safe_float_or_none(instrument_mhz)
+    instrument_key = "" if instrument_value is None else str(int(instrument_value) if float(instrument_value).is_integer() else round(float(instrument_value), 4))
+    return (
+        int(compound_id),
+        round(float(delta_ppm), 4),
+        maybe_blank(assignment).casefold(),
+        maybe_blank(solvent).casefold(),
+        instrument_key,
+        maybe_blank(note).casefold(),
+    )
+
+
+def read_batch_import_upload(uploaded_file) -> pd.DataFrame:
+    filename = str(getattr(uploaded_file, "name", "")).casefold()
+    if filename.endswith((".xlsx", ".xls")):
+        return pd.read_excel(uploaded_file).fillna("")
+    last_error = None
+    for encoding in ("utf-8-sig", "utf-8", "cp1252", "latin1"):
+        try:
+            uploaded_file.seek(0)
+            return pd.read_csv(uploaded_file, encoding=encoding).fillna("")
+        except UnicodeDecodeError as exc:
+            last_error = exc
+            continue
+    uploaded_file.seek(0)
+    if last_error is not None:
+        raise last_error
+    return pd.read_csv(uploaded_file).fillna("")
+
+
+def import_errors_dataframe(errors: list[str]) -> pd.DataFrame:
+    rows = []
+    for message in errors:
+        row_match = re.match(r"Row\s+(\d+):\s*(.*)", str(message))
+        rows.append(
+            {
+                "spreadsheet_row": int(row_match.group(1)) if row_match else "",
+                "issue": row_match.group(2) if row_match else str(message),
+                "message": str(message),
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def align_import_columns(df: pd.DataFrame, expected_columns: list[str]) -> pd.DataFrame:
@@ -7449,12 +7567,16 @@ def import_proton_from_dataframe(df: pd.DataFrame):
     compounds_df = load_all_compounds()
     existing_df = load_all_proton_data()
     existing_keys = {
-        (
-            int(row["compound_id"]),
-            round(float(row["delta_ppm"]), 4),
-            maybe_blank(row["assignment"]).casefold(),
+        peak_import_dedupe_key(
+            row["compound_id"],
+            row["delta_ppm"],
+            row["assignment"],
+            row.get("solvent"),
+            row.get("instrument_mhz"),
+            row.get("note"),
         )
         for _, row in existing_df.iterrows()
+        if safe_float_or_none(row.get("delta_ppm")) is not None and maybe_blank(row.get("assignment"))
     }
 
     inserted = 0
@@ -7492,10 +7614,21 @@ def import_proton_from_dataframe(df: pd.DataFrame):
             errors.append(f"Row {display_row}: instrument_mhz must be a valid number.")
             continue
 
-        dedupe_key = (compound_id, round(delta_value, 4), assignment.casefold())
+        peak_note = combine_peak_note_from_import_row(row)
+        dedupe_key = peak_import_dedupe_key(
+            compound_id,
+            delta_value,
+            assignment,
+            row.get("solvent"),
+            instrument_value,
+            peak_note,
+        )
         if dedupe_key in existing_keys:
             skipped += 1
-            errors.append(f"Row {display_row}: skipped duplicate 1H peak for the same compound, shift, and assignment.")
+            errors.append(
+                f"Row {display_row}: skipped duplicate 1H peak for compound_id={compound_id}, "
+                f"delta_ppm={delta_value}, assignment={assignment}, same solvent/instrument/dataset."
+            )
             continue
 
         insert_proton_record(
@@ -7507,7 +7640,7 @@ def import_proton_from_dataframe(df: pd.DataFrame):
             assignment=assignment,
             solvent=maybe_blank(row.get("solvent")),
             instrument_mhz=instrument_value,
-            note=maybe_blank(row.get("note")),
+            note=peak_note,
         )
         existing_keys.add(dedupe_key)
         inserted += 1
@@ -7520,12 +7653,16 @@ def import_carbon_from_dataframe(df: pd.DataFrame):
     compounds_df = load_all_compounds()
     existing_df = load_all_carbon_data()
     existing_keys = {
-        (
-            int(row["compound_id"]),
-            round(float(row["delta_ppm"]), 4),
-            maybe_blank(row["assignment"]).casefold(),
+        peak_import_dedupe_key(
+            row["compound_id"],
+            row["delta_ppm"],
+            row["assignment"],
+            row.get("solvent"),
+            row.get("instrument_mhz"),
+            row.get("note"),
         )
         for _, row in existing_df.iterrows()
+        if safe_float_or_none(row.get("delta_ppm")) is not None and maybe_blank(row.get("assignment"))
     }
 
     inserted = 0
@@ -7563,10 +7700,21 @@ def import_carbon_from_dataframe(df: pd.DataFrame):
             errors.append(f"Row {display_row}: instrument_mhz must be a valid number.")
             continue
 
-        dedupe_key = (compound_id, round(delta_value, 4), assignment.casefold())
+        peak_note = combine_peak_note_from_import_row(row)
+        dedupe_key = peak_import_dedupe_key(
+            compound_id,
+            delta_value,
+            assignment,
+            row.get("solvent"),
+            instrument_value,
+            peak_note,
+        )
         if dedupe_key in existing_keys:
             skipped += 1
-            errors.append(f"Row {display_row}: skipped duplicate 13C peak for the same compound, shift, and assignment.")
+            errors.append(
+                f"Row {display_row}: skipped duplicate 13C peak for compound_id={compound_id}, "
+                f"delta_ppm={delta_value}, assignment={assignment}, same solvent/instrument/dataset."
+            )
             continue
 
         insert_carbon_record(
@@ -7576,7 +7724,7 @@ def import_carbon_from_dataframe(df: pd.DataFrame):
             assignment=assignment,
             solvent=maybe_blank(row.get("solvent")),
             instrument_mhz=instrument_value,
-            note=maybe_blank(row.get("note")),
+            note=peak_note,
         )
         existing_keys.add(dedupe_key)
         inserted += 1
@@ -8206,10 +8354,14 @@ def build_compound_record_bundle(compound_row, proton_df, carbon_df, spectra_df,
     proton_export_df = _select_existing_columns(
         proton_df,
         ["delta_ppm", "multiplicity", "j_value", "proton_count", "assignment", "solvent", "instrument_mhz", "note"],
+    ).rename(
+        columns={"note": "Residue / Note"}
     )
     carbon_export_df = _select_existing_columns(
         carbon_df,
         ["delta_ppm", "carbon_type", "assignment", "solvent", "instrument_mhz", "note"],
+    ).rename(
+        columns={"note": "Residue / Note"}
     )
     spectra_export_df = _select_existing_columns(
         spectra_df,
@@ -8574,15 +8726,17 @@ def show_compound_detail(compound_id):
             if standardized_image is not None:
                 st.image(standardized_image, width="stretch")
             else:
-                st.warning("Structure image file not found.")
-                if is_external_url(str(structure_path).strip()):
-                    st.code(str(structure_path).strip())
-                else:
-                    full_path = get_full_file_path(structure_path)
-                    if full_path:
-                        st.code(str(full_path))
+                render_structure_preview(
+                    first_structure_identifier(row_data.get("smiles"), row_data.get("inchi")),
+                    caption=None,
+                    size=STRUCTURE_DETAIL_IMAGE_SIZE,
+                )
         else:
-            render_structure_preview(row_data.get("smiles"), caption=None, size=STRUCTURE_DETAIL_IMAGE_SIZE)
+            render_structure_preview(
+                first_structure_identifier(row_data.get("smiles"), row_data.get("inchi")),
+                caption=None,
+                size=STRUCTURE_DETAIL_IMAGE_SIZE,
+            )
         st.markdown('</div>', unsafe_allow_html=True)
 
     section_header("Physical, Spectral & Supporting Data")
@@ -8612,7 +8766,7 @@ def show_compound_detail(compound_id):
             "assignment": "Assignment",
             "solvent": "Solvent",
             "instrument_mhz": "Instrument (MHz)",
-            "note": "Note"
+            "note": "Residue / Note"
         })
         st.dataframe(proton_df, width="stretch", hide_index=True)
 
@@ -8627,7 +8781,7 @@ def show_compound_detail(compound_id):
             "assignment": "Assignment",
             "solvent": "Solvent",
             "instrument_mhz": "Instrument (MHz)",
-            "note": "Note"
+            "note": "Residue / Note"
         })
         st.dataframe(carbon_df, width="stretch", hide_index=True)
 
@@ -9979,12 +10133,12 @@ def show_compound_pages():
                 col1, col2 = st.columns(2)
 
                 with col1:
-                    trivial_name = st.text_input("Trivial Name", value=maybe_blank(row["trivial_name"]))
-                    iupac_name = st.text_area("IUPAC Name", value=maybe_blank(row["iupac_name"]))
-                    molecular_formula = st.text_input("Molecular Formula", value=maybe_blank(row["molecular_formula"]))
-                    smiles = st.text_area("SMILES", value=maybe_blank(row.get("smiles")))
-                    inchi = st.text_area("InChI", value=maybe_blank(row.get("inchi")))
-                    inchikey = st.text_input("InChIKey", value=maybe_blank(row.get("inchikey")))
+                    trivial_name = st.text_input("Trivial Name", value=maybe_blank(row["trivial_name"]), key=f"edit_trivial_name_{edit_compound_id}")
+                    iupac_name = st.text_area("IUPAC Name", value=maybe_blank(row["iupac_name"]), key=f"edit_iupac_name_{edit_compound_id}")
+                    molecular_formula = st.text_input("Molecular Formula", value=maybe_blank(row["molecular_formula"]), key=f"edit_molecular_formula_{edit_compound_id}")
+                    smiles = st.text_area("SMILES", value=maybe_blank(row.get("smiles")), key=f"edit_smiles_{edit_compound_id}")
+                    inchi = st.text_area("InChI", value=maybe_blank(row.get("inchi")), key=f"edit_inchi_{edit_compound_id}")
+                    inchikey = st.text_input("InChIKey", value=maybe_blank(row.get("inchikey")), key=f"edit_inchikey_{edit_compound_id}")
                     compound_class = select_or_custom(
                         "Compound Class",
                         build_existing_options(compounds_df, "compound_class"),
@@ -10008,35 +10162,36 @@ def show_compound_pages():
                     source_organism = st.text_input(
                         "Source Organism / Species (optional)",
                         value=maybe_blank(row.get("source_organism")),
+                        key=f"edit_source_organism_{edit_compound_id}",
                     )
-                    sample_code = st.text_input("Sample Code", value=maybe_blank(row["sample_code"]))
-                    collection_location = st.text_input("Collection Location", value=maybe_blank(row["collection_location"]))
-                    gps_coordinates = st.text_input("GPS Coordinates", value=maybe_blank(row["gps_coordinates"]))
-                    depth_m_text = st.text_input("Depth (m)", value=maybe_blank(row["depth_m"]))
+                    sample_code = st.text_input("Sample Code", value=maybe_blank(row["sample_code"]), key=f"edit_sample_code_{edit_compound_id}")
+                    collection_location = st.text_input("Collection Location", value=maybe_blank(row["collection_location"]), key=f"edit_collection_location_{edit_compound_id}")
+                    gps_coordinates = st.text_input("GPS Coordinates", value=maybe_blank(row["gps_coordinates"]), key=f"edit_gps_coordinates_{edit_compound_id}")
+                    depth_m_text = st.text_input("Depth (m)", value=maybe_blank(row["depth_m"]), key=f"edit_depth_m_{edit_compound_id}")
 
                 with col2:
-                    uv_data = st.text_input("UV Data", value=maybe_blank(row["uv_data"]))
-                    ftir_data = st.text_input("FTIR Data", value=maybe_blank(row["ftir_data"]))
-                    cd_data = st.text_area("Circular Dichroism (CD / ECD)", value=maybe_blank(row.get("cd_data")))
-                    optical_rotation = st.text_input("Optical Rotation", value=maybe_blank(row["optical_rotation"]))
-                    melting_point = st.text_input("Melting Point", value=maybe_blank(row["melting_point"]))
-                    crystallization_method = st.text_input("Crystallization Method", value=maybe_blank(row["crystallization_method"]))
-                    structure_image_path = st.text_input("Structure Image Path", value=maybe_blank(row["structure_image_path"]))
+                    uv_data = st.text_input("UV Data", value=maybe_blank(row["uv_data"]), key=f"edit_uv_data_{edit_compound_id}")
+                    ftir_data = st.text_input("FTIR Data", value=maybe_blank(row["ftir_data"]), key=f"edit_ftir_data_{edit_compound_id}")
+                    cd_data = st.text_area("Circular Dichroism (CD / ECD)", value=maybe_blank(row.get("cd_data")), key=f"edit_cd_data_{edit_compound_id}")
+                    optical_rotation = st.text_input("Optical Rotation", value=maybe_blank(row["optical_rotation"]), key=f"edit_optical_rotation_{edit_compound_id}")
+                    melting_point = st.text_input("Melting Point", value=maybe_blank(row["melting_point"]), key=f"edit_melting_point_{edit_compound_id}")
+                    crystallization_method = st.text_input("Crystallization Method", value=maybe_blank(row["crystallization_method"]), key=f"edit_crystallization_method_{edit_compound_id}")
+                    structure_image_path = st.text_input("Structure Image Path", value=maybe_blank(row["structure_image_path"]), key=f"edit_structure_image_path_{edit_compound_id}")
                     structure_upload = st.file_uploader(
                         "Replace Structure Image",
                         type=["png", "jpg", "jpeg", "webp"],
                         key=f"edit_structure_upload_{edit_compound_id}",
                     )
-                    journal_name = st.text_input("Journal Name", value=maybe_blank(row["journal_name"]))
-                    article_title = st.text_area("Article Title", value=maybe_blank(row["article_title"]))
-                    publication_year = st.text_input("Publication Year", value=maybe_blank(row["publication_year"]))
-                    volume = st.text_input("Volume", value=maybe_blank(row["volume"]))
-                    issue = st.text_input("Issue / Journal Number", value=maybe_blank(row["issue"]))
-                    pages = st.text_input("Pages", value=maybe_blank(row["pages"]))
-                    doi = st.text_input("DOI", value=maybe_blank(row["doi"]))
-                    ccdc_number = st.text_input("CCDC", value=maybe_blank(row["ccdc_number"]))
-                    molecular_weight_text = st.text_input("Mr", value=maybe_blank(row["molecular_weight"]))
-                    hrms_data = st.text_area("HRMS Data", value=maybe_blank(row["hrms_data"]))
+                    journal_name = st.text_input("Journal Name", value=maybe_blank(row["journal_name"]), key=f"edit_journal_name_{edit_compound_id}")
+                    article_title = st.text_area("Article Title", value=maybe_blank(row["article_title"]), key=f"edit_article_title_{edit_compound_id}")
+                    publication_year = st.text_input("Publication Year", value=maybe_blank(row["publication_year"]), key=f"edit_publication_year_{edit_compound_id}")
+                    volume = st.text_input("Volume", value=maybe_blank(row["volume"]), key=f"edit_volume_{edit_compound_id}")
+                    issue = st.text_input("Issue / Journal Number", value=maybe_blank(row["issue"]), key=f"edit_issue_{edit_compound_id}")
+                    pages = st.text_input("Pages", value=maybe_blank(row["pages"]), key=f"edit_pages_{edit_compound_id}")
+                    doi = st.text_input("DOI", value=maybe_blank(row["doi"]), key=f"edit_doi_{edit_compound_id}")
+                    ccdc_number = st.text_input("CCDC", value=maybe_blank(row["ccdc_number"]), key=f"edit_ccdc_number_{edit_compound_id}")
+                    molecular_weight_text = st.text_input("Mr", value=maybe_blank(row["molecular_weight"]), key=f"edit_molecular_weight_{edit_compound_id}")
+                    hrms_data = st.text_area("HRMS Data", value=maybe_blank(row["hrms_data"]), key=f"edit_hrms_data_{edit_compound_id}")
                     data_source = select_or_custom(
                         "Data Source",
                         build_existing_options(compounds_df, "data_source"),
@@ -10052,8 +10207,8 @@ def show_compound_pages():
                         help="Use imported for bulk-ingested records, reviewed for checked records, and curated for records ready as trusted NPDB entries.",
                     )
 
-                note = st.text_area("Note", value=maybe_blank(row["note"]))
-                submitted_edit = st.button("Save Changes", key="edit_compound_submit")
+                note = st.text_area("Note", value=maybe_blank(row["note"]), key=f"edit_note_{edit_compound_id}")
+                submitted_edit = st.button("Save Changes", key=f"edit_compound_submit_{edit_compound_id}")
 
                 if submitted_edit:
                     if not trivial_name.strip():
@@ -10216,7 +10371,7 @@ def show_proton_pages():
                 "assignment": "Assignment",
                 "solvent": "Solvent",
                 "instrument_mhz": "Instrument (MHz)",
-                "note": "Note",
+                "note": "Residue / Note",
             })
             st.dataframe(proton_df, width="stretch", hide_index=True)
         return
@@ -10493,7 +10648,7 @@ def show_carbon_pages():
                 "assignment": "Assignment",
                 "solvent": "Solvent",
                 "instrument_mhz": "Instrument (MHz)",
-                "note": "Note",
+                "note": "Residue / Note",
             })
             st.dataframe(carbon_df, width="stretch", hide_index=True)
         return
@@ -12164,6 +12319,7 @@ def _upsert_compound_local(row: dict):
 
 def insert_compound_record(trivial_name, iupac_name, molecular_formula, compound_class, compound_subclass, smiles, inchi, inchikey, source_category, source_organism, source_material, sample_code, collection_location, gps_coordinates, depth_m, uv_data, ftir_data, cd_data, optical_rotation, melting_point, crystallization_method, structure_image_path, journal_name, article_title, publication_year, volume, issue, pages, doi, ccdc_number, molecular_weight, hrms_data, data_source, curation_status, note):
     ensure_write_target_ready()
+    structure_image_path = maybe_blank(structure_image_path)
     row = {
         "trivial_name": trivial_name,
         "iupac_name": iupac_name,
@@ -12209,18 +12365,32 @@ def insert_compound_record(trivial_name, iupac_name, molecular_formula, compound
         row_id = int(inserted.get("id")) if inserted and inserted.get("id") is not None else None
         if row_id is None:
             raise RuntimeError("Supabase insert for the compound did not return an ID, so the local mirror was not updated.")
+        if not structure_image_path:
+            generated_structure_path = _auto_structure_image_path(row_id, smiles=smiles, inchi=inchi)
+            if generated_structure_path:
+                row["structure_image_path"] = generated_structure_path
+                supabase_update_row("compounds", row_id, {"structure_image_path": generated_structure_path})
         if use_local_read_backend():
             row["id"] = row_id
             _upsert_compound_local(row)
         invalidate_cached_views()
         return row_id
     row_id = _sqlite_upsert_row("compounds", row)
+    if row_id is not None and not structure_image_path:
+        generated_structure_path = _auto_structure_image_path(row_id, smiles=smiles, inchi=inchi)
+        if generated_structure_path:
+            row["id"] = row_id
+            row["structure_image_path"] = generated_structure_path
+            _upsert_compound_local(row)
     invalidate_cached_views()
     return row_id
 
 
 def update_compound_record(compound_id, trivial_name, iupac_name, molecular_formula, compound_class, compound_subclass, smiles, inchi, inchikey, source_category, source_organism, source_material, sample_code, collection_location, gps_coordinates, depth_m, uv_data, ftir_data, cd_data, optical_rotation, melting_point, crystallization_method, structure_image_path, journal_name, article_title, publication_year, volume, issue, pages, doi, ccdc_number, molecular_weight, hrms_data, data_source, curation_status, note):
     ensure_write_target_ready()
+    structure_image_path = maybe_blank(structure_image_path)
+    if not structure_image_path:
+        structure_image_path = _auto_structure_image_path(compound_id, smiles=smiles, inchi=inchi)
     row = {
         "id": compound_id,
         "trivial_name": trivial_name,
@@ -12452,6 +12622,16 @@ def _save_generated_structure_image(compound_id: int, mol) -> str:
     candidate = _local_binary_path(STRUCTURES_DIR, f"compound_{compound_id}_structure", ".png")
     candidate.write_bytes(data)
     return str(candidate.relative_to(PROJECT_DIR))
+
+
+def _auto_structure_image_path(compound_id: int, smiles: str = "", inchi: str = "") -> str:
+    for structure_text in (maybe_blank(smiles), maybe_blank(inchi)):
+        if not structure_text:
+            continue
+        mol = structure_text_to_mol(structure_text)
+        if mol is not None:
+            return _save_generated_structure_image(compound_id, mol)
+    return ""
 
 
 def save_structure_query_to_compound(compound_id: int, query_text: str) -> tuple[bool, str]:
