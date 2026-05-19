@@ -2956,8 +2956,16 @@ div[data-testid="stRadio"] label:has(input:checked) {
 }
 
 .st-key-dashboard_workflow_native div[data-testid="stHorizontalBlock"] {
+    display: grid !important;
+    grid-template-columns: repeat(4, minmax(135px, 1fr));
     gap: 0.84rem;
     align-items: stretch;
+}
+
+.st-key-dashboard_workflow_native div[data-testid="column"] {
+    width: 100% !important;
+    min-width: 0 !important;
+    flex: none !important;
 }
 
 [class*="st-key-dashboard_workflow_card_shell_"] {
@@ -3432,6 +3440,10 @@ div[data-baseweb="select"] {
         grid-template-columns: 1fr;
     }
 
+    .st-key-dashboard_workflow_native div[data-testid="stHorizontalBlock"] {
+        grid-template-columns: 1fr;
+    }
+
     .dashboard-stat-strip {
         grid-template-columns: 1fr;
     }
@@ -3498,6 +3510,10 @@ div[data-baseweb="select"] {
 
     .dashboard-workflow-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .st-key-dashboard_workflow_native div[data-testid="stHorizontalBlock"] {
+        grid-template-columns: repeat(2, minmax(150px, 1fr));
     }
 
     .dashboard-workflow-grid::before {
@@ -4408,6 +4424,17 @@ def clear_edit_compound_form_state():
     for state_key in list(st.session_state.keys()):
         if state_key.startswith("edit_") and state_key != "edit_compound_select":
             del st.session_state[state_key]
+
+
+def guard_edit_compound_record_switch(compound_id: int):
+    previous_compound_id = st.session_state.get("_active_edit_compound_id")
+    if previous_compound_id == compound_id:
+        return
+    for state_key in list(st.session_state.keys()):
+        if state_key.startswith("edit_") and state_key != "edit_compound_select":
+            del st.session_state[state_key]
+    st.session_state["_active_edit_compound_id"] = compound_id
+
 
 def reset_compound_wizard():
     wizard_keys = [
@@ -7270,6 +7297,10 @@ def normalize_import_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         "chemicalshift": "delta_ppm",
         "chemicalshiftppm": "delta_ppm",
         "jvaluemhz": "j_value",
+        "jvaluehz": "j_value",
+        "jhz": "j_value",
+        "couplingconstant": "j_value",
+        "couplingconstanthz": "j_value",
         "jvalue": "j_value",
         "protoncount": "proton_count",
         "carbontype": "carbon_type",
@@ -8773,7 +8804,7 @@ def show_compound_detail(compound_id):
             "id": "ID",
             "delta_ppm": "δH (ppm)",
             "multiplicity": "Multiplicity",
-            "j_value": "J Value",
+            "j_value": "J Value (Hz)",
             "proton_count": "Proton Count",
             "assignment": "Assignment",
             "solvent": "Solvent",
@@ -10134,6 +10165,7 @@ def show_compound_pages():
             )
 
             edit_compound_id = int(selected_label.split(" - ")[0])
+            guard_edit_compound_record_switch(edit_compound_id)
             st.session_state["selected_compound_id"] = edit_compound_id
 
             row_df = load_compound_row(edit_compound_id)
@@ -10379,7 +10411,7 @@ def show_proton_pages():
                 "id": "ID",
                 "delta_ppm": "δH (ppm)",
                 "multiplicity": "Multiplicity",
-                "j_value": "J Value",
+                "j_value": "J Value (Hz)",
                 "proton_count": "Proton Count",
                 "assignment": "Assignment",
                 "solvent": "Solvent",
@@ -10426,7 +10458,7 @@ def show_proton_pages():
                 with c1:
                     delta_ppm_text = st.text_input("δH (ppm)")
                     multiplicity = st.text_input("Multiplicity")
-                    j_value = st.text_input("J Value")
+                    j_value = st.text_input("J Value (Hz)")
                     proton_count = st.text_input("Proton Count", placeholder="e.g. 1H or 3H")
                     assignment = st.text_input("Assignment")
 
@@ -10527,7 +10559,7 @@ def show_proton_pages():
                     with c1:
                         delta_ppm_text = st.text_input("δH (ppm)", value=maybe_blank(row["delta_ppm"]))
                         multiplicity = st.text_input("Multiplicity", value=maybe_blank(row["multiplicity"]))
-                        j_value = st.text_input("J Value", value=maybe_blank(row["j_value"]))
+                        j_value = st.text_input("J Value (Hz)", value=maybe_blank(row["j_value"]))
                         proton_count = st.text_input("Proton Count", value=maybe_blank(row["proton_count"]))
                         assignment = st.text_input("Assignment", value=maybe_blank(row["assignment"]))
 
