@@ -2956,16 +2956,8 @@ div[data-testid="stRadio"] label:has(input:checked) {
 }
 
 .st-key-dashboard_workflow_native div[data-testid="stHorizontalBlock"] {
-    display: grid !important;
-    grid-template-columns: repeat(4, minmax(135px, 1fr));
     gap: 0.84rem;
     align-items: stretch;
-}
-
-.st-key-dashboard_workflow_native div[data-testid="column"] {
-    width: 100% !important;
-    min-width: 0 !important;
-    flex: none !important;
 }
 
 [class*="st-key-dashboard_workflow_card_shell_"] {
@@ -3440,10 +3432,6 @@ div[data-baseweb="select"] {
         grid-template-columns: 1fr;
     }
 
-    .st-key-dashboard_workflow_native div[data-testid="stHorizontalBlock"] {
-        grid-template-columns: 1fr;
-    }
-
     .dashboard-stat-strip {
         grid-template-columns: 1fr;
     }
@@ -3510,10 +3498,6 @@ div[data-baseweb="select"] {
 
     .dashboard-workflow-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .st-key-dashboard_workflow_native div[data-testid="stHorizontalBlock"] {
-        grid-template-columns: repeat(2, minmax(150px, 1fr));
     }
 
     .dashboard-workflow-grid::before {
@@ -6174,7 +6158,7 @@ def render_dashboard_showcase(
             navigate_internal("Search & Match")
             st.rerun()
 
-    workflow_col, workspace_col = st.columns([2.05, 0.82], gap="medium")
+    workflow_col, workspace_col = st.columns([2.18, 0.82], gap="medium")
     with workflow_col:
         user_can_edit = can_edit_database()
         workflow_title = "Compound Workflow" if user_can_edit else "Research Workflow"
