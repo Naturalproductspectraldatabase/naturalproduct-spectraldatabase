@@ -3683,6 +3683,8 @@ def invalidate_cached_views():
         "supabase_compounds_signature",
         "load_all_compounds",
         "_load_all_compounds_cached",
+        "load_dashboard_compounds",
+        "_load_dashboard_compounds_cached",
         "load_compound_row",
         "_load_compound_row_cached",
         "load_all_proton_data",
@@ -12209,6 +12211,30 @@ def compound_select_columns() -> str:
     return ",".join(columns)
 
 
+def dashboard_compound_select_columns() -> str:
+    columns = [
+        "id",
+        "trivial_name",
+        "molecular_formula",
+        "smiles",
+        "inchi",
+        "inchikey",
+        "compound_class",
+        "compound_subclass",
+        "source_category",
+        "source_organism",
+        "source_material",
+        "sample_code",
+        "structure_image_path",
+        "data_source",
+        "curation_status",
+        "updated_at",
+    ]
+    if use_supabase_backend() and not supabase_column_available("compounds", "curation_status"):
+        columns = [column for column in columns if column != "curation_status"]
+    return ",".join(columns)
+
+
 def supabase_insert_row(table: str, row: dict):
     payload = {k: _json_ready(v) for k, v in row.items() if k and v is not None}
     try:
@@ -12426,6 +12452,27 @@ def load_all_compounds(source_normalization_version: str = SOURCE_NORMALIZATION_
 
 try:
     load_all_compounds.clear = _load_all_compounds_cached.clear
+except Exception:
+    pass
+
+
+@st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
+def _load_dashboard_compounds_cached(source_normalization_version: str, _db_signature):
+    _ = source_normalization_version
+    __ = _db_signature
+    columns = dashboard_compound_select_columns()
+    if use_supabase_backend():
+        df = supabase_select_df("compounds", columns=columns, order="updated_at.desc")
+        return enrich_compounds_dataframe(df)
+    return enrich_compounds_dataframe(_sqlite_dataframe(f"SELECT {columns} FROM compounds ORDER BY updated_at DESC"))
+
+
+def load_dashboard_compounds(source_normalization_version: str = SOURCE_NORMALIZATION_CACHE_VERSION):
+    return _load_dashboard_compounds_cached(source_normalization_version, get_db_signature())
+
+
+try:
+    load_dashboard_compounds.clear = _load_dashboard_compounds_cached.clear
 except Exception:
     pass
 
@@ -13047,14 +13094,18 @@ def save_structure_query_to_compound(compound_id: int, query_text: str) -> tuple
 # App boot
 # =========================
 apply_navigation_query_params()
-all_compounds_df = load_all_compounds()
+main_section = st.session_state.get("nav_section", "Dashboard")
+all_compounds_df = load_dashboard_compounds() if main_section == "Dashboard" else load_all_compounds()
 render_cloud_sync_notice()
 if use_supabase_backend() and all_compounds_df.empty:
     try:
-        load_all_compounds.clear()
+        if main_section == "Dashboard":
+            load_dashboard_compounds.clear()
+        else:
+            load_all_compounds.clear()
     except Exception:
         pass
-    all_compounds_df = load_all_compounds()
+    all_compounds_df = load_dashboard_compounds() if main_section == "Dashboard" else load_all_compounds()
 write_batch_import_templates()
 
 
@@ -13066,7 +13117,6 @@ with st.sidebar:
     render_sidebar_workspace_summary(active_section, all_compounds_df)
     render_sidebar_navigation()
 
-main_section = st.session_state.get("nav_section", "Dashboard")
 render_workspace_headbar(main_section)
 # =========================
 # Main routing
