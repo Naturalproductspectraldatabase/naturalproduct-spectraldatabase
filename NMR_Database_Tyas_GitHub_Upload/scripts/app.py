@@ -6547,7 +6547,7 @@ def render_kv(title, value):
         unsafe_allow_html=True
     )
 
-def render_compound_card(row, show_preview: bool = True):
+def render_compound_card(row, show_preview: bool = True, prefer_fast_asset: bool = False):
     title = html_text(row["trivial_name"])
     formula = html_text(row["molecular_formula"])
     compound_class = html_text(row["compound_class"])
@@ -6564,27 +6564,34 @@ def render_compound_card(row, show_preview: bool = True):
     if show_preview and preview_col is not None:
         with preview_col:
             source_value = row.get("structure_image_path")
-            standardized_image = load_standardized_structure_source(
-                source_value,
-                size=STRUCTURE_THUMBNAIL_IMAGE_SIZE,
-                fallback_smiles=first_structure_identifier(row.get("smiles"), row.get("inchi"), row.get("inchikey")),
+            source_is_remote_asset = source_value and (
+                is_external_url(str(source_value).strip()) or is_supabase_storage_reference(source_value)
             )
-            if standardized_image is not None:
-                st.image(standardized_image, width="stretch")
-            elif source_value and (is_external_url(str(source_value).strip()) or is_supabase_storage_reference(source_value)):
+            if prefer_fast_asset and source_is_remote_asset:
                 safe_url = display_asset_url(source_value).replace('"', "&quot;")
                 st.image(safe_url, width="stretch")
             else:
-                structure_png = structure_smiles_png_bytes(
-                    first_structure_identifier(row.get("smiles"), row.get("inchi"), row.get("inchikey")),
+                standardized_image = load_standardized_structure_source(
+                    source_value,
                     size=STRUCTURE_THUMBNAIL_IMAGE_SIZE,
+                    fallback_smiles=first_structure_identifier(row.get("smiles"), row.get("inchi"), row.get("inchikey")),
                 )
-                if structure_png:
-                    st.image(structure_png, width="stretch")
+                if standardized_image is not None:
+                    st.image(standardized_image, width="stretch")
+                elif source_is_remote_asset:
+                    safe_url = display_asset_url(source_value).replace('"', "&quot;")
+                    st.image(safe_url, width="stretch")
                 else:
-                    structure_url = structure_smiles_image_url(first_structure_identifier(row.get("smiles"), row.get("inchi"), row.get("inchikey")))
-                    if structure_url:
-                        st.image(structure_url, width="stretch")
+                    structure_png = structure_smiles_png_bytes(
+                        first_structure_identifier(row.get("smiles"), row.get("inchi"), row.get("inchikey")),
+                        size=STRUCTURE_THUMBNAIL_IMAGE_SIZE,
+                    )
+                    if structure_png:
+                        st.image(structure_png, width="stretch")
+                    else:
+                        structure_url = structure_smiles_image_url(first_structure_identifier(row.get("smiles"), row.get("inchi"), row.get("inchikey")))
+                        if structure_url:
+                            st.image(structure_url, width="stretch")
     with info_col:
         st.markdown(
             f"""
@@ -9709,7 +9716,7 @@ def show_overview_page(all_compounds_df):
         for _, row in preview_df.iterrows():
             c1, c2 = st.columns([6.2, 0.8])
             with c1:
-                render_compound_card(row, show_preview=True)
+                render_compound_card(row, show_preview=True, prefer_fast_asset=True)
             with c2:
                 st.write("")
                 if st.button("Open", key=f"overview_open_{row['id']}"):
