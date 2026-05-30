@@ -59,17 +59,20 @@ except Exception:
 
 try:
     from rdkit import Chem, DataStructs, RDLogger
-    from rdkit.Chem import AllChem
+    from rdkit.Chem import AllChem, rdDepictor
     RDLogger.DisableLog("rdApp.*")
 except Exception:
     Chem = None
     DataStructs = None
     AllChem = None
+    rdDepictor = None
 
 try:
     from rdkit.Chem import Draw
+    from rdkit.Chem.Draw import rdMolDraw2D
 except Exception:
     Draw = None
+    rdMolDraw2D = None
 
 try:
     from openpyxl.styles import Alignment, Font, PatternFill
@@ -112,7 +115,7 @@ OWNER_EDITOR_USERNAME = "npdb_tyas"
 OWNER_EDITOR_ROLES = {"owner", "owner_editor", "admin", "editor"}
 PASSWORD_HASH_SCHEME = "pbkdf2_sha256"
 SUPABASE_PAGE_SIZE = 1000
-DATA_CACHE_TTL_SECONDS = 300
+DATA_CACHE_TTL_SECONDS = 60
 EXTERNAL_ASSET_CACHE_TTL_SECONDS = 3600
 AUDIT_EVENTS_TABLE = "audit_events"
 
@@ -235,10 +238,7 @@ st.markdown = _safe_markdown
 
 def render_raw_html(markup: str):
     normalized = _normalize_html_block(markup)
-    if hasattr(st, "html"):
-        st.html(normalized)
-    else:
-        _STREAMLIT_MARKDOWN(normalized, unsafe_allow_html=True)
+    _STREAMLIT_MARKDOWN(normalized, unsafe_allow_html=True)
 
 
 WORKSPACE_ART_PATH = pick_branding_asset("compound workspace.png", "updated.png", "structures.png")
@@ -410,6 +410,7 @@ STRUCTURE_DETAIL_IMAGE_SIZE = (1280, 920)
 STRUCTURE_DOWNLOAD_IMAGE_SIZE = (1280, 920)
 STRUCTURE_SAVE_IMAGE_SIZE = (1600, 1200)
 STRUCTURE_MIN_CRISP_ASSET_EDGE = 700
+STRUCTURE_RENDERER_VERSION = "rdkit-cairo-20260530"
 DEFAULT_BIOACTIVITY_CATEGORIES = [
     "Cytotoxicity",
     "Antibacterial",
@@ -1478,7 +1479,7 @@ def render_workspace_loading_screen():
         ),
         unsafe_allow_html=True,
     )
-    time.sleep(0.65)
+    time.sleep(0.2)
     st.rerun()
 
 
@@ -2865,15 +2866,20 @@ div[data-testid="stRadio"] label:has(input:checked) {
 }
 
 .workflow-card {
-    display: block;
-    padding: 2.68rem 0.78rem 0.82rem 0.78rem;
-    min-height: 150px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 2.85rem 0.88rem 0.9rem 0.88rem;
+    min-height: 172px;
     position: relative;
     background: linear-gradient(180deg, rgba(20, 31, 51, 0.82), rgba(10, 18, 31, 0.92));
     text-decoration: none;
     color: inherit;
     cursor: pointer;
     z-index: 1;
+    min-width: 0;
+    width: 100%;
+    box-sizing: border-box;
 }
 
 .dashboard-chart-card {
@@ -2956,27 +2962,35 @@ div[data-testid="stRadio"] label:has(input:checked) {
 }
 
 .st-key-dashboard_workflow_native div[data-testid="stHorizontalBlock"] {
-    gap: 0.84rem;
+    display: grid !important;
+    grid-template-columns: repeat(4, minmax(150px, 1fr));
+    gap: 0.9rem;
     align-items: stretch;
-    flex-wrap: wrap;
 }
 
+.st-key-dashboard_workflow_native div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"],
 .st-key-dashboard_workflow_native div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
-    flex: 1 1 10.8rem !important;
-    min-width: 10.8rem !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    flex: unset !important;
+    align-self: stretch !important;
 }
 
 [class*="dashboard_workflow_card_shell"],
 [class*="dashboard-workflow-card-shell"] {
     position: relative;
-    min-height: 150px;
+    min-height: 172px;
+    width: 100% !important;
+    min-width: 0 !important;
 }
 
 [class*="dashboard_workflow_card_shell"] .workflow-card,
 [class*="dashboard-workflow-card-shell"] .workflow-card {
     height: 100%;
-    min-height: 150px;
+    min-height: 172px;
     pointer-events: none;
+    align-items: flex-start !important;
+    text-align: left !important;
 }
 
 [class*="dashboard_workflow_card_shell"] div[data-testid="stButton"],
@@ -2991,7 +3005,7 @@ div[data-testid="stRadio"] label:has(input:checked) {
 [class*="dashboard-workflow-card-shell"] div[data-testid="stButton"] button {
     width: 100% !important;
     height: 100% !important;
-    min-height: 150px !important;
+    min-height: 172px !important;
     border-radius: 22px !important;
     opacity: 0 !important;
     cursor: pointer !important;
@@ -3022,13 +3036,19 @@ div[data-testid="stRadio"] label:has(input:checked) {
 
 .workflow-title {
     color: var(--text-strong);
-    font-size: 0.84rem;
+    font-size: 0.9rem;
     font-weight: 720;
     margin-bottom: 0.26rem;
     line-height: 1.22;
-    overflow-wrap: normal;
-    word-break: normal;
-    hyphens: none;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: normal !important;
+    word-break: normal !important;
+    hyphens: none !important;
+    white-space: normal !important;
+    writing-mode: horizontal-tb !important;
+    text-align: left !important;
 }
 
 .workflow-card-icon-shell {
@@ -3053,11 +3073,17 @@ div[data-testid="stRadio"] label:has(input:checked) {
 
 .workflow-copy {
     color: var(--text-soft);
-    font-size: 0.68rem;
+    font-size: 0.74rem;
     line-height: 1.34;
-    overflow-wrap: normal;
-    word-break: normal;
-    hyphens: none;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: normal !important;
+    word-break: normal !important;
+    hyphens: none !important;
+    white-space: normal !important;
+    writing-mode: horizontal-tb !important;
+    text-align: left !important;
 }
 
 .dashboard-hero-header {
@@ -3447,6 +3473,10 @@ div[data-baseweb="select"] {
         grid-template-columns: 1fr;
     }
 
+    .st-key-dashboard_workflow_native div[data-testid="stHorizontalBlock"] {
+        grid-template-columns: 1fr;
+    }
+
     .dashboard-stat-strip {
         grid-template-columns: 1fr;
     }
@@ -3502,6 +3532,16 @@ div[data-baseweb="select"] {
     }
 }
 
+@media (max-width: 1340px) {
+    .st-key-dashboard_workflow_native div[data-testid="stHorizontalBlock"] {
+        grid-template-columns: repeat(2, minmax(170px, 1fr));
+    }
+
+    .dashboard-workflow-grid::before {
+        display: none;
+    }
+}
+
 @media (max-width: 960px) {
     .dashboard-workspace-card {
         min-height: auto;
@@ -3513,6 +3553,10 @@ div[data-baseweb="select"] {
 
     .dashboard-workflow-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .st-key-dashboard_workflow_native div[data-testid="stHorizontalBlock"] {
+        grid-template-columns: repeat(2, minmax(150px, 1fr));
     }
 
     .dashboard-workflow-grid::before {
@@ -3636,8 +3680,11 @@ def invalidate_cached_views():
     cached_function_names = [
         "count_database_totals",
         "supabase_count_rows",
+        "supabase_compounds_signature",
         "load_all_compounds",
+        "_load_all_compounds_cached",
         "load_compound_row",
+        "_load_compound_row_cached",
         "load_all_proton_data",
         "load_proton_data",
         "load_proton_row",
@@ -4421,8 +4468,12 @@ def clear_edit_compound_form_state():
         except Exception:
             pass
     for state_key in list(st.session_state.keys()):
-        if state_key.startswith("edit_") and state_key != "edit_compound_select":
+        if (
+            (state_key.startswith("edit_") and state_key != "edit_compound_select")
+            or state_key.startswith("_draft_edit_")
+        ):
             del st.session_state[state_key]
+    st.session_state.pop("_active_edit_compound_id", None)
 
 
 def guard_edit_compound_record_switch(compound_id: int):
@@ -4430,7 +4481,10 @@ def guard_edit_compound_record_switch(compound_id: int):
     if previous_compound_id == compound_id:
         return
     for state_key in list(st.session_state.keys()):
-        if state_key.startswith("edit_") and state_key != "edit_compound_select":
+        if (
+            (state_key.startswith("edit_") and state_key != "edit_compound_select")
+            or state_key.startswith("_draft_edit_")
+        ):
             del st.session_state[state_key]
     st.session_state["_active_edit_compound_id"] = compound_id
 
@@ -4660,6 +4714,31 @@ def is_structure_backend_available() -> bool:
     return Chem is not None and DataStructs is not None and AllChem is not None
 
 
+def is_inchikey_like(value: str) -> bool:
+    return bool(re.fullmatch(r"[A-Z]{14}-[A-Z]{10}-[A-Z]", maybe_blank(value).upper()))
+
+
+@st.cache_data(show_spinner=False, ttl=86400)
+def resolve_inchikey_to_smiles(inchikey_value: str) -> str:
+    inchikey = maybe_blank(inchikey_value).upper()
+    if not is_inchikey_like(inchikey):
+        return ""
+    url = (
+        "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/inchikey/"
+        f"{quote(inchikey, safe='')}/property/IsomericSMILES,CanonicalSMILES/JSON"
+    )
+    try:
+        with urllib.request.urlopen(url, timeout=6, context=_supabase_ssl_context()) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        properties = payload.get("PropertyTable", {}).get("Properties", [])
+        if not properties:
+            return ""
+        first = properties[0]
+        return maybe_blank(first.get("IsomericSMILES")) or maybe_blank(first.get("CanonicalSMILES"))
+    except Exception:
+        return ""
+
+
 def smiles_to_mol(smiles_value: str):
     if not is_structure_backend_available():
         return None
@@ -4690,6 +4769,12 @@ def structure_text_to_mol(structure_value: str):
     mol = smiles_to_mol(structure_text)
     if mol is not None:
         return mol
+
+    if is_inchikey_like(structure_text):
+        resolved_smiles = resolve_inchikey_to_smiles(structure_text)
+        mol = smiles_to_mol(resolved_smiles)
+        if mol is not None:
+            return mol
 
     try:
         return Chem.MolFromMolBlock(structure_text, sanitize=True, removeHs=True)
@@ -5057,6 +5142,14 @@ def is_supabase_storage_reference(value) -> bool:
     return parse_supabase_storage_reference(value) is not None
 
 
+def is_generated_structure_reference(value) -> bool:
+    reference = parse_supabase_storage_reference(value)
+    if not reference:
+        return False
+    bucket, object_path = reference
+    return bucket == "structures" and object_path.startswith("generated/")
+
+
 @st.cache_data(show_spinner=False, ttl=900)
 def signed_supabase_storage_url(bucket: str, object_path: str, expires_in: int = 3600) -> str:
     if not use_supabase_write_backend():
@@ -5291,6 +5384,71 @@ def normalize_structure_image(image_obj, size=STRUCTURE_DETAIL_IMAGE_SIZE):
         return image_obj
 
 
+def prepare_structure_mol_for_drawing(mol):
+    if Chem is None or mol is None:
+        return None
+    try:
+        draw_mol = Chem.Mol(mol)
+    except Exception:
+        return mol
+    try:
+        if rdDepictor is not None:
+            rdDepictor.Compute2DCoords(draw_mol)
+            try:
+                rdDepictor.StraightenDepiction(draw_mol)
+            except Exception:
+                pass
+    except Exception:
+        try:
+            AllChem.Compute2DCoords(draw_mol)
+        except Exception:
+            pass
+    return draw_mol
+
+
+def _set_draw_option(options, name: str, value):
+    if hasattr(options, name):
+        try:
+            setattr(options, name, value)
+        except Exception:
+            pass
+
+
+def render_rdkit_structure_image(mol, size=STRUCTURE_DETAIL_IMAGE_SIZE):
+    if Image is None or mol is None:
+        return None
+    width = max(320, int(size[0]))
+    height = max(240, int(size[1]))
+    draw_mol = prepare_structure_mol_for_drawing(mol)
+
+    if rdMolDraw2D is not None:
+        try:
+            drawer = rdMolDraw2D.MolDraw2DCairo(width, height)
+            options = drawer.drawOptions()
+            _set_draw_option(options, "clearBackground", True)
+            _set_draw_option(options, "padding", 0.10)
+            _set_draw_option(options, "bondLineWidth", 3.0)
+            _set_draw_option(options, "multipleBondOffset", 0.16)
+            _set_draw_option(options, "minFontSize", 22)
+            _set_draw_option(options, "maxFontSize", 44)
+            _set_draw_option(options, "legendFontSize", 22)
+            _set_draw_option(options, "additionalAtomLabelPadding", 0.14)
+            drawer.DrawMolecule(draw_mol)
+            drawer.FinishDrawing()
+            png_bytes = drawer.GetDrawingText()
+            with Image.open(io.BytesIO(png_bytes)) as image:
+                return normalize_structure_image(image.copy(), size=size)
+        except Exception:
+            pass
+
+    if Draw is None:
+        return None
+    try:
+        return normalize_structure_image(Draw.MolToImage(draw_mol, size=(width, height)), size=size)
+    except Exception:
+        return None
+
+
 def pil_image_to_data_uri(image_obj) -> str:
     data = pil_image_to_png_bytes(image_obj)
     if not data:
@@ -5312,13 +5470,14 @@ def pil_image_to_png_bytes(image_obj) -> bytes:
 
 
 @st.cache_data(show_spinner=False)
-def structure_smiles_png_bytes(smiles_text: str, size=STRUCTURE_THUMBNAIL_IMAGE_SIZE) -> bytes:
+def structure_smiles_png_bytes(smiles_text: str, size=STRUCTURE_THUMBNAIL_IMAGE_SIZE, renderer_version: str = STRUCTURE_RENDERER_VERSION) -> bytes:
+    _ = renderer_version
     image = standardized_structure_from_smiles(smiles_text, size=size)
     return pil_image_to_png_bytes(image)
 
 
 def standardized_structure_from_smiles(smiles_text: str, size=STRUCTURE_DETAIL_IMAGE_SIZE):
-    if Chem is None or Draw is None:
+    if Chem is None:
         return None
     smiles_value = maybe_blank(smiles_text)
     if not smiles_value:
@@ -5327,14 +5486,14 @@ def standardized_structure_from_smiles(smiles_text: str, size=STRUCTURE_DETAIL_I
         mol = structure_text_to_mol(smiles_value)
         if mol is None:
             return None
-        return normalize_structure_image(Draw.MolToImage(mol, size=size), size=size)
+        return render_rdkit_structure_image(mol, size=size)
     except Exception:
         return None
 
 
 @st.cache_data(show_spinner=False)
-def structure_smiles_data_uri(smiles_text: str, size=STRUCTURE_THUMBNAIL_IMAGE_SIZE) -> str:
-    data = structure_smiles_png_bytes(smiles_text, size=size)
+def structure_smiles_data_uri(smiles_text: str, size=STRUCTURE_THUMBNAIL_IMAGE_SIZE, renderer_version: str = STRUCTURE_RENDERER_VERSION) -> str:
+    data = structure_smiles_png_bytes(smiles_text, size=size, renderer_version=renderer_version)
     if not data:
         return ""
     encoded = base64.b64encode(data).decode("ascii")
@@ -5348,8 +5507,8 @@ def structure_smiles_image_url(smiles_text: str) -> str:
     return f"https://cactus.nci.nih.gov/chemical/structure/{quote(smiles_value, safe='')}/image"
 
 
-def first_structure_identifier(smiles: str = "", inchi: str = "") -> str:
-    for value in (smiles, inchi):
+def first_structure_identifier(smiles: str = "", inchi: str = "", inchikey: str = "") -> str:
+    for value in (smiles, inchi, inchikey):
         text = maybe_blank(value)
         if text:
             return text
@@ -5371,7 +5530,8 @@ def load_standardized_structure_image(image_path: Path, size=STRUCTURE_DETAIL_IM
 
 
 @st.cache_data(show_spinner=False, ttl=EXTERNAL_ASSET_CACHE_TTL_SECONDS)
-def load_external_structure_png_bytes(source_text: str, size=STRUCTURE_DETAIL_IMAGE_SIZE, fallback_smiles: str = "") -> bytes:
+def load_external_structure_png_bytes(source_text: str, size=STRUCTURE_DETAIL_IMAGE_SIZE, fallback_smiles: str = "", renderer_version: str = STRUCTURE_RENDERER_VERSION) -> bytes:
+    _ = renderer_version
     if Image is None:
         return b""
     url = display_asset_url(source_text)
@@ -5398,6 +5558,11 @@ def load_standardized_structure_source(source_value, size=STRUCTURE_DETAIL_IMAGE
     if not source_text:
         return None
 
+    if fallback_smiles and is_generated_structure_reference(source_text):
+        generated = standardized_structure_from_smiles(fallback_smiles, size=size)
+        if generated is not None:
+            return generated
+
     if is_external_url(source_text) or is_supabase_storage_reference(source_text):
         raw_png = load_external_structure_png_bytes(source_text, size=size, fallback_smiles=fallback_smiles)
         if not raw_png:
@@ -5420,7 +5585,7 @@ def render_structure_preview(smiles_text: str, caption: str | None = None, empty
         if empty_message:
             st.info("No structure preview available for this record.")
         return
-    if Chem is None or Draw is None:
+    if Chem is None:
         fallback_url = structure_smiles_image_url(smiles_value)
         if fallback_url:
             st.image(fallback_url, caption=caption or "Rendered from SMILES", width="stretch")
@@ -5436,7 +5601,9 @@ def render_structure_preview(smiles_text: str, caption: str | None = None, empty
             elif empty_message:
                 st.info("Stored structure could not be rendered from the available structure string.")
             return
-        image = normalize_structure_image(Draw.MolToImage(mol, size=size), size=size)
+        image = render_rdkit_structure_image(mol, size=size)
+        if image is None:
+            raise RuntimeError("Structure renderer returned no image.")
         st.image(image, caption=caption, width="stretch")
     except Exception:
         fallback_url = structure_smiles_image_url(smiles_value)
@@ -6398,7 +6565,7 @@ def render_compound_card(row, show_preview: bool = True):
             standardized_image = load_standardized_structure_source(
                 source_value,
                 size=STRUCTURE_THUMBNAIL_IMAGE_SIZE,
-                fallback_smiles=row.get("smiles"),
+                fallback_smiles=first_structure_identifier(row.get("smiles"), row.get("inchi"), row.get("inchikey")),
             )
             if standardized_image is not None:
                 st.image(standardized_image, width="stretch")
@@ -6406,11 +6573,14 @@ def render_compound_card(row, show_preview: bool = True):
                 safe_url = display_asset_url(source_value).replace('"', "&quot;")
                 st.image(safe_url, width="stretch")
             else:
-                structure_png = structure_smiles_png_bytes(row.get("smiles"), size=STRUCTURE_THUMBNAIL_IMAGE_SIZE)
+                structure_png = structure_smiles_png_bytes(
+                    first_structure_identifier(row.get("smiles"), row.get("inchi"), row.get("inchikey")),
+                    size=STRUCTURE_THUMBNAIL_IMAGE_SIZE,
+                )
                 if structure_png:
                     st.image(structure_png, width="stretch")
                 else:
-                    structure_url = structure_smiles_image_url(row.get("smiles"))
+                    structure_url = structure_smiles_image_url(first_structure_identifier(row.get("smiles"), row.get("inchi"), row.get("inchikey")))
                     if structure_url:
                         st.image(structure_url, width="stretch")
     with info_col:
@@ -8763,19 +8933,19 @@ def show_compound_detail(compound_id):
             standardized_image = load_standardized_structure_source(
                 structure_path,
                 size=STRUCTURE_DETAIL_IMAGE_SIZE,
-                fallback_smiles=row_data.get("smiles"),
+                fallback_smiles=first_structure_identifier(row_data.get("smiles"), row_data.get("inchi"), row_data.get("inchikey")),
             )
             if standardized_image is not None:
                 st.image(standardized_image, width="stretch")
             else:
                 render_structure_preview(
-                    first_structure_identifier(row_data.get("smiles"), row_data.get("inchi")),
+                    first_structure_identifier(row_data.get("smiles"), row_data.get("inchi"), row_data.get("inchikey")),
                     caption=None,
                     size=STRUCTURE_DETAIL_IMAGE_SIZE,
                 )
         else:
             render_structure_preview(
-                first_structure_identifier(row_data.get("smiles"), row_data.get("inchi")),
+                first_structure_identifier(row_data.get("smiles"), row_data.get("inchi"), row_data.get("inchikey")),
                 caption=None,
                 size=STRUCTURE_DETAIL_IMAGE_SIZE,
             )
@@ -12210,17 +12380,39 @@ def _merge_compound_names(df: pd.DataFrame) -> pd.DataFrame:
     return df.merge(compounds_df, on="compound_id", how="left")
 
 
+@st.cache_data(show_spinner=False, ttl=30)
+def supabase_compounds_signature() -> str:
+    if not use_supabase_backend():
+        return "local"
+    try:
+        rows = _supabase_request(
+            "GET",
+            "/rest/v1/compounds",
+            query={"select": "updated_at", "order": "updated_at.desc", "limit": "1"},
+            write=False,
+        ) or []
+        latest_update = maybe_blank(rows[0].get("updated_at")) if rows else ""
+    except Exception:
+        latest_update = ""
+    try:
+        count_value = supabase_count_rows("compounds")
+    except Exception:
+        count_value = 0
+    return f"supabase:{count_value}:{latest_update}"
+
+
 def get_db_signature():
     if use_supabase_backend():
-        return 1.0
+        return supabase_compounds_signature()
     if not DB_PATH.exists():
         return 0.0
     return DB_PATH.stat().st_mtime
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
-def load_all_compounds(source_normalization_version: str = SOURCE_NORMALIZATION_CACHE_VERSION):
+def _load_all_compounds_cached(source_normalization_version: str, _db_signature):
     _ = source_normalization_version
+    __ = _db_signature
     columns = compound_select_columns()
     if use_supabase_backend():
         df = supabase_select_df("compounds", columns=columns, order="id.asc")
@@ -12228,14 +12420,35 @@ def load_all_compounds(source_normalization_version: str = SOURCE_NORMALIZATION_
     return enrich_compounds_dataframe(_sqlite_dataframe(f"SELECT {columns} FROM compounds ORDER BY id ASC"))
 
 
+def load_all_compounds(source_normalization_version: str = SOURCE_NORMALIZATION_CACHE_VERSION):
+    return _load_all_compounds_cached(source_normalization_version, get_db_signature())
+
+
+try:
+    load_all_compounds.clear = _load_all_compounds_cached.clear
+except Exception:
+    pass
+
+
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
-def load_compound_row(compound_id, source_normalization_version: str = SOURCE_NORMALIZATION_CACHE_VERSION):
+def _load_compound_row_cached(compound_id, source_normalization_version: str, _db_signature):
     _ = source_normalization_version
+    __ = _db_signature
     columns = compound_select_columns()
     if use_supabase_backend():
         df = supabase_select_df("compounds", columns=columns, filters={"id": ("eq", compound_id)})
         return enrich_compounds_dataframe(df)
     return enrich_compounds_dataframe(_sqlite_dataframe(f"SELECT {columns} FROM compounds WHERE id = ?", (compound_id,)))
+
+
+def load_compound_row(compound_id, source_normalization_version: str = SOURCE_NORMALIZATION_CACHE_VERSION):
+    return _load_compound_row_cached(compound_id, source_normalization_version, get_db_signature())
+
+
+try:
+    load_compound_row.clear = _load_compound_row_cached.clear
+except Exception:
+    pass
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
@@ -12530,7 +12743,7 @@ def insert_compound_record(trivial_name, iupac_name, molecular_formula, compound
         if row_id is None:
             raise RuntimeError("Supabase insert for the compound did not return an ID, so the local mirror was not updated.")
         if not structure_image_path:
-            generated_structure_path = _auto_structure_image_path(row_id, smiles=smiles, inchi=inchi)
+            generated_structure_path = _auto_structure_image_path(row_id, smiles=smiles, inchi=inchi, inchikey=inchikey)
             if generated_structure_path:
                 row["structure_image_path"] = generated_structure_path
                 supabase_update_row("compounds", row_id, {"structure_image_path": generated_structure_path})
@@ -12541,7 +12754,7 @@ def insert_compound_record(trivial_name, iupac_name, molecular_formula, compound
         return row_id
     row_id = _sqlite_upsert_row("compounds", row)
     if row_id is not None and not structure_image_path:
-        generated_structure_path = _auto_structure_image_path(row_id, smiles=smiles, inchi=inchi)
+        generated_structure_path = _auto_structure_image_path(row_id, smiles=smiles, inchi=inchi, inchikey=inchikey)
         if generated_structure_path:
             row["id"] = row_id
             row["structure_image_path"] = generated_structure_path
@@ -12554,7 +12767,7 @@ def update_compound_record(compound_id, trivial_name, iupac_name, molecular_form
     ensure_write_target_ready()
     structure_image_path = maybe_blank(structure_image_path)
     if not structure_image_path:
-        structure_image_path = _auto_structure_image_path(compound_id, smiles=smiles, inchi=inchi)
+        structure_image_path = _auto_structure_image_path(compound_id, smiles=smiles, inchi=inchi, inchikey=inchikey)
     row = {
         "id": compound_id,
         "trivial_name": trivial_name,
@@ -12761,9 +12974,11 @@ def derive_structure_identifiers(structure_text: str) -> dict | None:
 
 
 def _save_generated_structure_image(compound_id: int, mol) -> str:
-    if Draw is None or Image is None or mol is None:
+    if Chem is None or Image is None or mol is None:
         return ""
-    image = normalize_structure_image(Draw.MolToImage(mol, size=STRUCTURE_SAVE_IMAGE_SIZE), size=STRUCTURE_SAVE_IMAGE_SIZE)
+    image = render_rdkit_structure_image(mol, size=STRUCTURE_SAVE_IMAGE_SIZE)
+    if image is None:
+        return ""
     output = io.BytesIO()
     image.save(output, format="PNG", optimize=True)
     data = output.getvalue()
@@ -12788,8 +13003,8 @@ def _save_generated_structure_image(compound_id: int, mol) -> str:
     return str(candidate.relative_to(PROJECT_DIR))
 
 
-def _auto_structure_image_path(compound_id: int, smiles: str = "", inchi: str = "") -> str:
-    for structure_text in (maybe_blank(smiles), maybe_blank(inchi)):
+def _auto_structure_image_path(compound_id: int, smiles: str = "", inchi: str = "", inchikey: str = "") -> str:
+    for structure_text in (maybe_blank(smiles), maybe_blank(inchi), maybe_blank(inchikey)):
         if not structure_text:
             continue
         mol = structure_text_to_mol(structure_text)
