@@ -57,22 +57,44 @@ try:
 except Exception:
     st_ketcher = None
 
-try:
-    from rdkit import Chem, DataStructs, RDLogger
-    from rdkit.Chem import AllChem, rdDepictor
-    RDLogger.DisableLog("rdApp.*")
-except Exception:
-    Chem = None
-    DataStructs = None
-    AllChem = None
-    rdDepictor = None
+Chem = None
+DataStructs = None
+AllChem = None
+rdDepictor = None
+Draw = None
+rdMolDraw2D = None
+_RDKIT_IMPORT_ATTEMPTED = False
 
-try:
-    from rdkit.Chem import Draw
-    from rdkit.Chem.Draw import rdMolDraw2D
-except Exception:
-    Draw = None
-    rdMolDraw2D = None
+
+def ensure_rdkit_loaded() -> bool:
+    global Chem, DataStructs, AllChem, rdDepictor, Draw, rdMolDraw2D, _RDKIT_IMPORT_ATTEMPTED
+    if Chem is not None and DataStructs is not None and AllChem is not None:
+        return True
+    if _RDKIT_IMPORT_ATTEMPTED:
+        return False
+    _RDKIT_IMPORT_ATTEMPTED = True
+    try:
+        from rdkit import Chem as _Chem, DataStructs as _DataStructs, RDLogger as _RDLogger
+        from rdkit.Chem import AllChem as _AllChem, rdDepictor as _rdDepictor
+        from rdkit.Chem import Draw as _Draw
+        from rdkit.Chem.Draw import rdMolDraw2D as _rdMolDraw2D
+
+        _RDLogger.DisableLog("rdApp.*")
+        Chem = _Chem
+        DataStructs = _DataStructs
+        AllChem = _AllChem
+        rdDepictor = _rdDepictor
+        Draw = _Draw
+        rdMolDraw2D = _rdMolDraw2D
+        return True
+    except Exception:
+        Chem = None
+        DataStructs = None
+        AllChem = None
+        rdDepictor = None
+        Draw = None
+        rdMolDraw2D = None
+        return False
 
 try:
     from openpyxl.styles import Alignment, Font, PatternFill
@@ -4718,7 +4740,7 @@ def parse_peak_upload(uploaded_file) -> tuple[list[float], str]:
 
 
 def is_structure_backend_available() -> bool:
-    return Chem is not None and DataStructs is not None and AllChem is not None
+    return ensure_rdkit_loaded()
 
 
 def is_inchikey_like(value: str) -> bool:
@@ -5392,7 +5414,7 @@ def normalize_structure_image(image_obj, size=STRUCTURE_DETAIL_IMAGE_SIZE):
 
 
 def prepare_structure_mol_for_drawing(mol):
-    if Chem is None or mol is None:
+    if not ensure_rdkit_loaded() or mol is None:
         return None
     try:
         draw_mol = Chem.Mol(mol)
@@ -5484,7 +5506,7 @@ def structure_smiles_png_bytes(smiles_text: str, size=STRUCTURE_THUMBNAIL_IMAGE_
 
 
 def standardized_structure_from_smiles(smiles_text: str, size=STRUCTURE_DETAIL_IMAGE_SIZE):
-    if Chem is None:
+    if not ensure_rdkit_loaded():
         return None
     smiles_value = maybe_blank(smiles_text)
     if not smiles_value:
@@ -5592,7 +5614,7 @@ def render_structure_preview(smiles_text: str, caption: str | None = None, empty
         if empty_message:
             st.info("No structure preview available for this record.")
         return
-    if Chem is None:
+    if not ensure_rdkit_loaded():
         fallback_url = structure_smiles_image_url(smiles_value)
         if fallback_url:
             st.image(fallback_url, caption=caption or "Rendered from SMILES", width="stretch")
@@ -13114,7 +13136,7 @@ def derive_structure_identifiers(structure_text: str) -> dict | None:
 
 
 def _save_generated_structure_image(compound_id: int, mol) -> str:
-    if Chem is None or Image is None or mol is None:
+    if not ensure_rdkit_loaded() or Image is None or mol is None:
         return ""
     image = render_rdkit_structure_image(mol, size=STRUCTURE_SAVE_IMAGE_SIZE)
     if image is None:
