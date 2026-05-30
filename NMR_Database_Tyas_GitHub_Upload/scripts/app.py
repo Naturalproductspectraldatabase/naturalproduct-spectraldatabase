@@ -6588,7 +6588,8 @@ def render_compound_card(row, show_preview: bool = True, prefer_fast_asset: bool
             source_is_remote_asset = source_value and (
                 is_external_url(str(source_value).strip()) or is_supabase_storage_reference(source_value)
             )
-            if prefer_fast_asset and source_is_remote_asset:
+            source_is_generated_asset = source_value and is_generated_structure_reference(str(source_value).strip())
+            if prefer_fast_asset and source_is_remote_asset and not source_is_generated_asset:
                 safe_url = display_asset_url(source_value).replace('"', "&quot;")
                 st.image(safe_url, width="stretch")
             else:
