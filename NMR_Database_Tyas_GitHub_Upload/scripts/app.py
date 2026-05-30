@@ -3685,6 +3685,8 @@ def invalidate_cached_views():
         "_load_all_compounds_cached",
         "load_dashboard_compounds",
         "_load_dashboard_compounds_cached",
+        "load_search_compounds",
+        "_load_search_compounds_cached",
         "load_compound_row",
         "_load_compound_row_cached",
         "load_all_proton_data",
@@ -4645,6 +4647,9 @@ def keyword_search_mask(df: pd.DataFrame, keyword: str) -> pd.Series:
 
 def field_search_mask(df: pd.DataFrame, keyword: str, field_label: str, match_mode: str) -> pd.Series:
     columns = SEARCH_FIELD_COLUMN_MAP.get(field_label, SEARCH_FIELD_COLUMN_MAP["All searchable fields"])
+    columns = [column for column in columns if column in df.columns]
+    if not columns:
+        return pd.Series([False] * len(df), index=df.index)
     combined = df[columns].fillna("").astype(str).agg(" ".join, axis=1).str.lower()
     query = maybe_blank(keyword).lower()
     if not query:
@@ -5752,12 +5757,6 @@ def calculate_workspace_health(compounds_df: pd.DataFrame):
         | compounds_df["journal_name"].fillna("").astype(str).str.strip().ne("")
     ]
 
-    spectra_df = load_all_spectra_files()
-    external_ready_ids = set(
-        spectra_df[spectra_df["file_path"].fillna("").astype(str).apply(is_external_url)]["compound_id"].tolist()
-    )
-    bioactivity_df = load_all_bioactivity_data()
-    bioactivity_ready_ids = set(bioactivity_df["compound_id"].tolist()) if not bioactivity_df.empty else set()
     submission_ready = compounds_df[
         compounds_df["trivial_name"].fillna("").astype(str).str.strip().ne("")
         & compounds_df["compound_class"].fillna("").astype(str).str.strip().ne("")
@@ -5771,9 +5770,9 @@ def calculate_workspace_health(compounds_df: pd.DataFrame):
     return {
         "structure_ready": int(len(structure_ready)),
         "reference_ready": int(len(reference_ready)),
-        "external_ready": int(len(external_ready_ids)),
+        "external_ready": 0,
         "submission_ready": int(len(submission_ready)),
-        "bioactivity_ready": int(len(bioactivity_ready_ids)),
+        "bioactivity_ready": 0,
     }
 
 # =========================
@@ -6440,8 +6439,8 @@ def render_batch_import_workspace():
         "Use these ready-to-fill CSV templates to add compounds, 1H peaks, 13C peaks, and spectra records without guessing column names.",
     )
 
-    write_batch_import_templates()
     template_map = build_batch_import_template_map()
+    write_batch_import_templates(template_map)
 
     tabs = st.tabs(["Compounds", "1H Peaks", "13C Peaks", "Spectra Files"])
     import_specs = [
@@ -7675,8 +7674,9 @@ def build_batch_import_template_map() -> dict[str, pd.DataFrame]:
     }
 
 
-def write_batch_import_templates():
-    for filename, template_df in build_batch_import_template_map().items():
+def write_batch_import_templates(template_map: dict[str, pd.DataFrame] | None = None):
+    template_map = template_map or build_batch_import_template_map()
+    for filename, template_df in template_map.items():
         template_path = TEMPLATES_DIR / filename
         template_csv = template_df.to_csv(index=False)
         if template_path.exists():
@@ -8278,6 +8278,24 @@ def export_name_results(result_df: pd.DataFrame) -> pd.DataFrame:
         "curation_status": "Curation Status",
         "note": "Note"
     })
+
+
+def search_preview_results(result_df: pd.DataFrame) -> pd.DataFrame:
+    preview_columns = [
+        "id",
+        "trivial_name",
+        "iupac_name",
+        "molecular_formula",
+        "source_category",
+        "compound_class",
+        "compound_subclass",
+        "data_source",
+        "curation_status",
+    ]
+    available_columns = [column for column in preview_columns if column in result_df.columns]
+    preview_df = result_df[available_columns].copy() if available_columns else result_df.copy()
+    return export_name_results(preview_df)
+
 
 def export_similarity_results_13c(results: list) -> pd.DataFrame:
     rows = []
@@ -9456,7 +9474,7 @@ def show_search_page(all_compounds_df):
                 for _, row in result.head(candidate_limit).iterrows():
                     c1, c2 = st.columns([5, 1])
                     with c1:
-                        render_compound_card(row, show_preview=True)
+                        render_compound_card(row, show_preview=True, prefer_fast_asset=True)
                     with c2:
                         st.write("")
                         if st.button("Open", key=f"name_open_{row['id']}"):
@@ -9468,7 +9486,7 @@ def show_search_page(all_compounds_df):
             st.warning("Please enter at least one keyword.")
         elif not filtered_df.empty:
             st.info("Type one or more keywords to search. The filtered dataset preview is shown below.")
-            preview_df = export_name_results(filtered_df)
+            preview_df = search_preview_results(filtered_df)
             st.dataframe(preview_df, width="stretch", hide_index=True, height=336)
         else:
             st.info("No compounds available for the selected filters.")
@@ -12242,6 +12260,36 @@ def dashboard_compound_select_columns() -> str:
     return ",".join(columns)
 
 
+def search_compound_select_columns() -> str:
+    columns = [
+        "id",
+        "trivial_name",
+        "iupac_name",
+        "molecular_formula",
+        "smiles",
+        "inchi",
+        "inchikey",
+        "compound_class",
+        "compound_subclass",
+        "source_category",
+        "source_organism",
+        "source_material",
+        "sample_code",
+        "collection_location",
+        "structure_image_path",
+        "journal_name",
+        "article_title",
+        "doi",
+        "data_source",
+        "curation_status",
+        "note",
+        "updated_at",
+    ]
+    if use_supabase_backend() and not supabase_column_available("compounds", "curation_status"):
+        columns = [column for column in columns if column != "curation_status"]
+    return ",".join(columns)
+
+
 def supabase_insert_row(table: str, row: dict):
     payload = {k: _json_ready(v) for k, v in row.items() if k and v is not None}
     try:
@@ -12482,6 +12530,44 @@ try:
     load_dashboard_compounds.clear = _load_dashboard_compounds_cached.clear
 except Exception:
     pass
+
+
+@st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
+def _load_search_compounds_cached(source_normalization_version: str, _db_signature):
+    _ = source_normalization_version
+    __ = _db_signature
+    columns = search_compound_select_columns()
+    if use_supabase_backend():
+        df = supabase_select_df("compounds", columns=columns, order="id.asc")
+        return enrich_compounds_dataframe(df)
+    return enrich_compounds_dataframe(_sqlite_dataframe(f"SELECT {columns} FROM compounds ORDER BY id ASC"))
+
+
+def load_search_compounds(source_normalization_version: str = SOURCE_NORMALIZATION_CACHE_VERSION):
+    return _load_search_compounds_cached(source_normalization_version, get_db_signature())
+
+
+try:
+    load_search_compounds.clear = _load_search_compounds_cached.clear
+except Exception:
+    pass
+
+
+def load_compounds_for_section(section: str) -> pd.DataFrame:
+    if section == "Dashboard":
+        return load_dashboard_compounds()
+    if section == "Search & Match":
+        return load_search_compounds()
+    return load_all_compounds()
+
+
+def clear_compounds_cache_for_section(section: str):
+    cache_clearer = load_all_compounds.clear
+    if section == "Dashboard":
+        cache_clearer = load_dashboard_compounds.clear
+    elif section == "Search & Match":
+        cache_clearer = load_search_compounds.clear
+    cache_clearer()
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
@@ -13102,18 +13188,14 @@ def save_structure_query_to_compound(compound_id: int, query_text: str) -> tuple
 # =========================
 apply_navigation_query_params()
 main_section = st.session_state.get("nav_section", "Dashboard")
-all_compounds_df = load_dashboard_compounds() if main_section == "Dashboard" else load_all_compounds()
+all_compounds_df = load_compounds_for_section(main_section)
 render_cloud_sync_notice()
 if use_supabase_backend() and all_compounds_df.empty:
     try:
-        if main_section == "Dashboard":
-            load_dashboard_compounds.clear()
-        else:
-            load_all_compounds.clear()
+        clear_compounds_cache_for_section(main_section)
     except Exception:
         pass
-    all_compounds_df = load_dashboard_compounds() if main_section == "Dashboard" else load_all_compounds()
-write_batch_import_templates()
+    all_compounds_df = load_compounds_for_section(main_section)
 
 
 # =========================
