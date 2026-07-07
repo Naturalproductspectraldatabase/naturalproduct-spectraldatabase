@@ -697,6 +697,39 @@ def cloud_backend_is_configured() -> bool:
     )
 
 
+def cloud_backend_connection_key() -> str:
+    url = get_secret_setting("SUPABASE_URL")
+    api_key = (
+        get_secret_setting("SUPABASE_SERVICE_ROLE_KEY")
+        or get_secret_setting("SUPABASE_SECRET_KEY")
+        or get_secret_setting("SUPABASE_ANON_KEY")
+    )
+    key_digest = hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:12] if api_key else ""
+    return f"{url}|{key_digest}"
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def supabase_connection_available(connection_key: str) -> tuple[bool, str]:
+    _ = connection_key
+    if not cloud_backend_is_configured():
+        return False, "Supabase credentials are not configured."
+    try:
+        _supabase_request(
+            "GET",
+            "/rest/v1/compounds",
+            query={"select": "id", "limit": "1"},
+            write=False,
+            timeout=8,
+        )
+        return True, ""
+    except Exception as exc:
+        return False, str(exc)
+
+
+def supabase_read_health() -> tuple[bool, str]:
+    return supabase_connection_available(cloud_backend_connection_key())
+
+
 def decode_supabase_jwt_role(api_key: str) -> str:
     token = str(api_key or "").strip()
     if token.count(".") < 2:
@@ -1530,13 +1563,23 @@ def is_owner_editor() -> bool:
 def can_edit_database() -> bool:
     if not is_owner_editor():
         return False
+    if cloud_backend_is_configured():
+        cloud_ok, _ = supabase_read_health()
+        if not cloud_ok:
+            return False
     if use_supabase_backend() and not use_supabase_write_backend():
         return False
     return True
 
 
 def cloud_write_is_blocked() -> bool:
-    return is_owner_editor() and use_supabase_backend() and not use_supabase_write_backend()
+    if not is_owner_editor():
+        return False
+    if cloud_backend_is_configured():
+        cloud_ok, _ = supabase_read_health()
+        if not cloud_ok:
+            return True
+    return use_supabase_backend() and not use_supabase_write_backend()
 
 
 def render_read_only_notice(feature_label: str):
@@ -4110,6 +4153,15 @@ def image_to_data_uri(path_value: str, max_px: int = 720) -> str:
 def render_cloud_sync_notice():
     if use_local_read_backend() and use_supabase_write_backend():
         return
+    if cloud_backend_is_configured():
+        cloud_ok, cloud_error = supabase_read_health()
+        if not cloud_ok:
+            st.warning(
+                "Supabase cloud database is currently unreachable, so NPDB is running from the bundled local snapshot in read-only recovery mode. "
+                "Browsing/search stay available, but editing and submission are blocked until Supabase is reachable again. "
+                f"Health check: {cloud_error[:240]}"
+            )
+            return
     elif not use_supabase_backend():
         st.warning(
             "Local-only mode is active. Changes in this session are still being written to the desktop database only. "
@@ -11920,8 +11972,14 @@ def get_npdb_read_backend() -> str:
     if backend in {"local", "sqlite", "desktop"}:
         return "local"
     if backend in {"supabase", "cloud", "remote"}:
-        return "supabase"
+        cloud_ok, _ = supabase_read_health()
+        if cloud_ok:
+            return "supabase"
+        return "local" if DB_PATH.exists() else "supabase"
     if cloud_backend_is_configured():
+        cloud_ok, _ = supabase_read_health()
+        if not cloud_ok and DB_PATH.exists():
+            return "local"
         return "supabase"
     return "local" if DB_PATH.exists() else "supabase"
 
@@ -11951,6 +12009,13 @@ def _supabase_ssl_context():
 
 
 def ensure_write_target_ready():
+    if cloud_backend_is_configured():
+        cloud_ok, cloud_error = supabase_read_health()
+        if not cloud_ok:
+            raise RuntimeError(
+                "Cloud database is currently unreachable, so editing/submission is blocked to prevent data loss. "
+                f"Supabase health check failed: {cloud_error[:240]}"
+            )
     if use_supabase_backend() and not use_supabase_write_backend():
         raise RuntimeError(
             "Cloud write mode is not configured. To keep Supabase as the single source of truth, editing is blocked until a server-side Supabase service role key or secret key is available."
@@ -12094,7 +12159,7 @@ def _supabase_headers(write: bool = False, json_body: bool = True, extra: dict |
     return headers
 
 
-def _supabase_request(method: str, path: str, query: dict | None = None, body=None, write: bool = False, json_body: bool = True, extra_headers: dict | None = None, return_json: bool = True):
+def _supabase_request(method: str, path: str, query: dict | None = None, body=None, write: bool = False, json_body: bool = True, extra_headers: dict | None = None, return_json: bool = True, timeout: int = 60):
     if write and not use_supabase_write_backend():
         raise RuntimeError("Supabase write mode is disabled because a valid server-side write key is missing.")
     base = get_supabase_url().rstrip("/")
@@ -12112,7 +12177,7 @@ def _supabase_request(method: str, path: str, query: dict | None = None, body=No
         headers=_supabase_headers(write=write, json_body=json_body, extra=extra_headers),
     )
     try:
-        with urllib.request.urlopen(request, timeout=60, context=_supabase_ssl_context()) as response:
+        with urllib.request.urlopen(request, timeout=timeout, context=_supabase_ssl_context()) as response:
             raw = response.read()
             if not return_json:
                 return raw
@@ -12122,6 +12187,10 @@ def _supabase_request(method: str, path: str, query: dict | None = None, body=No
     except urllib.error.HTTPError as exc:
         details = exc.read().decode("utf-8", errors="ignore")
         raise RuntimeError(f"Supabase request failed ({exc.code} {exc.reason}): {details}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Supabase connection failed: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise RuntimeError("Supabase connection timed out.") from exc
 
 
 def _supabase_filter_query(filters: dict | None) -> dict:
