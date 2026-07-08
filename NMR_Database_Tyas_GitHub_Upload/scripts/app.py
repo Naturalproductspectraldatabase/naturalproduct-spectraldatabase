@@ -129,6 +129,7 @@ SUBMISSIONS_APPROVED_DIR = SUBMISSIONS_DIR / "approved"
 EXPORTS_DIR = DATA_DIR / "exports"
 DOCS_DIR = DATA_DIR / "docs"
 BACKUPS_DIR = DATABASE_DIR / "backups"
+CSV_SNAPSHOT_DIR = BACKUPS_DIR / "latest_csv"
 DB_PATH = PROJECT_DIR / "database" / "nmr.db"
 
 MAX_PAGE_ICON_BYTES = 5 * 1024 * 1024
@@ -5765,7 +5766,8 @@ def supabase_count_rows(table: str, filters: dict | None = None) -> int:
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def count_database_totals(_db_signature: float):
-    if use_supabase_backend():
+    backend = get_npdb_read_backend()
+    if backend == "supabase":
         return {
             "compounds": supabase_count_rows("compounds"),
             "structures": 0,
@@ -5773,6 +5775,23 @@ def count_database_totals(_db_signature: float):
             "carbon": supabase_count_rows("carbon_nmr"),
             "spectra": supabase_count_rows("spectra_files"),
             "bioactivity": supabase_count_rows("bioactivity_records"),
+        }
+    if backend in {"snapshot", "unavailable"} or not DB_PATH.exists():
+        compounds_df = load_all_compounds()
+        proton_df = load_all_proton_data()
+        carbon_df = load_all_carbon_data()
+        spectra_df = load_all_spectra_files()
+        bioactivity_df = load_all_bioactivity_data()
+        structure_count = 0
+        if "structure_image_path" in compounds_df.columns:
+            structure_count = int(compounds_df["structure_image_path"].fillna("").astype(str).str.strip().ne("").sum())
+        return {
+            "compounds": int(len(compounds_df)),
+            "structures": structure_count,
+            "proton": int(len(proton_df)),
+            "carbon": int(len(carbon_df)),
+            "spectra": int(len(spectra_df)),
+            "bioactivity": int(len(bioactivity_df)),
         }
 
     conn = get_connection()
@@ -11958,6 +11977,36 @@ def get_supabase_service_role_key() -> str:
     return ""
 
 
+def snapshot_csv_available(table: str = "compounds") -> bool:
+    return (CSV_SNAPSHOT_DIR / f"{table}.csv").exists()
+
+
+def _select_existing_columns(df: pd.DataFrame, columns: str | list[str] | None) -> pd.DataFrame:
+    if df.empty or not columns:
+        return df
+    if isinstance(columns, str):
+        requested = [item.strip() for item in columns.split(",") if item.strip() and item.strip() != "*"]
+    else:
+        requested = [str(item).strip() for item in columns if str(item).strip()]
+    if not requested:
+        return df
+    for column in requested:
+        if column not in df.columns:
+            df[column] = ""
+    return df[requested]
+
+
+def _snapshot_dataframe(table: str, columns: str | list[str] | None = None) -> pd.DataFrame:
+    path = CSV_SNAPSHOT_DIR / f"{table}.csv"
+    if not path.exists():
+        return pd.DataFrame()
+    try:
+        df = pd.read_csv(path).fillna("")
+    except Exception:
+        return pd.DataFrame()
+    return _select_existing_columns(df, columns)
+
+
 def get_npdb_read_backend() -> str:
     backend = get_secret_setting("NPDB_READ_BACKEND", "npdb_read_backend").strip().lower()
     if not backend:
@@ -11971,25 +12020,43 @@ def get_npdb_read_backend() -> str:
                 backend = ""
     if backend in {"local", "sqlite", "desktop"}:
         return "local"
+    if backend in {"snapshot", "csv", "backup"}:
+        return "snapshot"
     if backend in {"supabase", "cloud", "remote"}:
         cloud_ok, _ = supabase_read_health()
         if cloud_ok:
             return "supabase"
-        return "local" if DB_PATH.exists() else "supabase"
+        if DB_PATH.exists():
+            return "local"
+        if snapshot_csv_available():
+            return "snapshot"
+        return "unavailable"
     if cloud_backend_is_configured():
         cloud_ok, _ = supabase_read_health()
         if not cloud_ok and DB_PATH.exists():
             return "local"
+        if not cloud_ok and snapshot_csv_available():
+            return "snapshot"
+        if not cloud_ok:
+            return "unavailable"
         return "supabase"
-    return "local" if DB_PATH.exists() else "supabase"
+    if DB_PATH.exists():
+        return "local"
+    if snapshot_csv_available():
+        return "snapshot"
+    return "unavailable"
 
 
 def use_local_read_backend() -> bool:
     return get_npdb_read_backend() == "local" and DB_PATH.exists()
 
 
+def use_snapshot_read_backend() -> bool:
+    return get_npdb_read_backend() == "snapshot" and snapshot_csv_available()
+
+
 def use_supabase_backend() -> bool:
-    if use_local_read_backend():
+    if get_npdb_read_backend() != "supabase":
         return False
     return bool(get_supabase_url() and (get_supabase_service_role_key() or get_supabase_anon_key()))
 
@@ -12277,6 +12344,8 @@ def supabase_column_available(table: str, column: str) -> bool:
         return True
     except RuntimeError as exc:
         message = str(exc).lower()
+        if "connection failed" in message or "timed out" in message or "unreachable" in message:
+            return False
         if "column" in message and column.lower() in message:
             return False
         raise
@@ -12441,6 +12510,8 @@ def supabase_upload_bytes(bucket: str, object_path: str, data: bytes, content_ty
 
 
 def _sqlite_dataframe(query: str, params: tuple | list | None = None) -> pd.DataFrame:
+    if not DB_PATH.exists():
+        return pd.DataFrame()
     conn = get_connection()
     try:
         return pd.read_sql_query(query, conn, params=params)
@@ -12575,8 +12646,16 @@ def supabase_compounds_signature() -> str:
 
 
 def get_db_signature():
-    if use_supabase_backend():
+    backend = get_npdb_read_backend()
+    if backend == "supabase":
         return supabase_compounds_signature()
+    if backend == "snapshot":
+        try:
+            csv_files = list(CSV_SNAPSHOT_DIR.glob("*.csv"))
+            latest_mtime = max((path.stat().st_mtime for path in csv_files), default=0.0)
+            return f"snapshot:{latest_mtime}"
+        except Exception:
+            return "snapshot:0"
     if not DB_PATH.exists():
         return 0.0
     return DB_PATH.stat().st_mtime
@@ -12587,8 +12666,15 @@ def _load_all_compounds_cached(source_normalization_version: str, _db_signature)
     _ = source_normalization_version
     __ = _db_signature
     columns = compound_select_columns()
-    if use_supabase_backend():
+    backend = get_npdb_read_backend()
+    if backend == "supabase":
         df = supabase_select_df("compounds", columns=columns, order="id.asc")
+        return enrich_compounds_dataframe(df)
+    if backend == "snapshot":
+        df = _snapshot_dataframe("compounds", columns=columns)
+        if not df.empty and "id" in df.columns:
+            df["id"] = pd.to_numeric(df["id"], errors="coerce")
+            df = df.sort_values("id", kind="stable")
         return enrich_compounds_dataframe(df)
     return enrich_compounds_dataframe(_sqlite_dataframe(f"SELECT {columns} FROM compounds ORDER BY id ASC"))
 
@@ -12608,8 +12694,14 @@ def _load_dashboard_compounds_cached(source_normalization_version: str, _db_sign
     _ = source_normalization_version
     __ = _db_signature
     columns = dashboard_compound_select_columns()
-    if use_supabase_backend():
+    backend = get_npdb_read_backend()
+    if backend == "supabase":
         df = supabase_select_df("compounds", columns=columns, order="updated_at.desc")
+        return enrich_compounds_dataframe(df)
+    if backend == "snapshot":
+        df = _snapshot_dataframe("compounds", columns=columns)
+        if not df.empty and "updated_at" in df.columns:
+            df = df.sort_values("updated_at", ascending=False, kind="stable")
         return enrich_compounds_dataframe(df)
     return enrich_compounds_dataframe(_sqlite_dataframe(f"SELECT {columns} FROM compounds ORDER BY updated_at DESC"))
 
@@ -12629,8 +12721,15 @@ def _load_search_compounds_cached(source_normalization_version: str, _db_signatu
     _ = source_normalization_version
     __ = _db_signature
     columns = search_compound_select_columns()
-    if use_supabase_backend():
+    backend = get_npdb_read_backend()
+    if backend == "supabase":
         df = supabase_select_df("compounds", columns=columns, order="id.asc")
+        return enrich_compounds_dataframe(df)
+    if backend == "snapshot":
+        df = _snapshot_dataframe("compounds", columns=columns)
+        if not df.empty and "id" in df.columns:
+            df["id"] = pd.to_numeric(df["id"], errors="coerce")
+            df = df.sort_values("id", kind="stable")
         return enrich_compounds_dataframe(df)
     return enrich_compounds_dataframe(_sqlite_dataframe(f"SELECT {columns} FROM compounds ORDER BY id ASC"))
 
@@ -12667,9 +12766,16 @@ def _load_compound_row_cached(compound_id, source_normalization_version: str, _d
     _ = source_normalization_version
     __ = _db_signature
     columns = compound_select_columns()
-    if use_supabase_backend():
+    backend = get_npdb_read_backend()
+    if backend == "supabase":
         df = supabase_select_df("compounds", columns=columns, filters={"id": ("eq", compound_id)})
         return enrich_compounds_dataframe(df)
+    if backend == "snapshot":
+        df = _snapshot_dataframe("compounds", columns=columns)
+        if df.empty or "id" not in df.columns:
+            return enrich_compounds_dataframe(pd.DataFrame())
+        ids = pd.to_numeric(df["id"], errors="coerce")
+        return enrich_compounds_dataframe(df[ids == int(compound_id)])
     return enrich_compounds_dataframe(_sqlite_dataframe(f"SELECT {columns} FROM compounds WHERE id = ?", (compound_id,)))
 
 
@@ -12686,16 +12792,33 @@ except Exception:
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_proton_data(compound_id):
     columns = "id,compound_id,delta_ppm,multiplicity,j_value,proton_count,assignment,solvent,instrument_mhz,note"
-    if use_supabase_backend():
+    backend = get_npdb_read_backend()
+    if backend == "supabase":
         return supabase_select_df("proton_nmr", columns=columns, filters={"compound_id": ("eq", compound_id)}, order="delta_ppm.desc")
+    if backend == "snapshot":
+        df = _snapshot_dataframe("proton_nmr", columns=columns)
+        if df.empty or "compound_id" not in df.columns:
+            return df
+        compound_ids = pd.to_numeric(df["compound_id"], errors="coerce")
+        if "delta_ppm" in df.columns:
+            df["delta_ppm"] = pd.to_numeric(df["delta_ppm"], errors="coerce")
+            return df[compound_ids == int(compound_id)].sort_values("delta_ppm", ascending=False, kind="stable")
+        return df[compound_ids == int(compound_id)]
     return _sqlite_dataframe(f"SELECT {columns} FROM proton_nmr WHERE compound_id = ? ORDER BY delta_ppm DESC", (compound_id,))
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_all_proton_data():
     columns = "id,compound_id,delta_ppm,multiplicity,j_value,proton_count,assignment,solvent,instrument_mhz,note"
-    if use_supabase_backend():
+    backend = get_npdb_read_backend()
+    if backend == "supabase":
         df = supabase_select_df("proton_nmr", columns=columns, order="id.asc")
+        return _merge_compound_names(df)
+    if backend == "snapshot":
+        df = _snapshot_dataframe("proton_nmr", columns=columns)
+        if not df.empty and "id" in df.columns:
+            df["id"] = pd.to_numeric(df["id"], errors="coerce")
+            df = df.sort_values("id", kind="stable")
         return _merge_compound_names(df)
     return _sqlite_dataframe("SELECT p.id, p.compound_id, c.trivial_name, p.delta_ppm, p.multiplicity, p.j_value, p.proton_count, p.assignment, p.solvent, p.instrument_mhz, p.note FROM proton_nmr p LEFT JOIN compounds c ON p.compound_id = c.id ORDER BY p.id ASC")
 
@@ -12703,24 +12826,48 @@ def load_all_proton_data():
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_proton_row(proton_id):
     columns = "id,compound_id,delta_ppm,multiplicity,j_value,proton_count,assignment,solvent,instrument_mhz,note"
-    if use_supabase_backend():
+    backend = get_npdb_read_backend()
+    if backend == "supabase":
         return supabase_select_df("proton_nmr", columns=columns, filters={"id": ("eq", proton_id)})
+    if backend == "snapshot":
+        df = _snapshot_dataframe("proton_nmr", columns=columns)
+        if df.empty or "id" not in df.columns:
+            return df
+        ids = pd.to_numeric(df["id"], errors="coerce")
+        return df[ids == int(proton_id)]
     return _sqlite_dataframe(f"SELECT {columns} FROM proton_nmr WHERE id = ?", (proton_id,))
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_carbon_data(compound_id):
     columns = "id,compound_id,delta_ppm,carbon_type,assignment,solvent,instrument_mhz,note"
-    if use_supabase_backend():
+    backend = get_npdb_read_backend()
+    if backend == "supabase":
         return supabase_select_df("carbon_nmr", columns=columns, filters={"compound_id": ("eq", compound_id)}, order="delta_ppm.desc")
+    if backend == "snapshot":
+        df = _snapshot_dataframe("carbon_nmr", columns=columns)
+        if df.empty or "compound_id" not in df.columns:
+            return df
+        compound_ids = pd.to_numeric(df["compound_id"], errors="coerce")
+        if "delta_ppm" in df.columns:
+            df["delta_ppm"] = pd.to_numeric(df["delta_ppm"], errors="coerce")
+            return df[compound_ids == int(compound_id)].sort_values("delta_ppm", ascending=False, kind="stable")
+        return df[compound_ids == int(compound_id)]
     return _sqlite_dataframe(f"SELECT {columns} FROM carbon_nmr WHERE compound_id = ? ORDER BY delta_ppm DESC", (compound_id,))
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_all_carbon_data():
     columns = "id,compound_id,delta_ppm,carbon_type,assignment,solvent,instrument_mhz,note"
-    if use_supabase_backend():
+    backend = get_npdb_read_backend()
+    if backend == "supabase":
         df = supabase_select_df("carbon_nmr", columns=columns, order="id.asc")
+        return _merge_compound_names(df)
+    if backend == "snapshot":
+        df = _snapshot_dataframe("carbon_nmr", columns=columns)
+        if not df.empty and "id" in df.columns:
+            df["id"] = pd.to_numeric(df["id"], errors="coerce")
+            df = df.sort_values("id", kind="stable")
         return _merge_compound_names(df)
     return _sqlite_dataframe("SELECT c.id, c.compound_id, cp.trivial_name, c.delta_ppm, c.carbon_type, c.assignment, c.solvent, c.instrument_mhz, c.note FROM carbon_nmr c LEFT JOIN compounds cp ON c.compound_id = cp.id ORDER BY c.id ASC")
 
@@ -12728,24 +12875,45 @@ def load_all_carbon_data():
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_carbon_row(carbon_id):
     columns = "id,compound_id,delta_ppm,carbon_type,assignment,solvent,instrument_mhz,note"
-    if use_supabase_backend():
+    backend = get_npdb_read_backend()
+    if backend == "supabase":
         return supabase_select_df("carbon_nmr", columns=columns, filters={"id": ("eq", carbon_id)})
+    if backend == "snapshot":
+        df = _snapshot_dataframe("carbon_nmr", columns=columns)
+        if df.empty or "id" not in df.columns:
+            return df
+        ids = pd.to_numeric(df["id"], errors="coerce")
+        return df[ids == int(carbon_id)]
     return _sqlite_dataframe(f"SELECT {columns} FROM carbon_nmr WHERE id = ?", (carbon_id,))
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_spectra_files(compound_id):
     columns = "id,compound_id,spectrum_type,file_path,note"
-    if use_supabase_backend():
+    backend = get_npdb_read_backend()
+    if backend == "supabase":
         return supabase_select_df("spectra_files", columns=columns, filters={"compound_id": ("eq", compound_id)}, order="id.asc")
+    if backend == "snapshot":
+        df = _snapshot_dataframe("spectra_files", columns=columns)
+        if df.empty or "compound_id" not in df.columns:
+            return df
+        compound_ids = pd.to_numeric(df["compound_id"], errors="coerce")
+        return df[compound_ids == int(compound_id)]
     return _sqlite_dataframe(f"SELECT {columns} FROM spectra_files WHERE compound_id = ? ORDER BY id ASC", (compound_id,))
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_all_spectra_files():
     columns = "id,compound_id,spectrum_type,file_path,note"
-    if use_supabase_backend():
+    backend = get_npdb_read_backend()
+    if backend == "supabase":
         df = supabase_select_df("spectra_files", columns=columns, order="id.asc")
+        return _merge_compound_names(df)
+    if backend == "snapshot":
+        df = _snapshot_dataframe("spectra_files", columns=columns)
+        if not df.empty and "id" in df.columns:
+            df["id"] = pd.to_numeric(df["id"], errors="coerce")
+            df = df.sort_values("id", kind="stable")
         return _merge_compound_names(df)
     return _sqlite_dataframe("SELECT s.id, s.compound_id, c.trivial_name, s.spectrum_type, s.file_path, s.note FROM spectra_files s LEFT JOIN compounds c ON s.compound_id = c.id ORDER BY s.id ASC")
 
@@ -12753,24 +12921,45 @@ def load_all_spectra_files():
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_spectrum_file_row(file_id):
     columns = "id,compound_id,spectrum_type,file_path,note"
-    if use_supabase_backend():
+    backend = get_npdb_read_backend()
+    if backend == "supabase":
         return supabase_select_df("spectra_files", columns=columns, filters={"id": ("eq", file_id)})
+    if backend == "snapshot":
+        df = _snapshot_dataframe("spectra_files", columns=columns)
+        if df.empty or "id" not in df.columns:
+            return df
+        ids = pd.to_numeric(df["id"], errors="coerce")
+        return df[ids == int(file_id)]
     return _sqlite_dataframe(f"SELECT {columns} FROM spectra_files WHERE id = ?", (file_id,))
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_bioactivity_data(compound_id):
     columns = "id,compound_id,activity_label,target_name,target_category,assay_type,potency_type,potency_relation,potency_value,potency_unit,outcome,assay_medium,selectivity,assay_source,note"
-    if use_supabase_backend():
+    backend = get_npdb_read_backend()
+    if backend == "supabase":
         return supabase_select_df("bioactivity_records", columns=columns, filters={"compound_id": ("eq", compound_id)}, order="id.asc")
+    if backend == "snapshot":
+        df = _snapshot_dataframe("bioactivity_records", columns=columns)
+        if df.empty or "compound_id" not in df.columns:
+            return df
+        compound_ids = pd.to_numeric(df["compound_id"], errors="coerce")
+        return df[compound_ids == int(compound_id)]
     return _sqlite_dataframe(f"SELECT {columns} FROM bioactivity_records WHERE compound_id = ? ORDER BY id ASC", (compound_id,))
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_all_bioactivity_data():
     columns = "id,compound_id,activity_label,target_name,target_category,assay_type,potency_type,potency_relation,potency_value,potency_unit,outcome,assay_medium,selectivity,assay_source,note"
-    if use_supabase_backend():
+    backend = get_npdb_read_backend()
+    if backend == "supabase":
         df = supabase_select_df("bioactivity_records", columns=columns, order="id.asc")
+        return _merge_compound_names(df)
+    if backend == "snapshot":
+        df = _snapshot_dataframe("bioactivity_records", columns=columns)
+        if not df.empty and "id" in df.columns:
+            df["id"] = pd.to_numeric(df["id"], errors="coerce")
+            df = df.sort_values("id", kind="stable")
         return _merge_compound_names(df)
     return _sqlite_dataframe("SELECT b.id, b.compound_id, c.trivial_name, b.activity_label, b.target_name, b.target_category, b.assay_type, b.potency_type, b.potency_relation, b.potency_value, b.potency_unit, b.outcome, b.assay_medium, b.selectivity, b.assay_source, b.note FROM bioactivity_records b LEFT JOIN compounds c ON b.compound_id = c.id ORDER BY b.id ASC")
 
@@ -12778,8 +12967,15 @@ def load_all_bioactivity_data():
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_bioactivity_row(bioactivity_id):
     columns = "id,compound_id,activity_label,target_name,target_category,assay_type,potency_type,potency_relation,potency_value,potency_unit,outcome,assay_medium,selectivity,assay_source,note"
-    if use_supabase_backend():
+    backend = get_npdb_read_backend()
+    if backend == "supabase":
         return supabase_select_df("bioactivity_records", columns=columns, filters={"id": ("eq", bioactivity_id)})
+    if backend == "snapshot":
+        df = _snapshot_dataframe("bioactivity_records", columns=columns)
+        if df.empty or "id" not in df.columns:
+            return df
+        ids = pd.to_numeric(df["id"], errors="coerce")
+        return df[ids == int(bioactivity_id)]
     return _sqlite_dataframe(f"SELECT {columns} FROM bioactivity_records WHERE id = ?", (bioactivity_id,))
 
 
@@ -12849,7 +13045,7 @@ def count_related_records(filtered_ids):
     filtered_ids = [int(item) for item in filtered_ids if str(item).strip()]
     if not filtered_ids:
         return 0, 0, 0
-    if use_supabase_backend():
+    if get_npdb_read_backend() in {"supabase", "snapshot"}:
         filtered_id_set = set(filtered_ids)
         proton_df = load_all_proton_data()
         carbon_df = load_all_carbon_data()
@@ -12877,7 +13073,7 @@ def count_bioactivity_records(filtered_ids):
     filtered_ids = [int(item) for item in filtered_ids if str(item).strip()]
     if not filtered_ids:
         return 0
-    if use_supabase_backend():
+    if get_npdb_read_backend() in {"supabase", "snapshot"}:
         filtered_id_set = set(filtered_ids)
         bioactivity_df = load_all_bioactivity_data()
         return int(bioactivity_df["compound_id"].isin(filtered_id_set).sum()) if "compound_id" in bioactivity_df else 0
