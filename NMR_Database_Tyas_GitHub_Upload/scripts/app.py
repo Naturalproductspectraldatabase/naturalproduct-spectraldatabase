@@ -5394,6 +5394,17 @@ def display_asset_url(value) -> str:
     return signed_url or text
 
 
+def browser_displayable_asset_url(value) -> str:
+    url = display_asset_url(value)
+    if not url:
+        return ""
+    if is_supabase_storage_reference(value) and url == maybe_blank(value):
+        return ""
+    if url.startswith("data:") or is_external_url(url):
+        return url
+    return ""
+
+
 def can_preview_external_image(file_path_value, spectrum_type_value="") -> bool:
     path_text = maybe_blank(file_path_value).lower()
     spectrum_text = maybe_blank(spectrum_type_value).lower()
@@ -5403,6 +5414,9 @@ def can_preview_external_image(file_path_value, spectrum_type_value="") -> bool:
 
     if is_google_drive_url(path_text):
         return True
+
+    if is_supabase_storage_reference(file_path_value):
+        return bool(browser_displayable_asset_url(file_path_value))
 
     return path_text.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif"))
 
@@ -9080,12 +9094,18 @@ def render_registered_file_preview(file_path_value, caption: str = "", spectrum_
     if is_external_url(path_text) or is_supabase_storage_reference(path_text):
         preview_rendered = False
         if can_preview_external_image(path_text, spectrum_type):
-            preview_url = google_drive_preview_url(path_text) if is_google_drive_url(path_text) else display_asset_url(path_text)
+            preview_url = google_drive_preview_url(path_text) if is_google_drive_url(path_text) else browser_displayable_asset_url(path_text)
             if preview_url:
                 st.image(preview_url, caption=caption or None, width="stretch")
                 preview_rendered = True
         if not preview_rendered:
-            render_external_link_card(caption or "Remote file", display_asset_url(path_text), None)
+            display_url = browser_displayable_asset_url(path_text)
+            if display_url:
+                render_external_link_card(caption or "Remote file", display_url, None)
+            else:
+                st.info("Cloud file is registered, but preview is unavailable while cloud storage is unreachable.")
+                if is_owner_editor():
+                    st.caption(path_text)
         return
 
     full_path = get_full_file_path(path_text)
@@ -9128,8 +9148,10 @@ def render_compound_structure_from_row(row_data, caption: str = "Structure", siz
             st.image(standardized_image, caption=caption, width="stretch")
             return
         if is_external_url(source_value) or is_supabase_storage_reference(source_value):
-            st.image(display_asset_url(source_value), caption=caption, width="stretch")
-            return
+            display_url = browser_displayable_asset_url(source_value)
+            if display_url:
+                st.image(display_url, caption=caption, width="stretch")
+                return
     if fallback_structure:
         structure_png = structure_smiles_png_bytes(fallback_structure, size=size)
         if structure_png:
@@ -14052,7 +14074,13 @@ def _render_specimen_image(image_path: str, caption: str = "Specimen"):
         st.info("No specimen image registered.")
         return
     if is_external_url(path_text) or is_supabase_storage_reference(path_text):
-        st.image(display_asset_url(path_text), caption=caption, width="stretch")
+        display_url = browser_displayable_asset_url(path_text)
+        if display_url:
+            st.image(display_url, caption=caption, width="stretch")
+            return
+        st.info("Cloud specimen image is registered, but preview is unavailable while cloud storage is unreachable.")
+        if is_owner_editor():
+            st.caption(path_text)
         return
     full_path = get_full_file_path(path_text)
     if full_path is not None and full_path.exists() and is_image_file(full_path):
