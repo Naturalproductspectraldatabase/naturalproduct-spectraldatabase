@@ -4,6 +4,7 @@ import hmac
 import html
 import io
 import json
+import math
 import mimetypes
 import os
 import re
@@ -121,6 +122,7 @@ BRANDING_DIR = DATA_DIR / "branding"
 BRANDING_OPTIMIZED_DIR = DATA_DIR / "branding_optimized"
 STRUCTURES_DIR = DATA_DIR / "structures"
 SPECTRA_DIR = DATA_DIR / "spectra"
+SPECIMENS_DIR = DATA_DIR / "specimens"
 TEMPLATES_DIR = DATA_DIR / "templates"
 SUBMISSIONS_DIR = DATA_DIR / "submissions"
 SUBMISSIONS_INBOX_DIR = SUBMISSIONS_DIR / "inbox"
@@ -261,7 +263,11 @@ st.markdown = _safe_markdown
 
 def render_raw_html(markup: str):
     normalized = _normalize_html_block(markup)
-    _STREAMLIT_MARKDOWN(normalized, unsafe_allow_html=True)
+    html_renderer = getattr(st, "html", None)
+    if callable(html_renderer):
+        html_renderer(normalized)
+    else:
+        _STREAMLIT_MARKDOWN(normalized, unsafe_allow_html=True)
 
 
 WORKSPACE_ART_PATH = pick_branding_asset("compound workspace.png", "updated.png", "structures.png")
@@ -293,10 +299,12 @@ if not DOCUMENTATION_ART_PATH.exists():
     DOCUMENTATION_ART_PATH = pick_branding_asset_fuzzy("documentation", fallback="Documentation.png")
 
 WORKFLOW_CARD_ART_PATHS = {
+    "Search Spectra": SEARCH_ART_PATH,
     "Browse Record": pick_branding_asset("Browse Record.png", "compounds.png"),
     "New Submission": pick_branding_asset("New Submission.png", "updated.png"),
     "Batch Import": pick_branding_asset("Batch Import.png", "spectra.png"),
     "Update Metadata": pick_branding_asset("Update Metadata.png", "updated.png"),
+    "Download Data": UPDATED_ART_PATH,
 }
 
 SIDEBAR_NAV_LABEL_ICONS = {
@@ -310,8 +318,10 @@ SIDEBAR_NAV_LABEL_ICONS = {
     "Delete Record": ":material/delete:",
     "Bioactivity": ":material/biotech:",
     "1H Peaks": ":material/monitoring:",
+    "1H Spectra Gallery": ":material/photo_library:",
     "13C Peaks": ":material/analytics:",
     "Spectra Library": ":material/folder_open:",
+    "Specimen Library": ":material/image_search:",
     "Guide": ":material/menu_book:",
 }
 
@@ -326,8 +336,10 @@ SIDEBAR_NAV_ICON_PATHS = {
     "Delete Record": pick_branding_asset("Delete Record.png", "updated.png"),
     "Bioactivity": pick_branding_asset("bioactivity.png", "updated.png"),
     "1H Peaks": pick_branding_asset("spectra.png", "updated.png"),
+    "1H Spectra Gallery": pick_branding_asset("spectra.png", "Search spectra.png"),
     "13C Peaks": pick_branding_asset("updated.png", "spectra.png"),
     "Spectra Library": pick_branding_asset("spectra.png", "updated.png"),
+    "Specimen Library": pick_branding_asset("compounds.png", "structures.png"),
     "Guide": pick_branding_asset("Documentation.png", "updated.png"),
 }
 
@@ -362,8 +374,10 @@ SIDEBAR_NAV_GROUPS = [
     ("Data Library", [
         {"label": "Bioactivity", "section": "Bioactivity"},
         {"label": "1H Peaks", "section": "1H Peaks"},
+        {"label": "1H Spectra Gallery", "section": "1H Spectra Gallery"},
         {"label": "13C Peaks", "section": "13C Peaks"},
         {"label": "Spectra Library", "section": "Spectra Library"},
+        {"label": "Specimen Library", "section": "Specimen Library"},
         {"label": "Guide", "section": "Guide"},
     ]),
 ]
@@ -424,6 +438,19 @@ DEFAULT_SPECTRUM_TYPES = [
     "UV",
     "HRMS",
     "Supporting Data",
+]
+DEFAULT_SPECIMEN_TYPES = [
+    "Marine sponge",
+    "Soft coral",
+    "Nudibranch",
+    "Cyanobacteria",
+    "Marine algae",
+    "Mollusk",
+    "Tunicate",
+    "Plant",
+    "Fungus",
+    "Microorganism",
+    "Other",
 ]
 
 STRUCTURE_THUMBNAIL_IMAGE_SIZE = (720, 528)
@@ -516,8 +543,10 @@ NAV_OPTIONS = [
     "Compound Workspace",
     "Bioactivity",
     "1H Peaks",
+    "1H Spectra Gallery",
     "13C Peaks",
     "Spectra Library",
+    "Specimen Library",
     "Guide",
 ]
 
@@ -569,6 +598,10 @@ NAV_SECTION_COPY = {
         "title": "1H Peaks",
         "summary": "Manage proton peak assignments.",
     },
+    "1H Spectra Gallery": {
+        "title": "1H Spectra Gallery",
+        "summary": "Compare 1H spectra previews alongside compound structures.",
+    },
     "13C Peaks": {
         "title": "13C Peaks",
         "summary": "Manage carbon shift assignments.",
@@ -576,6 +609,10 @@ NAV_SECTION_COPY = {
     "Spectra Library": {
         "title": "Spectra Library",
         "summary": "Manage spectra previews, files, and raw-data links.",
+    },
+    "Specimen Library": {
+        "title": "Specimen Library",
+        "summary": "Connect specimen photos, sampling metadata, and linked compounds.",
     },
     "Guide": {
         "title": "Guide",
@@ -3027,12 +3064,12 @@ div[data-testid="stRadio"] label:has(input:checked) {
     margin-bottom: 1rem;
 }
 
-.st-key-dashboard_workflow_native div[data-testid="stHorizontalBlock"] {
-    display: grid !important;
-    grid-template-columns: repeat(4, minmax(150px, 1fr));
-    gap: 0.9rem;
-    align-items: stretch;
-}
+	.st-key-dashboard_workflow_native div[data-testid="stHorizontalBlock"] {
+	    display: grid !important;
+	    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+	    gap: 0.9rem;
+	    align-items: stretch;
+	}
 
 .st-key-dashboard_workflow_native div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"],
 .st-key-dashboard_workflow_native div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
@@ -3130,12 +3167,19 @@ div[data-testid="stRadio"] label:has(input:checked) {
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
 }
 
-.workflow-card-icon {
-    width: 1.62rem;
-    height: 1.62rem;
-    object-fit: contain;
-    filter: drop-shadow(0 0 10px rgba(97, 216, 237, 0.18));
-}
+	.workflow-card-icon {
+	    width: 1.62rem;
+	    height: 1.62rem;
+	    object-fit: contain;
+	    filter: drop-shadow(0 0 10px rgba(97, 216, 237, 0.18));
+	}
+
+	.workflow-card-symbol {
+	    color: #EAF4FF;
+	    font-size: 1.58rem;
+	    line-height: 1;
+	    filter: drop-shadow(0 0 10px rgba(97, 216, 237, 0.18));
+	}
 
 .workflow-copy {
     color: var(--text-soft);
@@ -3719,6 +3763,7 @@ def ensure_project_dirs():
         BRANDING_OPTIMIZED_DIR,
         STRUCTURES_DIR,
         SPECTRA_DIR,
+        SPECIMENS_DIR,
         TEMPLATES_DIR,
         SUBMISSIONS_DIR,
         SUBMISSIONS_INBOX_DIR,
@@ -3767,6 +3812,10 @@ def invalidate_cached_views():
         "load_all_bioactivity_data",
         "load_bioactivity_data",
         "load_bioactivity_row",
+        "load_all_specimens",
+        "load_specimen_row",
+        "load_specimen_compound_links",
+        "load_specimen_extracts",
         "load_search_index",
         "load_dashboard_preview_records",
         "load_structure_search_index",
@@ -3930,6 +3979,63 @@ def ensure_database_schema():
             )
             """
         )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS specimens (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                specimen_name TEXT NOT NULL,
+                scientific_name TEXT,
+                specimen_type TEXT,
+                image_path TEXT,
+                color TEXT,
+                texture TEXT,
+                traits TEXT,
+                collection_location TEXT,
+                gps_coordinates TEXT,
+                sampling_date TEXT,
+                depth_m REAL,
+                habitat TEXT,
+                collector TEXT,
+                note TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS specimen_compounds (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                specimen_id INTEGER NOT NULL,
+                compound_id INTEGER NOT NULL,
+                evidence_note TEXT,
+                reference_note TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (specimen_id) REFERENCES specimens(id) ON DELETE CASCADE,
+                FOREIGN KEY (compound_id) REFERENCES compounds(id) ON DELETE CASCADE,
+                UNIQUE(specimen_id, compound_id)
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS specimen_1h_extracts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                specimen_id INTEGER NOT NULL,
+                extract_label TEXT NOT NULL,
+                extract_type TEXT,
+                solvent TEXT,
+                instrument_mhz REAL,
+                file_path TEXT,
+                acquisition_date TEXT,
+                observed_features TEXT,
+                note TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (specimen_id) REFERENCES specimens(id) ON DELETE CASCADE
+            )
+            """
+        )
         ensure_columns_with_cursor(
             cursor,
             "compounds",
@@ -4033,6 +4139,21 @@ def ensure_database_schema():
         )
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_bioactivity_target_category ON bioactivity_records(target_category)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_specimens_name ON specimens(specimen_name)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_specimens_type ON specimens(specimen_type)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_specimen_compounds_specimen ON specimen_compounds(specimen_id)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_specimen_compounds_compound ON specimen_compounds(compound_id)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_specimen_1h_extracts_specimen ON specimen_1h_extracts(specimen_id)"
         )
         conn.commit()
         invalidate_cached_views()
@@ -6128,7 +6249,19 @@ def build_sidebar_stat_markup(value, label: str, icon_path: Path | None = None) 
 def build_workflow_card_icon_markup(title: str) -> str:
     icon_path = WORKFLOW_CARD_ART_PATHS.get(title)
     if not icon_path or not icon_path.exists():
-        return ""
+        fallback_icon = {
+            "Search Spectra": "search",
+            "Browse Record": "find_in_page",
+            "New Submission": "note_add",
+            "Batch Import": "upload_file",
+            "Update Metadata": "edit_note",
+            "Download Data": "download",
+        }.get(title, "science")
+        return (
+            '<div class="workflow-card-icon-shell">'
+            f'<span class="material-symbols-rounded workflow-card-symbol">{fallback_icon}</span>'
+            '</div>'
+        )
     icon_uri = image_to_data_uri(str(icon_path), max_px=128)
     return (
         '<div class="workflow-card-icon-shell">'
@@ -8925,7 +9058,89 @@ def render_spectra_section(compound_id):
                         file_name=full_path.name,
                         mime="application/octet-stream",
                         key=f"file_download_{file_id}"
-                    )
+	                    )
+
+	# =========================
+	# Gallery and specimen previews
+	# =========================
+def is_proton_spectrum_label(value) -> bool:
+    text = maybe_blank(value).casefold()
+    compact = re.sub(r"[^a-z0-9]+", "", text)
+    if "13c" in compact or "carbon" in text:
+        return False
+    return "1h" in compact or "proton" in text or "h1" in compact
+
+
+def render_registered_file_preview(file_path_value, caption: str = "", spectrum_type: str = "", missing_label: str = "File not found.", key_prefix: str = "registered"):
+    path_text = maybe_blank(file_path_value)
+    if not path_text:
+        st.info("No file registered.")
+        return
+
+    if is_external_url(path_text) or is_supabase_storage_reference(path_text):
+        preview_rendered = False
+        if can_preview_external_image(path_text, spectrum_type):
+            preview_url = google_drive_preview_url(path_text) if is_google_drive_url(path_text) else display_asset_url(path_text)
+            if preview_url:
+                st.image(preview_url, caption=caption or None, width="stretch")
+                preview_rendered = True
+        if not preview_rendered:
+            render_external_link_card(caption or "Remote file", display_asset_url(path_text), None)
+        return
+
+    full_path = get_full_file_path(path_text)
+    if full_path is None or not full_path.exists():
+        st.warning(missing_label)
+        if is_owner_editor() and full_path is not None:
+            st.caption(str(full_path))
+        return
+
+    if is_image_file(full_path):
+        st.image(str(full_path), caption=caption or full_path.name, width="stretch")
+        return
+
+    try:
+        file_bytes = full_path.read_bytes()
+    except Exception:
+        st.warning("File is registered, but could not be opened.")
+        return
+
+    mime = "application/pdf" if is_pdf_file(full_path) else "application/octet-stream"
+    st.download_button(
+        label=f"Download {full_path.name}",
+        data=file_bytes,
+        file_name=full_path.name,
+        mime=mime,
+        key=f"download_{slugify_value(key_prefix)}_{slugify_value(str(full_path))}_{hashlib.sha1(str(full_path).encode('utf-8')).hexdigest()[:10]}",
+    )
+
+
+def render_compound_structure_from_row(row_data, caption: str = "Structure", size=STRUCTURE_THUMBNAIL_IMAGE_SIZE):
+    source_value = maybe_blank(row_data.get("structure_image_path"))
+    fallback_structure = first_structure_identifier(row_data.get("smiles"), row_data.get("inchi"), row_data.get("inchikey"))
+    if source_value:
+        standardized_image = load_standardized_structure_source(
+            source_value,
+            size=size,
+            fallback_smiles=fallback_structure,
+        )
+        if standardized_image is not None:
+            st.image(standardized_image, caption=caption, width="stretch")
+            return
+        if is_external_url(source_value) or is_supabase_storage_reference(source_value):
+            st.image(display_asset_url(source_value), caption=caption, width="stretch")
+            return
+    if fallback_structure:
+        structure_png = structure_smiles_png_bytes(fallback_structure, size=size)
+        if structure_png:
+            st.image(structure_png, caption=caption, width="stretch")
+            return
+        structure_url = structure_smiles_image_url(fallback_structure)
+        if structure_url:
+            st.image(structure_url, caption=caption, width="stretch")
+            return
+    st.info("No structure image available.")
+
 
 # =========================
 # Compound detail
@@ -12595,6 +12810,8 @@ def save_uploaded_asset(uploaded_file, target_dir: Path, base_name: str) -> str:
             bucket = "structures"
         elif target_dir == SPECTRA_DIR:
             bucket = "spectra"
+        elif target_dir == SPECIMENS_DIR:
+            bucket = "specimens"
         upload_time = datetime.now(UTC)
         original_stem = Path(uploaded_file.name).stem
         object_name = f"{slugify_value(base_name + '_' + original_stem, fallback='asset')}_{upload_time.strftime('%H%M%S_%f')}{suffix}"
@@ -12977,6 +13194,100 @@ def load_bioactivity_row(bioactivity_id):
         ids = pd.to_numeric(df["id"], errors="coerce")
         return df[ids == int(bioactivity_id)]
     return _sqlite_dataframe(f"SELECT {columns} FROM bioactivity_records WHERE id = ?", (bioactivity_id,))
+
+
+SPECIMEN_COLUMNS = "id,specimen_name,scientific_name,specimen_type,image_path,color,texture,traits,collection_location,gps_coordinates,sampling_date,depth_m,habitat,collector,note,created_at,updated_at"
+SPECIMEN_COMPOUND_COLUMNS = "id,specimen_id,compound_id,evidence_note,reference_note,created_at"
+SPECIMEN_EXTRACT_COLUMNS = "id,specimen_id,extract_label,extract_type,solvent,instrument_mhz,file_path,acquisition_date,observed_features,note,created_at,updated_at"
+
+
+def _empty_dataframe_for_columns(columns: str) -> pd.DataFrame:
+    return pd.DataFrame(columns=[item.strip() for item in columns.split(",") if item.strip()])
+
+
+@st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
+def load_all_specimens(_db_signature=None):
+    backend = get_npdb_read_backend()
+    if backend == "supabase":
+        try:
+            return supabase_select_df("specimens", columns=SPECIMEN_COLUMNS, order="updated_at.desc")
+        except RuntimeError:
+            return _empty_dataframe_for_columns(SPECIMEN_COLUMNS)
+    if backend == "snapshot":
+        return _snapshot_dataframe("specimens", columns=SPECIMEN_COLUMNS)
+    return _sqlite_dataframe(f"SELECT {SPECIMEN_COLUMNS} FROM specimens ORDER BY updated_at DESC")
+
+
+@st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
+def load_specimen_row(specimen_id, _db_signature=None):
+    backend = get_npdb_read_backend()
+    if backend == "supabase":
+        try:
+            return supabase_select_df("specimens", columns=SPECIMEN_COLUMNS, filters={"id": ("eq", specimen_id)})
+        except RuntimeError:
+            return _empty_dataframe_for_columns(SPECIMEN_COLUMNS)
+    if backend == "snapshot":
+        df = _snapshot_dataframe("specimens", columns=SPECIMEN_COLUMNS)
+        if df.empty or "id" not in df.columns:
+            return _empty_dataframe_for_columns(SPECIMEN_COLUMNS)
+        ids = pd.to_numeric(df["id"], errors="coerce")
+        return df[ids == int(specimen_id)]
+    return _sqlite_dataframe(f"SELECT {SPECIMEN_COLUMNS} FROM specimens WHERE id = ?", (specimen_id,))
+
+
+@st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
+def load_specimen_compound_links(specimen_id=None, _db_signature=None):
+    backend = get_npdb_read_backend()
+    if backend == "supabase":
+        try:
+            filters = {"specimen_id": ("eq", specimen_id)} if specimen_id is not None else None
+            links_df = supabase_select_df("specimen_compounds", columns=SPECIMEN_COMPOUND_COLUMNS, filters=filters, order="id.asc")
+        except RuntimeError:
+            links_df = _empty_dataframe_for_columns(SPECIMEN_COMPOUND_COLUMNS)
+    elif backend == "snapshot":
+        links_df = _snapshot_dataframe("specimen_compounds", columns=SPECIMEN_COMPOUND_COLUMNS)
+        if specimen_id is not None and not links_df.empty and "specimen_id" in links_df.columns:
+            specimen_ids = pd.to_numeric(links_df["specimen_id"], errors="coerce")
+            links_df = links_df[specimen_ids == int(specimen_id)]
+    else:
+        where = "WHERE sc.specimen_id = ?" if specimen_id is not None else ""
+        params = (specimen_id,) if specimen_id is not None else None
+        return _sqlite_dataframe(
+            f"""
+            SELECT sc.id, sc.specimen_id, sc.compound_id, c.trivial_name, c.molecular_formula,
+                   c.compound_class, sc.evidence_note, sc.reference_note, sc.created_at
+            FROM specimen_compounds sc
+            LEFT JOIN compounds c ON c.id = sc.compound_id
+            {where}
+            ORDER BY c.trivial_name COLLATE NOCASE, sc.id
+            """,
+            params,
+        )
+
+    if links_df.empty:
+        return links_df
+    compounds_df = load_all_compounds()[["id", "trivial_name", "molecular_formula", "compound_class"]].rename(columns={"id": "compound_id"})
+    return links_df.merge(compounds_df, on="compound_id", how="left")
+
+
+@st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
+def load_specimen_extracts(specimen_id=None, _db_signature=None):
+    backend = get_npdb_read_backend()
+    if backend == "supabase":
+        try:
+            filters = {"specimen_id": ("eq", specimen_id)} if specimen_id is not None else None
+            return supabase_select_df("specimen_1h_extracts", columns=SPECIMEN_EXTRACT_COLUMNS, filters=filters, order="updated_at.desc")
+        except RuntimeError:
+            return _empty_dataframe_for_columns(SPECIMEN_EXTRACT_COLUMNS)
+    if backend == "snapshot":
+        df = _snapshot_dataframe("specimen_1h_extracts", columns=SPECIMEN_EXTRACT_COLUMNS)
+        if specimen_id is not None and not df.empty and "specimen_id" in df.columns:
+            specimen_ids = pd.to_numeric(df["specimen_id"], errors="coerce")
+            df = df[specimen_ids == int(specimen_id)]
+        return df
+    where = "WHERE specimen_id = ?" if specimen_id is not None else ""
+    params = (specimen_id,) if specimen_id is not None else None
+    return _sqlite_dataframe(f"SELECT {SPECIMEN_EXTRACT_COLUMNS} FROM specimen_1h_extracts {where} ORDER BY updated_at DESC", params)
 
 
 def _readback_value_matches(stored_value, expected_value) -> bool:
@@ -13380,6 +13691,132 @@ def delete_bioactivity_record_by_id(bioactivity_id):
     invalidate_cached_views()
 
 
+def insert_specimen_record(
+    specimen_name,
+    scientific_name,
+    specimen_type,
+    image_path,
+    color,
+    texture,
+    traits,
+    collection_location,
+    gps_coordinates,
+    sampling_date,
+    depth_m,
+    habitat,
+    collector,
+    note,
+):
+    row = {
+        "specimen_name": specimen_name,
+        "scientific_name": scientific_name,
+        "specimen_type": specimen_type,
+        "image_path": image_path,
+        "color": color,
+        "texture": texture,
+        "traits": traits,
+        "collection_location": collection_location,
+        "gps_coordinates": gps_coordinates,
+        "sampling_date": sampling_date,
+        "depth_m": depth_m,
+        "habitat": habitat,
+        "collector": collector,
+        "note": note,
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    row_id = _write_child_row("specimens", row)
+    invalidate_cached_views()
+    return row_id
+
+
+def update_specimen_record(specimen_id, **fields):
+    row = dict(fields)
+    row["updated_at"] = datetime.now(UTC).isoformat()
+    _write_child_row("specimens", row, row_id=specimen_id)
+    invalidate_cached_views()
+
+
+def replace_specimen_compound_links(specimen_id: int, compound_ids: list[int], evidence_note: str = "", reference_note: str = ""):
+    ensure_write_target_ready()
+    unique_compound_ids = []
+    for compound_id in compound_ids:
+        try:
+            compound_int = int(compound_id)
+        except Exception:
+            continue
+        if compound_int not in unique_compound_ids:
+            unique_compound_ids.append(compound_int)
+
+    if use_supabase_write_backend():
+        _supabase_request(
+            "DELETE",
+            "/rest/v1/specimen_compounds",
+            query={"specimen_id": f"eq.{int(specimen_id)}"},
+            write=True,
+            extra_headers={"Prefer": "return=minimal"},
+            return_json=False,
+        )
+        for compound_id in unique_compound_ids:
+            supabase_insert_row(
+                "specimen_compounds",
+                {
+                    "specimen_id": int(specimen_id),
+                    "compound_id": compound_id,
+                    "evidence_note": evidence_note,
+                    "reference_note": reference_note,
+                },
+            )
+        if not use_local_read_backend():
+            invalidate_cached_views()
+            return
+
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM specimen_compounds WHERE specimen_id = ?", (int(specimen_id),))
+        for compound_id in unique_compound_ids:
+            cursor.execute(
+                """
+                INSERT OR IGNORE INTO specimen_compounds
+                    (specimen_id, compound_id, evidence_note, reference_note)
+                VALUES (?, ?, ?, ?)
+                """,
+                (int(specimen_id), compound_id, evidence_note, reference_note),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    invalidate_cached_views()
+
+
+def insert_specimen_extract_record(
+    specimen_id,
+    extract_label,
+    extract_type,
+    solvent,
+    instrument_mhz,
+    file_path,
+    acquisition_date,
+    observed_features,
+    note,
+):
+    row = {
+        "specimen_id": int(specimen_id),
+        "extract_label": extract_label,
+        "extract_type": extract_type,
+        "solvent": solvent,
+        "instrument_mhz": instrument_mhz,
+        "file_path": file_path,
+        "acquisition_date": acquisition_date,
+        "observed_features": observed_features,
+        "note": note,
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    row_id = _write_child_row("specimen_1h_extracts", row)
+    invalidate_cached_views()
+    return row_id
+
+
 def derive_structure_identifiers(structure_text: str) -> dict | None:
     if not is_structure_backend_available():
         return None
@@ -13472,6 +13909,415 @@ def save_structure_query_to_compound(compound_id: int, query_text: str) -> tuple
 
 
 # =========================
+# 1H spectrum and specimen library pages
+# =========================
+def _compound_label_options(compounds_df: pd.DataFrame) -> list[str]:
+    if compounds_df.empty:
+        return []
+    options = compounds_df[["id", "trivial_name"]].copy()
+    options["id"] = pd.to_numeric(options["id"], errors="coerce")
+    options = options.dropna(subset=["id"]).sort_values(["trivial_name", "id"], kind="stable")
+    return [f"{int(row['id'])} - {clean_text(row.get('trivial_name'))}" for _, row in options.iterrows()]
+
+
+def _compound_ids_from_labels(labels: list[str]) -> list[int]:
+    compound_ids = []
+    for label in labels:
+        try:
+            compound_ids.append(int(str(label).split(" - ")[0]))
+        except Exception:
+            continue
+    return compound_ids
+
+
+def show_proton_spectra_gallery():
+    section_header(
+        "1H Spectra Gallery",
+        "Browse registered proton spectra beside compound structures for fast visual comparison.",
+    )
+    spectra_df = load_all_spectra_files()
+    if spectra_df.empty:
+        st.info("No spectra file records available.")
+        return
+
+    proton_df = spectra_df[spectra_df["spectrum_type"].apply(is_proton_spectrum_label)].copy()
+    if proton_df.empty:
+        st.info("No registered 1H spectrum images are available yet.")
+        return
+
+    compounds_df = load_all_compounds()
+    if not compounds_df.empty:
+        compound_columns = [
+            "id",
+            "trivial_name",
+            "molecular_formula",
+            "compound_class",
+            "source_category",
+            "source_organism",
+            "structure_image_path",
+            "smiles",
+            "inchi",
+            "inchikey",
+        ]
+        available_columns = [column for column in compound_columns if column in compounds_df.columns]
+        compound_lookup = compounds_df[available_columns].copy()
+        compound_lookup["id"] = pd.to_numeric(compound_lookup["id"], errors="coerce")
+        proton_df["compound_id"] = pd.to_numeric(proton_df["compound_id"], errors="coerce")
+        proton_df = proton_df.merge(
+            compound_lookup.rename(columns={"id": "compound_id"}),
+            on="compound_id",
+            how="left",
+            suffixes=("_file", ""),
+        )
+
+    search_text = st.text_input(
+        "Search gallery",
+        placeholder="Compound name, formula, class, source, or spectrum type",
+        key="one_h_gallery_search",
+    )
+    if search_text.strip():
+        searchable_columns = [
+            column
+            for column in [
+                "trivial_name",
+                "molecular_formula",
+                "compound_class",
+                "source_category",
+                "source_organism",
+                "spectrum_type",
+                "note",
+                "file_path",
+            ]
+            if column in proton_df.columns
+        ]
+        combined = proton_df[searchable_columns].fillna("").astype(str).agg(" ".join, axis=1).str.casefold()
+        for token in [item.casefold() for item in re.split(r"\s+", search_text.strip()) if item]:
+            proton_df = proton_df[combined.str.contains(re.escape(token), regex=True)]
+            combined = combined.loc[proton_df.index]
+
+    if proton_df.empty:
+        st.info("No 1H spectrum records match the current filter.")
+        return
+
+    sort_columns = [column for column in ["trivial_name", "compound_id", "id"] if column in proton_df.columns]
+    proton_df = proton_df.sort_values(by=sort_columns, kind="stable")
+    page_size = st.selectbox("Spectra per page", [10, 20, 40], index=0, key="one_h_gallery_page_size")
+    total_records = len(proton_df)
+    total_pages = max(1, math.ceil(total_records / int(page_size)))
+    page_number = int(
+        st.number_input(
+            "Page",
+            min_value=1,
+            max_value=total_pages,
+            value=min(int(st.session_state.get("one_h_gallery_page", 1)), total_pages),
+            key="one_h_gallery_page",
+        )
+    )
+    start = (page_number - 1) * int(page_size)
+    current_page = proton_df.iloc[start:start + int(page_size)]
+    st.caption(f"Showing {start + 1}-{start + len(current_page)} of {total_records} registered 1H spectrum record(s).")
+
+    for _, row in current_page.iterrows():
+        compound_id = int(row["compound_id"]) if not pd.isna(row.get("compound_id")) else None
+        title = clean_text(row.get("trivial_name")) if maybe_blank(row.get("trivial_name")) else f"Compound ID {compound_id}"
+        st.markdown('<div class="panel-card">', unsafe_allow_html=True)
+        st.markdown(f"### {html_text(title)}")
+        meta_bits = [
+            f"ID {compound_id}" if compound_id else "",
+            clean_text(row.get("molecular_formula")) if maybe_blank(row.get("molecular_formula")) else "",
+            clean_text(row.get("spectrum_type")) if maybe_blank(row.get("spectrum_type")) else "",
+        ]
+        st.caption(" · ".join(bit for bit in meta_bits if bit))
+        left_col, right_col = st.columns([0.36, 0.64], gap="large")
+        with left_col:
+            render_compound_structure_from_row(row, caption="Structure", size=STRUCTURE_THUMBNAIL_IMAGE_SIZE)
+            if compound_id and st.button("Open Record", key=f"one_h_gallery_open_{compound_id}_{row.get('id')}"):
+                open_compound_detail(compound_id)
+                st.rerun()
+        with right_col:
+            render_registered_file_preview(
+                row.get("file_path"),
+                caption=clean_text(row.get("spectrum_type")),
+                spectrum_type=maybe_blank(row.get("spectrum_type")),
+                key_prefix=f"one_h_gallery_{row.get('id')}_{compound_id}",
+            )
+            if maybe_blank(row.get("note")):
+                st.caption(clean_text(row.get("note")))
+        st.markdown('</div>', unsafe_allow_html=True)
+
+
+def _render_specimen_image(image_path: str, caption: str = "Specimen"):
+    path_text = maybe_blank(image_path)
+    if not path_text:
+        st.info("No specimen image registered.")
+        return
+    if is_external_url(path_text) or is_supabase_storage_reference(path_text):
+        st.image(display_asset_url(path_text), caption=caption, width="stretch")
+        return
+    full_path = get_full_file_path(path_text)
+    if full_path is not None and full_path.exists() and is_image_file(full_path):
+        st.image(str(full_path), caption=caption, width="stretch")
+        return
+    st.warning("Specimen image file not found.")
+    if is_owner_editor() and full_path is not None:
+        st.caption(str(full_path))
+
+
+def show_specimen_library_pages():
+    section_header(
+        "Specimen Library",
+        "Connect specimen photos, field notes, 1H extract spectra, and detected compounds in one place.",
+    )
+    tabs = ["Browse Specimens"]
+    editable = can_edit_database()
+    if editable:
+        tabs.extend(["Add Specimen", "Add 1H Extract"])
+    else:
+        render_read_only_notice("add specimen records or specimen 1H extracts")
+
+    selected_tabs = st.tabs(tabs)
+
+    with selected_tabs[0]:
+        specimens_df = load_all_specimens(get_db_signature())
+        if specimens_df.empty:
+            st.info("No specimen records available yet.")
+        else:
+            specimen_types = sorted(
+                {
+                    maybe_blank(value)
+                    for value in specimens_df.get("specimen_type", pd.Series(dtype=str)).tolist()
+                    if maybe_blank(value)
+                }
+            )
+            filter_cols = st.columns([0.62, 0.38])
+            with filter_cols[0]:
+                search_text = st.text_input(
+                    "Search specimens",
+                    placeholder="Specimen name, type, color, texture, location, or notes",
+                    key="specimen_library_search",
+                )
+            with filter_cols[1]:
+                type_filter = st.selectbox("Specimen type", ["All"] + specimen_types, key="specimen_library_type_filter")
+
+            filtered_df = specimens_df.copy()
+            if type_filter != "All" and "specimen_type" in filtered_df.columns:
+                filtered_df = filtered_df[filtered_df["specimen_type"].fillna("").astype(str) == type_filter]
+            if search_text.strip():
+                searchable_columns = [
+                    column
+                    for column in [
+                        "specimen_name",
+                        "scientific_name",
+                        "specimen_type",
+                        "color",
+                        "texture",
+                        "traits",
+                        "collection_location",
+                        "habitat",
+                        "collector",
+                        "note",
+                    ]
+                    if column in filtered_df.columns
+                ]
+                combined = filtered_df[searchable_columns].fillna("").astype(str).agg(" ".join, axis=1).str.casefold()
+                for token in [item.casefold() for item in re.split(r"\s+", search_text.strip()) if item]:
+                    filtered_df = filtered_df[combined.str.contains(re.escape(token), regex=True)]
+                    combined = combined.loc[filtered_df.index]
+
+            if filtered_df.empty:
+                st.info("No specimen records match the current filter.")
+            else:
+                for _, specimen in filtered_df.iterrows():
+                    specimen_id = int(specimen["id"])
+                    st.markdown('<div class="panel-card">', unsafe_allow_html=True)
+                    st.markdown(f"### {html_text(specimen.get('specimen_name'))}")
+                    st.caption(
+                        " · ".join(
+                            bit
+                            for bit in [
+                                clean_text(specimen.get("scientific_name")) if maybe_blank(specimen.get("scientific_name")) else "",
+                                clean_text(specimen.get("specimen_type")) if maybe_blank(specimen.get("specimen_type")) else "",
+                                clean_text(specimen.get("collection_location")) if maybe_blank(specimen.get("collection_location")) else "",
+                            ]
+                            if bit
+                        )
+                    )
+                    image_col, detail_col = st.columns([0.34, 0.66], gap="large")
+                    with image_col:
+                        _render_specimen_image(specimen.get("image_path"), caption=clean_text(specimen.get("specimen_name")))
+                    with detail_col:
+                        detail_bits = [
+                            ("Color", specimen.get("color")),
+                            ("Texture", specimen.get("texture")),
+                            ("Traits", specimen.get("traits")),
+                            ("Habitat", specimen.get("habitat")),
+                            ("Sampling date", specimen.get("sampling_date")),
+                            ("Depth", specimen.get("depth_m")),
+                            ("GPS", specimen.get("gps_coordinates")),
+                        ]
+                        for label, value in detail_bits:
+                            if maybe_blank(value):
+                                st.write(f"**{label}:** {clean_text(value)}")
+                        if maybe_blank(specimen.get("note")):
+                            st.caption(clean_text(specimen.get("note")))
+
+                        linked_df = load_specimen_compound_links(specimen_id, get_db_signature())
+                        if not linked_df.empty:
+                            linked_names = [
+                                f"{int(row['compound_id'])} - {clean_text(row.get('trivial_name'))}"
+                                for _, row in linked_df.iterrows()
+                            ]
+                            st.write("**Linked compounds:** " + ", ".join(linked_names))
+
+                        extracts_df = load_specimen_extracts(specimen_id, get_db_signature())
+                        if not extracts_df.empty:
+                            st.write("**1H extract spectra:**")
+                            for _, extract in extracts_df.head(3).iterrows():
+                                st.caption(
+                                    " · ".join(
+                                        bit
+                                        for bit in [
+                                            clean_text(extract.get("extract_label")),
+                                            clean_text(extract.get("extract_type")) if maybe_blank(extract.get("extract_type")) else "",
+                                            f"{clean_text(extract.get('instrument_mhz'))} MHz" if maybe_blank(extract.get("instrument_mhz")) else "",
+                                            clean_text(extract.get("solvent")) if maybe_blank(extract.get("solvent")) else "",
+                                        ]
+                                        if bit
+                                    )
+                                )
+                                render_registered_file_preview(
+                                    extract.get("file_path"),
+                                    caption=clean_text(extract.get("extract_label")),
+                                    spectrum_type="1H",
+                                    missing_label="1H extract file not found.",
+                                    key_prefix=f"specimen_extract_{extract.get('id')}",
+                                )
+                    st.markdown('</div>', unsafe_allow_html=True)
+
+    if editable and len(selected_tabs) > 1:
+        with selected_tabs[1]:
+            compounds_df = load_all_compounds()
+            compound_labels = _compound_label_options(compounds_df)
+            with st.form("add_specimen_form", clear_on_submit=False):
+                c1, c2 = st.columns(2)
+                with c1:
+                    specimen_name = st.text_input("Specimen Name")
+                    scientific_name = st.text_input("Scientific Name")
+                    specimen_type = select_or_custom("Specimen Type", DEFAULT_SPECIMEN_TYPES, "add_specimen_type")
+                    color = st.text_input("Color")
+                    texture = st.text_input("Texture")
+                    collection_location = st.text_input("Collection Location")
+                    gps_coordinates = st.text_input("GPS Coordinates")
+                    sampling_date = st.text_input("Sampling Date", placeholder="YYYY-MM-DD or field label")
+                with c2:
+                    image_upload = st.file_uploader("Specimen Photo", type=["png", "jpg", "jpeg", "webp"], key="add_specimen_photo")
+                    image_path = st.text_input("Existing Image Path or URL")
+                    depth_text = st.text_input("Depth (m)")
+                    habitat = st.text_input("Habitat")
+                    collector = st.text_input("Collector")
+                    traits = st.text_area("Specimen Traits")
+                    note = st.text_area("Note")
+                    linked_labels = st.multiselect("Linked Compounds", compound_labels)
+                    evidence_note = st.text_input("Compound Link Evidence")
+                    reference_note = st.text_input("Compound Link Reference")
+                submitted = st.form_submit_button("Save Specimen")
+
+            if submitted:
+                if not specimen_name.strip():
+                    st.error("Specimen Name is required.")
+                elif not specimen_type.strip():
+                    st.error("Specimen Type is required.")
+                else:
+                    depth_value = safe_float_or_none(depth_text)
+                    if depth_text.strip() and depth_value is None:
+                        st.error("Depth (m) must be numeric when filled.")
+                        st.stop()
+                    saved_image_path = image_path.strip()
+                    if image_upload is not None:
+                        saved_image_path = save_uploaded_asset(image_upload, SPECIMENS_DIR, f"specimen_{specimen_name}_{image_upload.name}")
+                    try:
+                        specimen_id = insert_specimen_record(
+                            specimen_name=specimen_name.strip(),
+                            scientific_name=scientific_name.strip(),
+                            specimen_type=specimen_type.strip(),
+                            image_path=saved_image_path,
+                            color=color.strip(),
+                            texture=texture.strip(),
+                            traits=traits.strip(),
+                            collection_location=collection_location.strip(),
+                            gps_coordinates=gps_coordinates.strip(),
+                            sampling_date=sampling_date.strip(),
+                            depth_m=depth_value,
+                            habitat=habitat.strip(),
+                            collector=collector.strip(),
+                            note=note.strip(),
+                        )
+                        replace_specimen_compound_links(
+                            specimen_id,
+                            _compound_ids_from_labels(linked_labels),
+                            evidence_note=evidence_note.strip(),
+                            reference_note=reference_note.strip(),
+                        )
+                        st.success(f"Specimen saved. Record ID: {specimen_id}")
+                    except Exception as exc:
+                        stop_after_save_error("Specimen", exc)
+
+        with selected_tabs[2]:
+            specimens_df = load_all_specimens(get_db_signature())
+            if specimens_df.empty:
+                st.info("Add a specimen record first.")
+            else:
+                specimen_options = [f"{int(row['id'])} - {clean_text(row.get('specimen_name'))}" for _, row in specimens_df.iterrows()]
+                with st.form("add_specimen_extract_form", clear_on_submit=False):
+                    selected_specimen_label = st.selectbox("Specimen", specimen_options)
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        extract_label = st.text_input("Extract Label", placeholder="e.g. Sponge extract fraction A")
+                        extract_type = st.text_input("Extract Type", value="1H NMR Extract")
+                        solvent = st.text_input("Solvent")
+                        instrument_mhz_text = st.text_input("Instrument (MHz)")
+                    with c2:
+                        extract_upload = st.file_uploader("1H Extract Spectrum Image / PDF", key="add_specimen_extract_upload")
+                        extract_path = st.text_input("Existing Extract File Path or URL")
+                        acquisition_date = st.text_input("Acquisition Date")
+                        observed_features = st.text_area("Observed Features")
+                        note = st.text_area("Note", key="add_specimen_extract_note")
+                    submitted_extract = st.form_submit_button("Save 1H Extract")
+
+                if submitted_extract:
+                    specimen_id = int(selected_specimen_label.split(" - ")[0])
+                    instrument_mhz = safe_float_or_none(instrument_mhz_text)
+                    if instrument_mhz_text.strip() and instrument_mhz is None:
+                        st.error("Instrument (MHz) must be numeric when filled.")
+                        st.stop()
+                    saved_extract_path = extract_path.strip()
+                    if extract_upload is not None:
+                        saved_extract_path = save_uploaded_asset(
+                            extract_upload,
+                            SPECIMENS_DIR,
+                            f"specimen_{specimen_id}_1h_extract_{extract_upload.name}",
+                        )
+                    if not saved_extract_path:
+                        st.error("Provide a 1H extract file upload or existing file path.")
+                    else:
+                        try:
+                            extract_id = insert_specimen_extract_record(
+                                specimen_id=specimen_id,
+                                extract_label=extract_label.strip() or f"Specimen {specimen_id} 1H extract",
+                                extract_type=extract_type.strip() or "1H NMR Extract",
+                                solvent=solvent.strip(),
+                                instrument_mhz=instrument_mhz,
+                                file_path=saved_extract_path,
+                                acquisition_date=acquisition_date.strip(),
+                                observed_features=observed_features.strip(),
+                                note=note.strip(),
+                            )
+                            st.success(f"1H extract saved. Record ID: {extract_id}")
+                        except Exception as exc:
+                            stop_after_save_error("Specimen 1H extract", exc)
+
+
+# =========================
 # App boot
 # =========================
 apply_navigation_query_params()
@@ -13518,6 +14364,12 @@ elif main_section == "13C Peaks":
 
 elif main_section == "Spectra Library":
     show_spectra_pages()
+
+elif main_section == "1H Spectra Gallery":
+    show_proton_spectra_gallery()
+
+elif main_section == "Specimen Library":
+    show_specimen_library_pages()
 
 elif main_section == "Guide":
     show_guide_page()
