@@ -152,15 +152,18 @@ jobs:
           }.items():
               assert app.session_state.get("_draft_"+key)==expected, (key,app.session_state.get("_draft_"+key))
           app.button(key="wizard_back_4").click().run(timeout=120)
+          print("DEBUG: HRMS after back step 4->3",repr(app.session_state.get("_draft_wizard_hrms_data")),repr(app.session_state.get("wizard_hrms_data")))
           no_errors("back to 3")
           assert app.session_state["compound_wizard_step"]==3
           app.button(key="wizard_back_3").click().run(timeout=120)
+          print("DEBUG: HRMS after back step 3->2",repr(app.session_state.get("_draft_wizard_hrms_data")),repr(app.session_state.get("wizard_hrms_data")))
           no_errors("back to 2")
           assert app.session_state["compound_wizard_step"]==2
           assert app.session_state.get("_draft_wizard_sample_code")=="DEMO-XYZ"
           app.button(key="wizard_next_2").click().run(timeout=120)
           no_errors("forward to 3")
-          assert app.session_state.get("_draft_wizard_hrms_data")=="TEST m/z 500.0000"
+          print("DEBUG: HRMS draft/widget after roundtrip",repr(app.session_state.get("_draft_wizard_hrms_data")),repr(app.session_state.get("wizard_hrms_data")))
+          assert app.session_state.get("_draft_wizard_hrms_data")=="TEST m/z 500.0000", "HRMS draft changed after back/forward navigation"
           print("PASS: Synthetic Streamlit wizard persisted Origin/Spectral inputs across forward/back navigation, without save")
           PY
       - name: Publish tested core integration branch only (never production)
