@@ -2,7 +2,7 @@ name: NPDB offline regression checks
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, qa/npdb-reviewed-integration-20261103]
   push:
     branches: [main]
   workflow_dispatch:
