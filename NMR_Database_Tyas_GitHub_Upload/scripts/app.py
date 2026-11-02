@@ -5737,10 +5737,9 @@ def load_standardized_structure_image(image_path: Path, size=STRUCTURE_DETAIL_IM
         return None
     try:
         with Image.open(image_path) as image:
-            if fallback_smiles and max(image.size) < STRUCTURE_MIN_CRISP_ASSET_EDGE:
-                generated = standardized_structure_from_smiles(fallback_smiles, size=size)
-                if generated is not None:
-                    return generated
+            # A curated PNG remains authoritative even when it is small.
+            # Replacing it with an unrelated SMILES would silently corrupt
+            # the scientific depiction; upscale it on an opaque white canvas.
             return normalize_structure_image(image, size=size)
     except Exception:
         return None
@@ -5758,10 +5757,8 @@ def load_external_structure_png_bytes(source_text: str, size=STRUCTURE_DETAIL_IM
         with urllib.request.urlopen(url, timeout=8, context=_supabase_ssl_context()) as response:
             raw = response.read()
         with Image.open(io.BytesIO(raw)) as image:
-            if fallback_smiles and max(image.size) < STRUCTURE_MIN_CRISP_ASSET_EDGE:
-                generated = standardized_structure_from_smiles(fallback_smiles, size=size)
-                if generated is not None:
-                    return pil_image_to_png_bytes(generated)
+            # Never silently substitute a downloaded/uploaded structure
+            # with an RDKit image based on an unverified structure string.
             normalized = normalize_structure_image(image, size=size)
             return pil_image_to_png_bytes(normalized)
     except Exception:
@@ -6807,10 +6804,9 @@ def render_compound_card(row, show_preview: bool = True, prefer_fast_asset: bool
                 is_external_url(str(source_value).strip()) or is_supabase_storage_reference(source_value)
             )
             source_is_generated_asset = source_value and is_generated_structure_reference(str(source_value).strip())
-            if prefer_fast_asset and source_is_remote_asset and not source_is_generated_asset:
-                safe_url = display_asset_url(source_value).replace('"', "&quot;")
-                st.image(safe_url, width="stretch")
-            else:
+            if source_value:
+                # Even fast cards must normalize the real PNG onto white and
+                # must never use unverified SMILES when the image is missing.
                 standardized_image = load_standardized_structure_source(
                     source_value,
                     size=STRUCTURE_THUMBNAIL_IMAGE_SIZE,
@@ -6818,20 +6814,24 @@ def render_compound_card(row, show_preview: bool = True, prefer_fast_asset: bool
                 )
                 if standardized_image is not None:
                     st.image(standardized_image, width="stretch")
-                elif source_is_remote_asset:
-                    safe_url = display_asset_url(source_value).replace('"', "&quot;")
-                    st.image(safe_url, width="stretch")
+                    if is_generated_structure_reference(source_value):
+                        st.caption("Computed from SMILES (unverified).")
                 else:
-                    structure_png = structure_smiles_png_bytes(
-                        first_structure_identifier(row.get("smiles"), row.get("inchi"), row.get("inchikey")),
-                        size=STRUCTURE_THUMBNAIL_IMAGE_SIZE,
+                    st.caption("Structure image temporarily unavailable.")
+            else:
+                st.caption("No curated image registered; computed depiction is unverified.")
+                structure_png = structure_smiles_png_bytes(
+                    first_structure_identifier(row.get("smiles"), row.get("inchi"), row.get("inchikey")),
+                    size=STRUCTURE_THUMBNAIL_IMAGE_SIZE,
+                )
+                if structure_png:
+                    st.image(structure_png, width="stretch")
+                else:
+                    structure_url = structure_smiles_image_url(
+                        first_structure_identifier(row.get("smiles"), row.get("inchi"), row.get("inchikey"))
                     )
-                    if structure_png:
-                        st.image(structure_png, width="stretch")
-                    else:
-                        structure_url = structure_smiles_image_url(first_structure_identifier(row.get("smiles"), row.get("inchi"), row.get("inchikey")))
-                        if structure_url:
-                            st.image(structure_url, width="stretch")
+                    if structure_url:
+                        st.image(structure_url, width="stretch")
     with info_col:
         st.markdown(
             f"""
@@ -9146,13 +9146,17 @@ def render_compound_structure_from_row(row_data, caption: str = "Structure", siz
         )
         if standardized_image is not None:
             st.image(standardized_image, caption=caption, width="stretch")
+            if is_generated_structure_reference(source_value):
+                st.caption("Unverified SMILES depiction — chemical identity has not been curator-verified.")
             return
-        if is_external_url(source_value) or is_supabase_storage_reference(source_value):
-            display_url = browser_displayable_asset_url(source_value)
-            if display_url:
-                st.image(display_url, caption=caption, width="stretch")
-                return
+        # Do not expose the raw/possibly transparent URL when normalization
+        # failed. Report the problem; never silently switch to SMILES.
+        # A referenced but inaccessible image must not be replaced with a
+        # potentially incorrect SMILES-derived structure.
+        st.warning("Registered structure image unavailable. Original depiction was not replaced by SMILES.")
+        return
     if fallback_structure:
+        st.caption("No curated image registered; depiction below is generated from unverified structure text.")
         structure_png = structure_smiles_png_bytes(fallback_structure, size=size)
         if structure_png:
             st.image(structure_png, caption=caption, width="stretch")
@@ -9295,13 +9299,15 @@ def show_compound_detail(compound_id):
             )
             if standardized_image is not None:
                 st.image(standardized_image, width="stretch")
+                if is_generated_structure_reference(structure_path):
+                    st.caption("This depiction was generated from SMILES; its structure is not yet curator-verified.")
             else:
-                render_structure_preview(
-                    first_structure_identifier(row_data.get("smiles"), row_data.get("inchi"), row_data.get("inchikey")),
-                    caption=None,
-                    size=STRUCTURE_DETAIL_IMAGE_SIZE,
+                st.warning(
+                    "Registered structure image could not be displayed. "
+                    "NPDB has withheld automatic SMILES fallback to avoid displaying a scientifically incorrect structure."
                 )
         else:
+            st.caption("No curated image registered; depiction below is generated from unverified structure text.")
             render_structure_preview(
                 first_structure_identifier(row_data.get("smiles"), row_data.get("inchi"), row_data.get("inchikey")),
                 caption=None,
