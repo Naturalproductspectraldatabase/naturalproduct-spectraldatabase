@@ -167,6 +167,14 @@ class WizardPersistenceTests(unittest.TestCase):
         for key in ("wizard_sample_code", "wizard_ftir_data", "wizard_hrms_data"):
             self.assertIn(key, source)
 
+    def test_hydration_only_runs_for_current_visible_step(self):
+        source = APP_PATH.read_text(encoding="utf-8")
+        marker = 'elif compound_page == "New Submission":'
+        region = source[source.index(marker):source.index(marker) + 2400]
+        self.assertIn("for key in WIZARD_STEP_FIELDS[wizard_step]:", region)
+        self.assertNotIn("for key in [", region)
+        self.assertLess(region.index('wizard_step = int('), region.index("hydrate_wizard_widget(key)"))
+
     def test_app_source_is_syntactically_valid_without_importing_app(self):
         ast.parse(APP_PATH.read_text(encoding="utf-8"), filename=str(APP_PATH))
 
