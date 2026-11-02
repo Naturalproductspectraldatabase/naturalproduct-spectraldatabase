@@ -12514,7 +12514,9 @@ def _supabase_request(method: str, path: str, query: dict | None = None, body=No
     base = get_supabase_url().rstrip("/")
     url = f"{base}{path}"
     if query:
-        query_text = urlencode(query, doseq=True, safe=",().:*+-")
+        # Never leave literal + in query timestamps: PostgREST interprets + as
+        # a space in URL queries, breaking optimistic-concurrency filters.
+        query_text = urlencode(query, doseq=True, safe=",().:*-")
         url = f"{url}?{query_text}"
     payload = None
     if body is not None:
