@@ -73,6 +73,20 @@ class DeterministicNMRProperties(unittest.TestCase):
                 self.assertAlmostEqual(y, v + offset, places=10)
                 self.assertAlmostEqual(distance, prior_distance, places=10)
 
+    def test_exact_boundary_survives_binary_roundoff(self):
+        self.assertEqual(
+            len(optimal_nmr_peak_matches([-0.3], [-0.32], 0.02)),
+            1,
+            "Inclusive tolerance must include exactly 0.02 ppm difference",
+        )
+
+    def test_materially_outside_boundary_remains_unmatched(self):
+        self.assertEqual(
+            optimal_nmr_peak_matches([-0.3], [-0.320001], 0.02),
+            [],
+            "Roundoff protection must not create a meaningful false match",
+        )
+
     def test_negative_delta_and_zero_tolerance(self):
         matched = optimal_nmr_peak_matches([-1.1, 0.0, 3.5],
                                            [-1.1, -1.1, 3.5], 0.0)
