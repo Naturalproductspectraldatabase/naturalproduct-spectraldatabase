@@ -6,6 +6,8 @@ Streamlit run, credential loading, database connection or network operation.
 import argparse
 import ast
 import json
+import hashlib
+import hmac
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -30,13 +32,28 @@ def probe(app):
         ns = dict(st=SimpleNamespace(session_state={
             'npdb_authenticated': role != 'unauthenticated',
             'npdb_username': 'synthetic_user', 'npdb_role': role,
+            'npdb_auth_mode': 'approved_users',
         }), cloud_backend_is_configured=lambda: False,
             use_supabase_backend=lambda: True,
             use_supabase_write_backend=lambda: True,
             use_local_read_backend=lambda: False,
             _supabase_request=request, record_audit_event=lambda *a: None,
             invalidate_cached_views=lambda: None)
-        functions(source, ['ensure_write_target_ready', 'supabase_delete_row',
+        available = {n.name for n in ast.parse(source).body if isinstance(n, ast.FunctionDef)}
+        if 'require_backend_permission' in available:
+            ns.update(hashlib=hashlib, hmac=hmac, json=json,
+                      load_approved_users=lambda: [dict(username='synthetic_user', role=role,
+                                                       password_hash='synthetic-only-hash')],
+                      load_approved_names=lambda: [], get_secret_setting=lambda *a: '',
+                      allow_plaintext_password_secrets=lambda: False,
+                      OWNER_EDITOR_USERNAME='synthetic_owner',
+                      normalize_login_slug=lambda v: str(v).lower())
+            functions(source, ['configured_session_identity', 'current_backend_role',
+                               'require_backend_permission'], ns)
+            identity = ns['configured_session_identity']()
+            if identity:
+                ns['st'].session_state['npdb_credential_revision'] = identity[1]
+        functions(source, ['ensure_write_target_ready' , 'supabase_delete_row',
                            'delete_compound_record'], ns)
         try:
             ns['delete_compound_record'](123456)
