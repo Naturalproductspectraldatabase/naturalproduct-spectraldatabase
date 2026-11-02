@@ -1,0 +1,66 @@
+name: NPDB isolated editor + asset security compatibility experiment
+
+on:
+  push:
+    branches: [ci/npdb-role-asset-crosspr-20261103]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cross-pr-compatibility:
+    name: Temporary merge PR20 and PR35 (not security clearance)
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - name: Fetch current QA revision, no credentials persisted
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          AUTH="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w 0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${AUTH}" fetch --no-tags origin refs/heads/qa/npdb-reviewed-integration-20261103
+          git checkout --detach FETCH_HEAD
+          git config user.name "NPDB disposable integration"
+          git config user.email "npdb-ci@users.noreply.github.com"
+      - name: Fetch exact candidate heads and merge only in temporary checkout
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          AUTH="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w 0)"
+          for number in 20 35; do
+            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${AUTH}" fetch --no-tags origin "pull/${number}/head:refs/remotes/pr-${number}"
+          done
+          test "$(git rev-parse refs/remotes/pr-20)" = "af134f3a7740e2300b589470c74c91f2f1b2053f"
+          test "$(git rev-parse refs/remotes/pr-35)" = "e2023defda4f525f52ca0b9ee25a7133b4e832e7"
+          git merge --no-ff --no-edit refs/remotes/pr-20
+          git merge --no-ff --no-edit refs/remotes/pr-35
+          git status --short
+          echo "Temporary merge succeeded. No push to QA or production was made."
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install synthetic test requirements
+        run: python -m pip install --disable-pip-version-check "pandas>=2.2,<3.1" "pillow>=10,<13" "streamlit==1.66.1" "plotly==7.1.0"
+      - name: Compile combined code
+        run: |
+          python -m py_compile NMR_Database_Tyas_GitHub_Upload/scripts/app.py
+          python -m compileall -q NMR_Database_Tyas_GitHub_Upload/scripts
+      - name: Run all synthetic regression tests on combined code
+        run: python -m unittest discover -s NMR_Database_Tyas_GitHub_Upload/tests -p 'test_*.py' -v
+      - name: Demonstrate existing write authorization blocker without remote writes
+        run: |
+          set +e
+          python NMR_Database_Tyas_GitHub_Upload/scripts/npdb_security_boundary_probe.py
+          status=$?
+          set -e
+          if [ "$status" -ne 1 ]; then
+            echo "::error::Authorization probe result changed: review exact behavior before any release."
+            exit 1
+          fi
+          echo "::warning::The fake-REST backend probe deliberately reports unauthorized DELETE paths. Passing this diagnostic job DOES NOT mean the backend is secure."
