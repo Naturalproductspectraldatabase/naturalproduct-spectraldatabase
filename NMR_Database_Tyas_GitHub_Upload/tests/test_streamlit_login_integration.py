@@ -82,5 +82,40 @@ class StreamlitLoginIntegrationTests(unittest.TestCase):
         self.assertEqual(self.app.session_state["npdb_username"], "synthetic_viewer")
 
 
+    def configure_multi_role_login(self):
+        def hash_password(password, salt):
+            digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 10000)
+            encoded = base64.urlsafe_b64encode(digest).decode().rstrip("=")
+            return f"pbkdf2_sha256$10000${salt}${encoded}"
+
+        self.app.secrets["NPDB_APPROVED_USERS"] = [
+            {"username": "npdb_tyas", "role": "owner", "password_hash": hash_password("test-owner-only", "qa-owner")},
+            {"username": "npdb_tjomori", "role": "editor", "password_hash": hash_password("test-mentor-only", "qa-mentor")},
+            {"username": "npdb_viewer", "role": "viewer", "password_hash": hash_password("test-viewer-only", "qa-viewer")},
+        ]
+        self.app.secrets["NPDB_READ_BACKEND"] = "local"
+
+    def test_explicitly_approved_mentor_editor_login_is_not_owner_login(self):
+        self.configure_multi_role_login()
+        self.app.run()
+        self.app.text_input[0].input("npdb_tjomori")
+        self.app.text_input[1].input("test-mentor-only")
+        self.app.button[0].click().run()
+        self.assertEqual(len(self.app.exception), 0)
+        self.assertTrue(self.app.session_state["npdb_authenticated"])
+        self.assertEqual(self.app.session_state["npdb_auth_mode"], "approved_users")
+        self.assertEqual(self.app.session_state["npdb_role"], "editor")
+        self.assertEqual(self.app.session_state["npdb_username"], "npdb_tjomori")
+
+    def test_explicit_viewer_login_stays_read_only(self):
+        self.configure_multi_role_login()
+        self.app.run()
+        self.app.text_input[0].input("npdb_viewer")
+        self.app.text_input[1].input("test-viewer-only")
+        self.app.button[0].click().run()
+        self.assertEqual(len(self.app.exception), 0)
+        self.assertEqual(self.app.session_state["npdb_role"], "viewer")
+
+
 if __name__ == "__main__":
     unittest.main()
