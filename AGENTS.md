@@ -67,3 +67,16 @@ NPDB is a research-oriented database for natural products, with an emphasis on m
 Recommended division of labor: ChatGPT coordinates requirements and reviews repository/Supabase evidence; Codex handles owner-approved local implementation and tests; Claude Code provides independent code review or a separate PR. These are roles, **not** automatic tool connections or delegated permissions. No assistant can assume another assistant has access to local folders, browser tabs, session history, credentials, or production dashboards.
 
 Before starting a new task, check open issues/PRs to avoid duplicate work. Update project instructions when architecture or approved operating procedures change, without embedding private information.
+
+## Owner-directed AI operation and activity logging policy (2026-11-02)
+
+**Read [NPDB_SECURITY_AND_AUDIT_POLICY.md](NPDB_SECURITY_AND_AUDIT_POLICY.md) before using any tool or changing a project resource.** The owner requires explicit approval for each distinct project-related operation, including private-resource reads. A bounded, enumerated approval covers only the authorized batch, never unrelated later actions. If a task unexpectedly demands additional access, new files/providers, irreversible effects, remote changes or a different approach, **STOP and request renewed consent**.
+
+- Explain before acting: agent/tool identity, target environment and exact files/tables, read/write/deploy category, expected effect, risk, backup/rollback, and verification.
+- After acting, disclose what was actually done, outcomes and unresolved risks, and identify any GitHub branch/PR and audit/approval reference. Never claim that a notification or audit exists until tested.
+- Documentation in this public repository is **not a technical permission boundary**. Configure restrictive agent sandbox/approval modes, provider access scopes, protected branches, and deployment/manual review gates independently.
+- In NPDB itself, plan owner-only, privacy-preserving audit trails for login/logout/failure, viewing/search, downloads, writes, permission denials, bulk operations and privileged agent/infrastructure actions. Record actor identity, UTC event time, resource/action, outcome and approval reference; redact tokens, private values and signed URLs. Do not capture search contents or raw scientific records indiscriminately.
+- The existing Supabase `audit_events` table and `record_audit_event` code are only a partial starting point, not comprehensive surveillance. Read-only checks on 2026-11-02 found write events only and a logging-history gap; no automated anomaly alerts have been demonstrated.
+- Preserve an honest division of responsibilities: the owner decides; agents implement only the approved scope; provider-native logs and independent controls are needed for direct Supabase, GitHub, Streamlit and machine activity outside the app.
+- Scope this phase to **draft documentation only**. Do not independently implement audit schema changes, enable agents/alerts, change permissions or deploy from this policy.
+
