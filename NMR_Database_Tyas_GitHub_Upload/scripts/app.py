@@ -1591,21 +1591,40 @@ if st.session_state.pop("npdb_show_workspace_loading", False):
 
 
 def is_owner_editor() -> bool:
-    current_username = normalize_login_slug(st.session_state.get("npdb_username", ""))
-    if current_username != normalize_login_slug(OWNER_EDITOR_USERNAME):
+    """Allow only explicitly configured, authenticated owner/editor accounts.
+
+    An account's role must match the server-side approved-users configuration,
+    not merely a value left in Streamlit session_state. Legacy single-user
+    installations still allow the configured owner account to edit.
+    """
+    if not st.session_state.get("npdb_authenticated"):
         return False
-
+    username = normalize_login_slug(st.session_state.get("npdb_username", ""))
+    if not username:
+        return False
     role = str(st.session_state.get("npdb_role", "")).strip().lower()
-    if role in OWNER_EDITOR_ROLES:
-        return True
-
     auth_mode = str(st.session_state.get("npdb_auth_mode", "")).strip().lower()
-    expected_username = get_secret_setting("NPDB_ACCESS_USERNAME", "access_username")
-    return (
-        auth_mode == "single_user"
-        and bool(expected_username)
-        and normalize_login_slug(expected_username) == normalize_login_slug(OWNER_EDITOR_USERNAME)
-    )
+    if auth_mode == "approved_users":
+        for user in load_approved_users():
+            approved_username = normalize_login_slug(user.get("username", ""))
+            approved_role = str(user.get("role", "viewer")).strip().lower()
+            if (
+                approved_username == username
+                and approved_role in OWNER_EDITOR_ROLES
+                and role == approved_role
+            ):
+                return True
+        return False
+    if auth_mode == "single_user":
+        expected_username = normalize_login_slug(
+            get_secret_setting("NPDB_ACCESS_USERNAME", "access_username")
+        )
+        return (
+            bool(expected_username)
+            and username == expected_username
+            and username == normalize_login_slug(OWNER_EDITOR_USERNAME)
+        )
+    return False
 
 
 def can_edit_database() -> bool:
