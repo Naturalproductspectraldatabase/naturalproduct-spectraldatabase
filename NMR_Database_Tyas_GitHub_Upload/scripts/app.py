@@ -6500,6 +6500,10 @@ def render_sidebar_workspace_summary(active_section: str, all_compounds_df: pd.D
 def render_sidebar_navigation():
     current_section = st.session_state.get("nav_section", "Dashboard")
     current_compound_page = st.session_state.get("compound_page", "Browse Record")
+    # The dummy-only workspaces must not make backend health requests merely
+    # to decide whether to show existing data-writing navigation links.
+    demo_nav_mode = current_section in QUALITY_DEMO_SECTIONS
+    workflow_editable = not demo_nav_mode and can_edit_database()
 
     for group_title, items in SIDEBAR_NAV_GROUPS:
         if group_title == "Owner Workspace" and not is_owner_editor():
@@ -6515,7 +6519,7 @@ def render_sidebar_navigation():
             item for item in items
             if not (
                 item.get("compound_page")
-                and not can_edit_database()
+                and not workflow_editable
                 and item.get("compound_page") != "Browse Record"
             )
         ]
