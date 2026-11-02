@@ -9731,7 +9731,9 @@ def show_search_page(all_compounds_df):
             with save_col:
                 if st.button("Save Structure IDs to Selected Compound", width="stretch", key="save_structure_ids_from_query"):
                     target_compound_id = int(selected_structure_label.split(" - ")[0])
-                    saved, save_message = save_structure_query_to_compound(target_compound_id, query_smiles)
+                    original_structure_row = target_df.loc[target_df["id"].astype(int) == target_compound_id].iloc[0].to_dict()
+                    saved, save_message = save_structure_query_to_compound(
+                        target_compound_id, query_smiles, original_row=original_structure_row)
                     if saved:
                         st.success(save_message)
                         st.rerun()
@@ -14010,32 +14012,57 @@ def _auto_structure_image_path(compound_id: int, smiles: str = "", inchi: str = 
     return ""
 
 
-def save_structure_query_to_compound(compound_id: int, query_text: str) -> tuple[bool, str]:
+def save_structure_query_to_compound(compound_id: int, query_text: str, *, original_row=None) -> tuple[bool, str]:
     ensure_write_target_ready()
+    conflict_message = "The compound changed or is unavailable. Reload it and review the current structure identifiers before saving."
+    if original_row is None:
+        return False, "Reopen the compound to capture its original revision before saving structure identifiers."
+    try:
+        if isinstance(compound_id, bool) or int(original_row.get("id")) != int(compound_id):
+            return False, conflict_message
+    except (ValueError, TypeError, OverflowError):
+        return False, conflict_message
+    expected = maybe_blank(original_row.get("updated_at"))
+    if not expected:
+        return False, "The compound has no original revision. Reload it before saving structure identifiers."
+    if use_supabase_write_backend():
+        try:
+            verify_compound_editor_revision(compound_id, expected)
+        except RuntimeError:
+            return False, conflict_message
     identifiers = derive_structure_identifiers(query_text)
     if not identifiers:
         return False, "The current query could not be converted into searchable structure identifiers."
-    structure_image_path = _save_generated_structure_image(compound_id, identifiers.get("mol"))
-    payload = {
-        "smiles": identifiers.get("smiles"),
-        "inchi": identifiers.get("inchi"),
-        "inchikey": identifiers.get("inchikey"),
-        "updated_at": datetime.now(UTC).isoformat(),
-    }
-    if structure_image_path:
-        payload["structure_image_path"] = structure_image_path
+    # Identifier curation preserves the registered drawing and its provenance.
+    # Rendering a fallback preview is separate from writing scientific assets.
+    payload = {field: identifiers.get(field) for field in ("smiles", "inchi", "inchikey")
+               if maybe_blank(original_row.get(field)) != maybe_blank(identifiers.get(field))}
+    if not payload:
+        return True, "Structure identifiers already match this compound."
+    payload["updated_at"] = datetime.now(UTC).isoformat()
     if use_supabase_write_backend():
-        supabase_update_row("compounds", compound_id, payload)
-    if use_local_read_backend():
-        conn = get_connection()
         try:
-            cursor = conn.cursor()
-            assignments = ", ".join(f"{key} = ?" for key in payload.keys())
-            values = list(payload.values()) + [compound_id]
-            cursor.execute(f"UPDATE compounds SET {assignments} WHERE id = ?", values)
-            conn.commit()
-        finally:
-            conn.close()
+            supabase_update_row("compounds", compound_id, payload, expected_updated_at=expected)
+        except RuntimeError:
+            return False, conflict_message
+        invalidate_cached_views()
+        return True, f"Structure identifiers were saved to compound ID {compound_id}."
+    if not use_local_read_backend():
+        return False, "No writable local database is available."
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
+        assignments = ", ".join(f"{key} = ?" for key in payload)
+        values = list(payload.values()) + [compound_id, expected]
+        cursor.execute(f"UPDATE compounds SET {assignments} WHERE id = ? AND updated_at = ?", values)
+        if cursor.rowcount != 1:
+            conn.rollback()
+            return False, conflict_message
+        conn.commit()
+    finally:
+        conn.close()
+    record_audit_event("update", "compounds", compound_id, "sqlite", payload)
     invalidate_cached_views()
     return True, f"Structure identifiers were saved to compound ID {compound_id}."
 
