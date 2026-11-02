@@ -40,6 +40,8 @@ def zip_schema_report(payload: bytes) -> dict:
             raise ValueError("ZIP exceeds safe decompressed size")
         formats = Counter()
         csv_headers = []
+        ambiguous_csv_headers = 0
+        csv_field_counts = Counter()
         text_field_labels = Counter()
         for info in infos:
             suffix = PurePosixPath(info.filename).suffix.lower() or "(none)"
@@ -70,19 +72,32 @@ def zip_schema_report(payload: bytes) -> dict:
                 fields = next(csv.reader([header]), [])
                 if len(fields) > MAX_FIELDS:
                     raise ValueError("unexpectedly many CSV columns")
-                # Restrict to standard field names, to avoid accidental data in
-                # logs from a malformed CSV whose first row is actual content.
-                names = []
-                for field in fields:
-                    val = field.strip()
-                    if len(val) > 90 or not val or not all(c.isalnum() or c in "_ -()./[]" for c in val):
-                        raise ValueError("non-schema-looking CSV header; not printing it")
-                    names.append(val)
-                csv_headers.append(names)
+                csv_field_counts[len(fields)] += 1
+                # A source CSV may have no header row. In that case, do NOT
+                # publish potential actual records through public CI logs.
+                names = [field.strip() for field in fields]
+                safe_chars = all(
+                    0 < len(val) <= 90
+                    and all(ch.isalnum() or ch in "_ -()./[]%:#±δΔ" for ch in val)
+                    for val in names
+                )
+                known = any(
+                    any(marker in val.lower() for marker in
+                        ("compound", "nmr", "ppm", "shift", "atom", "spectrum",
+                         "accession", "assignment", "solvent", "np_id"))
+                    for val in names
+                )
+                if safe_chars and known:
+                    csv_headers.append(names)
+                else:
+                    ambiguous_csv_headers += 1
         return {
             "files_total": len(infos),
             "file_extensions": dict(sorted(formats.items())),
-            "csv_files": len(csv_headers),
+            "csv_files": sum(csv_field_counts.values()),
+            "csv_header_candidates": len(csv_headers),
+            "ambiguous_csv_first_rows": ambiguous_csv_headers,
+            "csv_field_count_histogram": dict(sorted(csv_field_counts.items())),
             "txt_field_labels": dict(text_field_labels.most_common(40)),
             "unique_csv_headers": [
                 list(v) for v in sorted({tuple(v) for v in csv_headers})
