@@ -3750,6 +3750,42 @@ div[data-baseweb="select"] {
     overflow-wrap: anywhere;
 }
 
+/* Home visual rhythm: clear section boundaries, matched action alignment,
+   and comfortable card-to-button spacing. No global widget overrides. */
+.dashboard-home-section-gap {
+    height: clamp(1rem, 1.8vw, 1.5rem);
+}
+
+.st-key-dashboard_search_action {
+    padding-top: 1.35rem;
+}
+
+.dashboard-workspace-card .dashboard-workspace-title {
+    margin-bottom: 0.55rem;
+    line-height: 1.35;
+}
+
+.dashboard-workspace-card .dashboard-workspace-copy {
+    line-height: 1.5;
+}
+
+.dashboard-workspace-card .dashboard-workspace-copy + .dashboard-workspace-copy {
+    margin-top: 0.5rem;
+}
+
+.st-key-dashboard_workspace_cta {
+    margin-top: 0.85rem;
+}
+
+@media (max-width: 900px) {
+    .st-key-dashboard_search_action {
+        padding-top: 0.4rem;
+    }
+    .dashboard-home-section-gap {
+        height: 0.8rem;
+    }
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -6162,7 +6198,9 @@ def render_dashboard_pie_chart(df: pd.DataFrame, names_col: str, values_col: str
         textfont=dict(size=11, color="#F7FBFF"),
         insidetextorientation="auto",
         sort=False,
-        pull=[0.025] + [0] * max(len(chart_df) - 1, 0),
+        # A neutral scientific distribution chart is a complete, centered ring.
+        # The former 2.5% offset made the first segment protrude unnecessarily.
+        pull=0,
         marker=dict(line=dict(color="rgba(7,17,29,0.95)", width=2)),
         hovertemplate=f"%{{label}}<br>%{{value}} {values_col.lower()}<br>%{{percent}}<extra></extra>",
     )
@@ -6575,12 +6613,15 @@ def render_dashboard_showcase(
             unsafe_allow_html=True,
         )
     with search_button_col:
-        st.write("")
-        st.write("")
-        if st.button("Start Searching ->", key="dashboard_start_search", width="stretch", type="primary", icon=":material/search:"):
-            navigate_internal("Search & Match")
-            st.rerun()
+        # Use a styled action container instead of two empty st.write() calls;
+        # the previous alignment varied unpredictably with browser zoom.
+        with st.container(key="dashboard_search_action"):
+            if st.button("Start Searching ->", key="dashboard_start_search", width="stretch", type="primary", icon=":material/search:"):
+                navigate_internal("Search & Match")
+                st.rerun()
 
+    # Separate the search affordance from the next functional section.
+    st.markdown('<div class="dashboard-home-section-gap" aria-hidden="true"></div>', unsafe_allow_html=True)
     workflow_col, workspace_col = st.columns([2.18, 0.82], gap="medium")
     with workflow_col:
         user_can_edit = can_edit_database()
