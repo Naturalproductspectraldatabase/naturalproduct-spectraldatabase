@@ -7,7 +7,7 @@ Sorted one-dimensional matching admits an optimal non-crossing assignment:
 dynamic programming uses O(len(query)*len(reference)) time and memory.
 This is a numeric matching primitive, not chemical structure verification.
 """
-from math import isfinite
+from math import isclose, isfinite
 
 
 def optimal_nmr_peak_matches(query_peaks, reference_peaks, tolerance):
@@ -54,7 +54,12 @@ def optimal_nmr_peak_matches(query_peaks, reference_peaks, tolerance):
                 best_count, best_cost, choice = c, cost, 1
 
             difference = abs(query[i - 1] - reference[j - 1])
-            if difference <= limit:
+            # Treat the tolerance endpoint as inclusive in decimal NMR
+            # shifts. Binary floats can encode |-0.30 - (-0.32)| slightly
+            # above 0.02; allow only ~1e-12 ppm rounding slop.
+            if difference <= limit or isclose(
+                difference, limit, rel_tol=1e-12, abs_tol=1e-12
+            ):
                 c = counts[i - 1][j - 1] + 1
                 cost = costs[i - 1][j - 1] + difference
                 if c > best_count or (c == best_count and cost <= best_cost):
