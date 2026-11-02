@@ -1,0 +1,43 @@
+name: NPDB offline regression checks
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npdb-offline-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offline-regression:
+    name: Python ${{ matrix.python-version }} / syntax & unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - name: Checkout exact revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies for offline AST/data tests
+        run: python -m pip install --disable-pip-version-check "pandas>=2.2,<3.1" "pillow>=10,<13"
+      - name: Compile application and helper modules
+        run: |
+          python -m py_compile NMR_Database_Tyas_GitHub_Upload/scripts/app.py
+          python -m compileall -q NMR_Database_Tyas_GitHub_Upload/scripts
+      - name: Run offline regression test suite
+        run: |
+          python -m unittest discover -s NMR_Database_Tyas_GitHub_Upload/tests -p 'test_*.py' -v
