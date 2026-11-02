@@ -94,8 +94,8 @@ class StructureImageIntegrityTests(unittest.TestCase):
         loader = isolated("load_standardized_structure_image", ns)
         with tempfile.TemporaryDirectory() as directory:
             p = Path(directory) / "curated.png"
-            im = Image.new("RGB", (120, 60), (250, 250, 250))
-            im.putpixel((60, 30), (20, 50, 80))
+            # Solid colors survive resampling deterministically.
+            im = Image.new("RGB", (120, 60), (20, 50, 80))
             im.save(p)
             actual = loader(p, size=(300, 240), fallback_smiles="INCORRECT_DUMMY_SMILES")
             self.assertEqual(actual.size, (300, 240))
@@ -124,7 +124,9 @@ class StructureImageIntegrityTests(unittest.TestCase):
         ns = self.ns_images()
         normalize = ns["normalize_structure_image"]
         transparent = Image.new("RGBA", (100, 100), (0, 0, 0, 0))
-        transparent.putpixel((50, 50), (0, 0, 0, 255))
+        for px in range(40, 61):
+            for py in range(40, 61):
+                transparent.putpixel((px, py), (0, 0, 0, 255))
         normalized = normalize(transparent, size=(200, 200))
         self.assertEqual(normalized.mode, "RGB")
         self.assertEqual(normalized.getpixel((0, 0)), (255, 255, 255))
