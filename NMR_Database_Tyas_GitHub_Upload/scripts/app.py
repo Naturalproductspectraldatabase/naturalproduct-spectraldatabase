@@ -9147,7 +9147,7 @@ def render_compound_structure_from_row(row_data, caption: str = "Structure", siz
         if standardized_image is not None:
             st.image(standardized_image, caption=caption, width="stretch")
             if is_generated_structure_reference(source_value):
-                st.caption("Computed from SMILES; chemical identity has not been curator-verified.")
+                st.caption("Unverified SMILES depiction — chemical identity has not been curator-verified.")
             return
         # Do not expose the raw/possibly transparent URL when normalization
         # failed. Report the problem; never silently switch to SMILES.
