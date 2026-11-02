@@ -167,7 +167,7 @@ class StructureImageIntegrityTests(unittest.TestCase):
         render = isolated("render_compound_structure_from_row", ns)
         render({"structure_image_path": "storage://structures/generated/dummy.png", "smiles": "CCO"})
         self.assertEqual(len(ns["st"].images), 1)
-        self.assertTrue(any("unverified" in x for x in ns["st"].captions))
+        self.assertTrue(any("unverified" in x.lower() for x in ns["st"].captions))
 
     def test_missing_image_path_marks_computed_depiction_unverified(self):
         ns = self.ns_images()
@@ -179,7 +179,7 @@ class StructureImageIntegrityTests(unittest.TestCase):
         render = isolated("render_compound_structure_from_row", ns)
         render({"structure_image_path": "", "smiles": "CCO"})
         self.assertEqual(len(ns["st"].images), 1)
-        self.assertTrue(any("unverified" in x for x in ns["st"].captions))
+        self.assertTrue(any("unverified" in x.lower() for x in ns["st"].captions))
 
     def test_compound_detail_never_silently_falls_back_for_missing_registered_image(self):
         tree = ast.parse(APP.read_text(encoding="utf-8"))
