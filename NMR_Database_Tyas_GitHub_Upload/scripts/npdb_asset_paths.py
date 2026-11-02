@@ -172,3 +172,58 @@ def write_local_asset(data, *, root, filename):
     finally:
         for fd in reversed(descriptors):
             os.close(fd)
+
+
+def validate_https_asset_url(url, *, allowed_hosts=None):
+    """Validate a browser URL, or an exact trusted-host server fetch URL."""
+    import ipaddress
+    from urllib.parse import urlsplit
+    try:
+        if not isinstance(url, str) or any(ord(c) < 33 for c in url) or '\\' in url:
+            _deny()
+        parsed = urlsplit(url)
+        host = parsed.hostname
+        if (parsed.scheme != 'https' or not host or parsed.username is not None
+                or parsed.password is not None or parsed.port not in (None, 443)
+                or host == 'localhost' or host.endswith(('.localhost', '.local'))):
+            _deny()
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            address = None
+        if address is not None and not address.is_global:
+            _deny()
+        if allowed_hosts is not None and host.lower() not in {h.lower() for h in allowed_hosts if h}:
+            _deny()
+        return url
+    except (TypeError, ValueError):
+        _deny()
+
+
+def read_https_asset(url, *, allowed_hosts, max_bytes):
+    """Bounded TLS read with no proxy and trusted-host checks on every redirect.
+
+    Hosts come only from server configuration and a fixed public-service list.
+    Arbitrary record URLs may remain browser links; they cannot become server
+    requests. No authentication headers/cookies are attached to this fetch.
+    """
+    import urllib.request
+    if type(max_bytes) is not int or max_bytes < 1:
+        _deny()
+    validate_https_asset_url(url, allowed_hosts=allowed_hosts)
+
+    class TrustedRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            validate_https_asset_url(newurl, allowed_hosts=allowed_hosts)
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+    try:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), TrustedRedirect())
+        with opener.open(url, timeout=15) as response:
+            validate_https_asset_url(response.geturl(), allowed_hosts=allowed_hosts)
+            data = response.read(max_bytes + 1)
+            if len(data) > max_bytes:
+                _deny()
+            return data
+    except Exception:
+        _deny()

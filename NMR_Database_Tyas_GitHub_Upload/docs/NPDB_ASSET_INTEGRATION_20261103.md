@@ -18,9 +18,8 @@ hardlinks are rejected, including contained symlinks. Reads are bounded to
 64 MiB, media signatures/decoding are checked, and images are limited to 40 million
 pixels. Opaque .fid/.mnova are download-only; ZIP files are never extracted.
 Uploads use the same types/limits and exclusive, symlink-free file creation;
-curated files are never overwritten. No asset bytes are cached. Signed remote
-fetches are size-bounded; remote URL/authorization policy remains separately
-reviewed with backend permissions, and this PR does not prove remote SSRF safety.
+curated files are never overwritten. No asset bytes are cached. Remote fetches use the separately validated HTTPS/redirect policy below.
+Current-account URL authorization is implemented in companion #39.
 
 Existing records and citations are unchanged. Legitimate out-of-root paths,
 symlinked files, unrecognized formats, or files over the limit need private
@@ -45,3 +44,13 @@ readers is not a safe production rollback: disable affected attachment previews
 and downloads until a corrected implementation passes tests. No stored data is
 changed, so no data restoration is required. Keep #22 open for independent review
 and remote authorization checks; keep #14 draft for #24 and browser acceptance.
+
+HTTPS follow-up: server fetches now require HTTPS, port 443, no userinfo and an
+exact trusted hostname (configured Supabase host or fixed NIH/Google Drive hosts).
+Redirects revalidate that policy before following; local/private IP literals,
+file/HTTP/FTP schemes, arbitrary hosts and environment proxies are blocked.
+Remote bodies are bounded and media validated. Other legitimate HTTPS references
+remain browser links; no metadata or remote bytes are relocated. Public legacy
+Storage URLs are signed privately or remain unavailable, with no unsigned fallback.
+This narrows compatibility: unlisted external providers need deliberate review
+before server-side preview/export. Signature authorization remains in companion #39.

@@ -31,7 +31,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from npdb_asset_paths import AssetAccessError, read_local_asset, validate_asset_content, write_local_asset
+from npdb_asset_paths import AssetAccessError, read_local_asset, validate_asset_content, write_local_asset, validate_https_asset_url, read_https_asset
 
 try:
     from PIL import Image, ImageOps
@@ -5299,8 +5299,7 @@ def is_external_url(value) -> bool:
 
 
 def is_google_drive_url(value) -> bool:
-    text = maybe_blank(value).lower()
-    return "drive.google.com" in text or "docs.google.com" in text
+    return urlparse(maybe_blank(value)).hostname in {"drive.google.com", "docs.google.com"}
 
 
 def extract_google_drive_file_id(value) -> str:
@@ -5406,10 +5405,12 @@ def display_asset_url(value) -> str:
     text = maybe_blank(value)
     reference = parse_supabase_storage_reference(text)
     if not reference:
-        return text
+        try:
+            return validate_https_asset_url(text)
+        except AssetAccessError:
+            return ""
     bucket, object_path = reference
-    signed_url = signed_supabase_storage_url(bucket, object_path)
-    return signed_url or text
+    return signed_supabase_storage_url(bucket, object_path)
 
 
 def browser_displayable_asset_url(value) -> str:
@@ -5456,6 +5457,25 @@ def read_scientific_asset(source, kind="attachment"):
                             max_bytes=LOCAL_ASSET_MAX_BYTES, allowed_suffixes=suffixes)
     validate_asset_content(data, Path(source).suffix)
     return data
+
+
+def read_remote_scientific_asset(source, *, image_only=False):
+    url = display_asset_url(source)
+    hosts = {"pubchem.ncbi.nlm.nih.gov", "cactus.nci.nih.gov", "drive.google.com",
+             "docs.google.com", "drive.usercontent.google.com", urlparse(get_supabase_url()).hostname}
+    data = read_https_asset(url, allowed_hosts=hosts, max_bytes=LOCAL_ASSET_MAX_BYTES)
+    suffix = Path(urlparse(source).path).suffix.lower()
+    if image_only or not suffix:
+        if Image is None:
+            raise AssetAccessError("Asset type is not permitted.")
+        with Image.open(io.BytesIO(data)) as image:
+            suffix = {"PNG": ".png", "JPEG": ".jpg", "WEBP": ".webp", "GIF": ".gif",
+                      "TIFF": ".tiff"}.get(image.format, "")
+    suffixes = LOCAL_IMAGE_SUFFIXES if image_only else LOCAL_SPECTRUM_SUFFIXES
+    if suffix not in suffixes:
+        raise AssetAccessError("Asset type is not permitted.")
+    validate_asset_content(data, suffix)
+    return data, suffix
 
 
 def local_asset_available(source, kind="attachment"):
@@ -5789,14 +5809,8 @@ def load_external_structure_png_bytes(source_text: str, size=STRUCTURE_DETAIL_IM
     _ = renderer_version
     if Image is None:
         return b""
-    url = display_asset_url(source_text)
-    if not url:
-        return b""
     try:
-        with urllib.request.urlopen(url, timeout=8, context=_supabase_ssl_context()) as response:
-            raw = response.read(LOCAL_ASSET_MAX_BYTES + 1)
-        if len(raw) > LOCAL_ASSET_MAX_BYTES:
-            return b""
+        raw, _ = read_remote_scientific_asset(source_text, image_only=True)
         with Image.open(io.BytesIO(raw)) as image:
             # Never silently substitute a downloaded/uploaded structure
             # with an RDKit image based on an unverified structure string.
@@ -8724,13 +8738,7 @@ def _asset_bytes_from_source(source_value: str, kind="attachment") -> tuple[byte
         return b"", ""
     try:
         if is_external_url(source_text) or is_supabase_storage_reference(source_text):
-            with urllib.request.urlopen(display_asset_url(source_text), timeout=30, context=_supabase_ssl_context()) as response:
-                data = response.read(LOCAL_ASSET_MAX_BYTES + 1)
-                if len(data) > LOCAL_ASSET_MAX_BYTES:
-                    return b"", ""
-                suffix = Path(urlparse(source_text).path).suffix or mimetypes.guess_extension(response.headers.get_content_type()) or ".bin"
-                validate_asset_content(data, suffix)
-                return data, suffix
+            return read_remote_scientific_asset(source_text, image_only=(kind == "structure"))
         return read_scientific_asset(source_text, kind), Path(source_text).suffix.lower()
     except Exception:
         return b"", ""

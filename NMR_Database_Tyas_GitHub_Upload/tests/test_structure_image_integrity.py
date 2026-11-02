@@ -116,6 +116,7 @@ class StructureImageIntegrityTests(unittest.TestCase):
         ns["urllib"] = types.SimpleNamespace(request=opener)
         ns["display_asset_url"] = lambda text: "https://test.invalid/test.png"
         ns["_supabase_ssl_context"] = lambda: None
+        ns["read_remote_scientific_asset"] = lambda *a, **k: (opener.png, ".png")
         loader = isolated("load_external_structure_png_bytes", ns)
         data = loader(
             "storage://structures/curated_structures/compound_1/test.png",
@@ -125,7 +126,7 @@ class StructureImageIntegrityTests(unittest.TestCase):
         with Image.open(io.BytesIO(data)) as result:
             self.assertEqual(result.size, (200, 200))
             self.assertEqual(result.getpixel((100, 100)), (65, 140, 10))
-        self.assertEqual(opener.requested_urls, ["https://test.invalid/test.png"])
+        self.assertEqual(opener.requested_urls, [])  # Transport is exercised by remote security tests.
 
     def test_transparent_png_is_composited_on_opaque_white(self):
         ns = self.ns_images()
