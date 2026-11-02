@@ -116,6 +116,33 @@ class StreamlitLoginIntegrationTests(unittest.TestCase):
         self.assertEqual(len(self.app.exception), 0)
         self.assertEqual(self.app.session_state["npdb_role"], "viewer")
 
+    def test_rotated_single_user_password_invalidates_existing_session(self):
+        self.configure_login()
+        self.app.run()
+        self.app.text_input[0].input("synthetic_viewer")
+        self.app.text_input[1].input("synthetic-test-password")
+        self.app.button[0].click().run()
+        self.assertTrue(self.app.session_state["npdb_authenticated"])
+        self.app.secrets["NPDB_ACCESS_PASSWORD_HASH"] = "pbkdf2_sha256$10000$rotated$synthetic"
+        self.app.run()
+        self.assertEqual(len(self.app.exception), 0)
+        self.assertFalse(self.app.session_state["npdb_authenticated"])
+        self.assertEqual([field.label for field in self.app.text_input], ["Username", "Password"])
+
+    def test_revoked_editor_session_returns_to_login_form(self):
+        self.configure_multi_role_login()
+        self.app.run()
+        self.app.text_input[0].input("npdb_tjomori")
+        self.app.text_input[1].input("test-mentor-only")
+        self.app.button[0].click().run()
+        self.assertTrue(self.app.session_state["npdb_authenticated"])
+        self.app.secrets["NPDB_APPROVED_USERS"] = [
+            user for user in self.app.secrets["NPDB_APPROVED_USERS"] if user["username"] != "npdb_tjomori"]
+        self.app.run()
+        self.assertEqual(len(self.app.exception), 0)
+        self.assertFalse(self.app.session_state["npdb_authenticated"])
+        self.assertEqual([field.label for field in self.app.text_input], ["Username", "Password"])
+
 
 if __name__ == "__main__":
     unittest.main()

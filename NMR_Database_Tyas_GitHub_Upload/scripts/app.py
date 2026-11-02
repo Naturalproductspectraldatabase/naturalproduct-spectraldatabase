@@ -973,6 +973,76 @@ def is_access_gate_enabled() -> bool:
     )
 
 
+def configured_session_identity():
+    """Resolve the session against current server configuration on every action."""
+    username = str(st.session_state.get("npdb_username", "")).strip()
+    mode = st.session_state.get("npdb_auth_mode", "")
+    if not username:
+        return None
+    users = load_approved_users()
+    if mode == "approved_users":
+        matches = [u for u in users if u.get("username") == username]
+        if len(matches) != 1:
+            return None
+        user = matches[0]
+        role = str(user.get("role", "viewer")).strip().lower()
+        if role != str(st.session_state.get("npdb_role", "")).strip().lower():
+            return None
+        credential = {"hash": user.get("password_hash", ""), "plain": user.get("password", "")}
+    elif mode == "single_user" and not users and not load_approved_names():
+        expected = get_secret_setting("NPDB_ACCESS_USERNAME", "access_username")
+        if not expected or username != expected:
+            return None
+        role = "owner" if username == OWNER_EDITOR_USERNAME else "viewer"
+        credential = {"hash": get_secret_setting("NPDB_ACCESS_PASSWORD_HASH", "access_password_hash"),
+                      "plain": get_secret_setting("NPDB_ACCESS_PASSWORD", "access_password") if allow_plaintext_password_secrets() else ""}
+    elif mode == "approved_names" and not users:
+        names = load_approved_names()
+        if not username.lower().startswith("npdb_") or normalize_login_slug(username[5:]) not in {normalize_login_slug(n) for n in names}:
+            return None
+        role = "viewer"
+        credential = {"hash": get_secret_setting("NPDB_APPROVED_PASSWORD_HASH", "approved_password_hash"),
+                      "plain": get_secret_setting("NPDB_APPROVED_PASSWORD", "approved_password") if allow_plaintext_password_secrets() else ""}
+    else:
+        return None
+    if not any(credential.values()):
+        return None
+    revision = hashlib.sha256(json.dumps([username, mode, role, credential], sort_keys=True).encode()).hexdigest()
+    return role, revision
+
+
+def current_backend_role():
+    if not st.session_state.get("npdb_authenticated"):
+        return ""
+    identity = configured_session_identity()
+    if identity is None or not hmac.compare_digest(identity[1], str(st.session_state.get("npdb_credential_revision", ""))):
+        return ""
+    return identity[0]
+
+
+def is_backend_owner():
+    return current_backend_role() in {"owner", "owner_editor", "admin"}
+
+
+def require_backend_permission(action, table=None, row=None):
+    tables = {"compounds", "proton_nmr", "carbon_nmr", "spectra_files", "bioactivity_records",
+              "specimens", "specimen_compounds", "specimen_1h_extracts"}
+    if table is not None and table not in tables:
+        raise PermissionError("This action is not permitted for this account.")
+    role = current_backend_role()
+    owner = role in {"owner", "owner_editor", "admin"}
+    if action == "read" and role in {"viewer", "approved-viewer", "editor", "owner", "owner_editor", "admin"}:
+        return
+    if action in {"delete", "admin", "approve"}:
+        if owner:
+            return
+    elif action == "curate" and (owner or role == "editor"):
+        if not owner and row and str(row.get("curation_status", "")).lower() in {"curated", "reviewed", "approved", "published"}:
+            raise PermissionError("Record approval requires an owner account.")
+        return
+    raise PermissionError("This action is not permitted for this account.")
+
+
 def verify_access_gate():
     # Fail closed: a missing or malformed Streamlit secret must never
     # silently expose the compound database without authentication.
@@ -981,7 +1051,9 @@ def verify_access_gate():
         st.stop()
 
     if st.session_state.get("npdb_authenticated"):
-        return
+        if current_backend_role():
+            return
+        st.session_state["npdb_authenticated"] = False
 
     expected_username = get_secret_setting("NPDB_ACCESS_USERNAME", "access_username")
     expected_password = get_secret_setting("NPDB_ACCESS_PASSWORD", "access_password")
@@ -1463,7 +1535,7 @@ def verify_access_gate():
                     matched_role = user.get("role", "viewer")
                     matched_auth_mode = "approved_users"
                     break
-        elif approved_names and approved_password:
+        elif approved_names and (approved_password_hash or approved_password):
             submitted_username = str(username).strip() if username is not None else ""
             if submitted_username.lower().startswith("npdb_"):
                 submitted_name = submitted_username[5:]
@@ -1493,6 +1565,8 @@ def verify_access_gate():
             st.session_state["npdb_username"] = username.strip()
             st.session_state["npdb_role"] = matched_role
             st.session_state["npdb_auth_mode"] = matched_auth_mode
+            identity = configured_session_identity()
+            st.session_state["npdb_credential_revision"] = identity[1] if identity else ""
             st.session_state["npdb_remember_requested"] = bool(remember_me)
             st.session_state["npdb_login_failures"] = 0
             st.session_state["npdb_login_locked_until"] = 0.0
@@ -1591,40 +1665,7 @@ if st.session_state.pop("npdb_show_workspace_loading", False):
 
 
 def is_owner_editor() -> bool:
-    """Allow only explicitly configured, authenticated owner/editor accounts.
-
-    An account's role must match the server-side approved-users configuration,
-    not merely a value left in Streamlit session_state. Legacy single-user
-    installations still allow the configured owner account to edit.
-    """
-    if not st.session_state.get("npdb_authenticated"):
-        return False
-    username = normalize_login_slug(st.session_state.get("npdb_username", ""))
-    if not username:
-        return False
-    role = str(st.session_state.get("npdb_role", "")).strip().lower()
-    auth_mode = str(st.session_state.get("npdb_auth_mode", "")).strip().lower()
-    if auth_mode == "approved_users":
-        for user in load_approved_users():
-            approved_username = normalize_login_slug(user.get("username", ""))
-            approved_role = str(user.get("role", "viewer")).strip().lower()
-            if (
-                approved_username == username
-                and approved_role in OWNER_EDITOR_ROLES
-                and role == approved_role
-            ):
-                return True
-        return False
-    if auth_mode == "single_user":
-        expected_username = normalize_login_slug(
-            get_secret_setting("NPDB_ACCESS_USERNAME", "access_username")
-        )
-        return (
-            bool(expected_username)
-            and username == expected_username
-            and username == normalize_login_slug(OWNER_EDITOR_USERNAME)
-        )
-    return False
+    return current_backend_role() in {"owner", "owner_editor", "admin", "editor"}
 
 
 def can_edit_database() -> bool:
@@ -5388,8 +5429,20 @@ def is_generated_structure_reference(value) -> bool:
     return bucket == "structures" and object_path.startswith("generated/")
 
 
-@st.cache_data(show_spinner=False, ttl=900)
+def validate_storage_asset_reference(bucket, object_path):
+    if (bucket not in {"structures", "spectra", "specimens", "backups", "exports"}
+            or not object_path or any(part in {"", ".", ".."} for part in object_path.split("/"))
+            or any(c in object_path for c in ("\\", "%", "?", "#", "\x00"))
+            or any(ord(c) < 32 for c in object_path)):
+        raise PermissionError("Asset reference is not permitted.")
+
+
 def signed_supabase_storage_url(bucket: str, object_path: str, expires_in: int = 3600) -> str:
+    require_backend_permission("read")
+    if bucket not in {"structures", "spectra", "specimens"}:
+        require_backend_permission("admin")
+    validate_storage_asset_reference(bucket, object_path)
+    expires_in = min(max(int(expires_in), 1), 300)
     if not use_supabase_write_backend():
         return ""
     response = _supabase_request(
@@ -5403,6 +5456,8 @@ def signed_supabase_storage_url(bucket: str, object_path: str, expires_in: int =
         return ""
     if signed_url.startswith("http"):
         parsed = urlparse(signed_url)
+        if parsed.scheme != "https" or parsed.netloc != urlparse(get_supabase_url()).netloc:
+            return ""
         encoded_path = quote(unquote(parsed.path), safe="/")
         query = f"?{parsed.query}" if parsed.query else ""
         fragment = f"#{parsed.fragment}" if parsed.fragment else ""
@@ -5780,7 +5835,6 @@ def load_standardized_structure_image(image_path: Path, size=STRUCTURE_DETAIL_IM
         return None
 
 
-@st.cache_data(show_spinner=False, ttl=EXTERNAL_ASSET_CACHE_TTL_SECONDS)
 def load_external_structure_png_bytes(source_text: str, size=STRUCTURE_DETAIL_IMAGE_SIZE, fallback_smiles: str = "", renderer_version: str = STRUCTURE_RENDERER_VERSION) -> bytes:
     _ = renderer_version
     if Image is None:
@@ -5862,6 +5916,7 @@ def render_structure_preview(smiles_text: str, caption: str | None = None, empty
             st.info("Structure preview could not be rendered for this record.")
 
 def get_backup_bytes():
+    require_backend_permission("admin")
     with open(DB_PATH, "rb") as f:
         return f.read()
 
@@ -6377,6 +6432,7 @@ def render_sidebar_session_controls():
 
 
 def build_snapshot_manifest() -> dict:
+    require_backend_permission("admin")
     compounds_df = load_all_compounds()
     proton_df = load_all_proton_data()
     carbon_df = load_all_carbon_data()
@@ -6399,6 +6455,7 @@ def build_snapshot_manifest() -> dict:
 
 
 def build_backup_bundle_bytes() -> tuple[bytes, str]:
+    require_backend_permission("admin")
     manifest = build_snapshot_manifest()
     bundle_timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     bundle_name = f"npdb_snapshot_{bundle_timestamp}.zip"
@@ -6421,6 +6478,7 @@ def build_backup_bundle_bytes() -> tuple[bytes, str]:
 
 
 def save_backup_bundle_locally(bundle_bytes: bytes, file_name: str) -> Path:
+    require_backend_permission("admin")
     BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
     bundle_path = BACKUPS_DIR / file_name
     bundle_path.write_bytes(bundle_bytes)
@@ -6428,6 +6486,7 @@ def save_backup_bundle_locally(bundle_bytes: bytes, file_name: str) -> Path:
 
 
 def upload_backup_bundle_to_cloud(bundle_bytes: bytes, file_name: str) -> str:
+    require_backend_permission("admin")
     ensure_write_target_ready()
     if use_local_read_backend():
         save_backup_bundle_locally(bundle_bytes, file_name)
@@ -6711,6 +6770,7 @@ def show_section_banner(image_path: Path, caption: str | None = None):
 
 
 def render_batch_import_workspace():
+    require_backend_permission("admin")
     section_header(
         "Batch Import",
         "Use these ready-to-fill CSV templates to add compounds, 1H peaks, 13C peaks, and spectra records without guessing column names.",
@@ -7351,6 +7411,7 @@ def update_compound_record(
     conn.close()
 
 def delete_compound_record(compound_id):
+    require_backend_permission("delete")
     conn = get_connection()
     cursor = conn.cursor()
     try:
@@ -7454,6 +7515,7 @@ def update_proton_record(
     conn.close()
 
 def delete_proton_record_by_id(proton_id):
+    require_backend_permission("delete")
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM proton_nmr WHERE id = ?", (proton_id,))
@@ -7539,6 +7601,7 @@ def update_carbon_record(
     conn.close()
 
 def delete_carbon_record_by_id(carbon_id):
+    require_backend_permission("delete")
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM carbon_nmr WHERE id = ?", (carbon_id,))
@@ -7606,6 +7669,7 @@ def update_spectrum_file_record(
     conn.close()
 
 def delete_spectrum_file_record_by_id(file_id):
+    require_backend_permission("delete")
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM spectra_files WHERE id = ?", (file_id,))
@@ -7726,6 +7790,7 @@ def update_bioactivity_record(
 
 
 def delete_bioactivity_record_by_id(bioactivity_id):
+    require_backend_permission("delete")
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM bioactivity_records WHERE id = ?", (bioactivity_id,))
@@ -10300,6 +10365,8 @@ def show_guide_page():
 # =========================
 def show_compound_pages():
     compound_options = COMPOUND_PAGE_OPTIONS if can_edit_database() else ["Browse Record"]
+    if not is_backend_owner():
+        compound_options = [page for page in compound_options if page != "Delete Record"]
 
     pending_page = st.session_state.pop("_pending_compound_page_radio", None)
     if pending_page in LEGACY_COMPOUND_PAGE_MAP:
@@ -12412,6 +12479,7 @@ def _supabase_ssl_context():
 
 
 def ensure_write_target_ready():
+    require_backend_permission("curate")
     if cloud_backend_is_configured():
         cloud_ok, cloud_error = supabase_read_health()
         if not cloud_ok:
@@ -12563,6 +12631,27 @@ def _supabase_headers(write: bool = False, json_body: bool = True, extra: dict |
 
 
 def _supabase_request(method: str, path: str, query: dict | None = None, body=None, write: bool = False, json_body: bool = True, extra_headers: dict | None = None, return_json: bool = True, timeout: int = 60):
+    if method.upper() not in {"GET", "HEAD"}:
+        if path.startswith("/storage/v1/object/sign/"):
+            require_backend_permission("read")
+            bucket, _, object_path = path.removeprefix("/storage/v1/object/sign/").partition("/")
+            validate_storage_asset_reference(bucket, unquote(object_path))
+            if bucket not in {"structures", "spectra", "specimens"}:
+                require_backend_permission("admin")
+        elif path.startswith("/storage/v1/object/") and method.upper() == "POST":
+            bucket, _, object_path = path.removeprefix("/storage/v1/object/").partition("/")
+            validate_storage_asset_reference(bucket, unquote(object_path))
+            require_backend_permission("curate" if bucket in {"structures", "spectra", "specimens"} else "admin")
+        elif path.startswith("/rest/v1/"):
+            table = path.removeprefix("/rest/v1/")
+            if table == AUDIT_EVENTS_TABLE and method.upper() == "POST":
+                require_backend_permission("curate")
+            else:
+                if method.upper() not in {"POST", "PATCH", "DELETE"} or isinstance(body, list):
+                    raise PermissionError("This write request is not permitted.")
+                require_backend_permission("delete" if method.upper() == "DELETE" else "curate", table, body if isinstance(body, dict) else None)
+        else:
+            require_backend_permission("admin")
     if write and not use_supabase_write_backend():
         raise RuntimeError("Supabase write mode is disabled because a valid server-side write key is missing.")
     base = get_supabase_url().rstrip("/")
@@ -12792,6 +12881,7 @@ def search_compound_select_columns() -> str:
 
 
 def supabase_insert_row(table: str, row: dict):
+    require_backend_permission("curate", table, row)
     payload = {k: _json_ready(v) for k, v in row.items() if k and v is not None}
     try:
         response = _supabase_insert_request(table, payload)
@@ -12807,6 +12897,7 @@ def supabase_insert_row(table: str, row: dict):
 
 
 def supabase_update_row(table: str, row_id: int, row: dict, *, expected_updated_at=None):
+    require_backend_permission("curate", table, row)
     payload = {k: _json_ready(v) for k, v in row.items() if k and k != "id"}
     query = {"id": f"eq.{row_id}", "select": "id,updated_at" if table == "compounds" else "id"}
     if expected_updated_at is not None:
@@ -12831,6 +12922,7 @@ def supabase_update_row(table: str, row_id: int, row: dict, *, expected_updated_
 
 
 def supabase_delete_row(table: str, row_id: int):
+    require_backend_permission("delete", table)
     _supabase_request(
         "DELETE",
         f"/rest/v1/{table}",
@@ -12842,14 +12934,18 @@ def supabase_delete_row(table: str, row_id: int):
     record_audit_event("delete", table, row_id, "supabase")
 
 
-def supabase_upload_bytes(bucket: str, object_path: str, data: bytes, content_type: str = "application/octet-stream", public_bucket: bool = True) -> str:
+def supabase_upload_bytes(bucket: str, object_path: str, data: bytes, content_type: str = "application/octet-stream", public_bucket: bool = False) -> str:
+    require_backend_permission("curate" if bucket in {"structures", "spectra", "specimens"} else "admin")
+    validate_storage_asset_reference(bucket, object_path)
+    if public_bucket:
+        raise PermissionError("Scientific assets must remain private.")
     _supabase_request(
         "POST",
         f"/storage/v1/object/{bucket}/{quote(object_path, safe='/')}"
         ,body=data,
         write=True,
         json_body=False,
-        extra_headers={"Content-Type": content_type, "x-upsert": "true"},
+        extra_headers={"Content-Type": content_type, "x-upsert": "false"},
         return_json=False,
     )
     if public_bucket:
@@ -12878,6 +12974,7 @@ def _sqlite_columns(table: str) -> list[str]:
 
 
 def _sqlite_upsert_row(table: str, row: dict) -> int | None:
+    require_backend_permission("curate", table, row)
     columns = [column for column in row.keys() if column in _sqlite_columns(table)]
     if not columns:
         return None
@@ -12912,6 +13009,7 @@ def _sqlite_upsert_row(table: str, row: dict) -> int | None:
 
 
 def _sqlite_delete_row(table: str, row_id: int):
+    require_backend_permission("delete")
     conn = get_connection()
     try:
         cursor = conn.cursor()
@@ -12934,6 +13032,7 @@ def _local_binary_path(target_dir: Path, base_name: str, suffix: str) -> Path:
 
 
 def save_uploaded_asset(uploaded_file, target_dir: Path, base_name: str) -> str:
+    require_backend_permission("curate")
     suffix = Path(uploaded_file.name).suffix.lower() or ".bin"
     data = uploaded_file.getbuffer().tobytes()
     if use_supabase_write_backend():
@@ -13709,6 +13808,7 @@ def update_compound_record(compound_id, trivial_name, iupac_name, molecular_form
 
 
 def delete_compound_record(compound_id):
+    require_backend_permission("delete")
     ensure_write_target_ready()
     if use_supabase_write_backend():
         supabase_delete_row("compounds", compound_id)
@@ -13730,6 +13830,7 @@ def delete_compound_record(compound_id):
 
 
 def _write_child_row(table: str, row: dict, row_id: int | None = None):
+    require_backend_permission("curate", table, row)
     ensure_write_target_ready()
     if use_supabase_write_backend():
         if row_id is None:
@@ -13760,6 +13861,7 @@ def update_proton_record(proton_id, compound_id, delta_ppm, multiplicity, j_valu
 
 
 def delete_proton_record_by_id(proton_id):
+    require_backend_permission("delete")
     ensure_write_target_ready()
     if use_supabase_write_backend():
         supabase_delete_row("proton_nmr", proton_id)
@@ -13784,6 +13886,7 @@ def update_carbon_record(carbon_id, compound_id, delta_ppm, carbon_type, assignm
 
 
 def delete_carbon_record_by_id(carbon_id):
+    require_backend_permission("delete")
     ensure_write_target_ready()
     if use_supabase_write_backend():
         supabase_delete_row("carbon_nmr", carbon_id)
@@ -13808,6 +13911,7 @@ def update_spectrum_file_record(file_id, compound_id, spectrum_type, file_path, 
 
 
 def delete_spectrum_file_record_by_id(file_id):
+    require_backend_permission("delete")
     ensure_write_target_ready()
     if use_supabase_write_backend():
         supabase_delete_row("spectra_files", file_id)
@@ -13832,6 +13936,7 @@ def update_bioactivity_record(bioactivity_id, compound_id, activity_label, targe
 
 
 def delete_bioactivity_record_by_id(bioactivity_id):
+    require_backend_permission("delete")
     ensure_write_target_ready()
     if use_supabase_write_backend():
         supabase_delete_row("bioactivity_records", bioactivity_id)
@@ -13888,6 +13993,7 @@ def update_specimen_record(specimen_id, **fields):
 
 
 def replace_specimen_compound_links(specimen_id: int, compound_ids: list[int], evidence_note: str = "", reference_note: str = ""):
+    require_backend_permission("delete")
     ensure_write_target_ready()
     unique_compound_ids = []
     for compound_id in compound_ids:
@@ -13990,6 +14096,7 @@ def derive_structure_identifiers(structure_text: str) -> dict | None:
 
 
 def _save_generated_structure_image(compound_id: int, mol) -> str:
+    require_backend_permission("curate")
     if not ensure_rdkit_loaded() or Image is None or mol is None:
         return ""
     image = render_rdkit_structure_image(mol, size=STRUCTURE_SAVE_IMAGE_SIZE)
@@ -14030,6 +14137,7 @@ def _auto_structure_image_path(compound_id: int, smiles: str = "", inchi: str = 
 
 
 def save_structure_query_to_compound(compound_id: int, query_text: str) -> tuple[bool, str]:
+    require_backend_permission("curate")
     ensure_write_target_ready()
     identifiers = derive_structure_identifiers(query_text)
     if not identifiers:

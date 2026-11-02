@@ -2,6 +2,7 @@
 import ast
 from pathlib import Path
 import unittest
+from authorization_fixture import bind_authorization
 
 APP = Path(__file__).resolve().parents[1] / "scripts" / "app.py"
 
@@ -20,12 +21,13 @@ def build_checker(state=None, users=None, owner_username="npdb_tyas"):
     normalized = lambda x: "".join(c for c in str(x or "").lower() if c.isalnum())
     ns = {
         "st": st,
-        "load_approved_users": lambda: list(users or []),
+        "load_approved_users": lambda: [dict(u, password_hash="synthetic-hash") for u in (users or [])],
         "normalize_login_slug": normalized,
-        "get_secret_setting": lambda *keys: owner_username,
+        "get_secret_setting": lambda *keys: owner_username if keys[0] == "NPDB_ACCESS_USERNAME" else "synthetic-hash",
         "OWNER_EDITOR_USERNAME": "npdb_tyas",
         "OWNER_EDITOR_ROLES": {"owner", "owner_editor", "admin", "editor"},
     }
+    bind_authorization(ns)
     exec(compile(ast.Module(body=[func],type_ignores=[]),str(APP),"exec"),ns)
     return ns["is_owner_editor"]
 
@@ -82,8 +84,8 @@ class AuthorizedEditorTests(unittest.TestCase):
         self.assertFalse(build_checker(self.state("npdb_tjomori", "editor", mode="single_user"),
                                        [],owner_username="npdb_tjomori")())
 
-    def test_server_config_role_case_normalization(self):
-        self.assertTrue(build_checker(self.state("NPDB_TJOMORI","editor"),
+    def test_username_must_match_case_sensitive_login_identity(self):
+        self.assertFalse(build_checker(self.state("NPDB_TJOMORI","editor"),
                                       [{"username":"npdb_tjomori","role":"Editor"}])())
 
 

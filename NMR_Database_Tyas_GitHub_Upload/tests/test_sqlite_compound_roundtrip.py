@@ -11,11 +11,15 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+from authorization_fixture import bind_authorization
 
 
 APP = Path(__file__).resolve().parents[1] / "scripts" / "app.py"
 
 def load_function(name, namespace):
+    if "require_backend_permission" not in namespace:
+        for key, value in bind_authorization().items():
+            namespace.setdefault(key, value)
     tree = ast.parse(APP.read_text(encoding="utf-8"), filename=str(APP))
     definitions = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == name]
     assert definitions, f"App function {name!r} must exist"
