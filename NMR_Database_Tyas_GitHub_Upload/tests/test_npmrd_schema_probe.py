@@ -35,8 +35,10 @@ class NP_MRDSchemaProbeTests(unittest.TestCase):
             zip_schema_report(b"invalid")
 
     def test_header_injection_is_rejected_without_printing_record(self):
-        with self.assertRaisesRegex(ValueError,"non-schema-looking"):
-            zip_schema_report(make_zip("x.csv", b"SECRET=private-password,delta_ppm\nVALUE,2.2\n"))
+        data = zip_schema_report(make_zip("x.csv", b"SECRET=private-password,delta_ppm\nVALUE,2.2\n"))
+        self.assertEqual(data["ambiguous_csv_first_rows"], 1)
+        self.assertEqual(data["csv_header_candidates"], 0)
+        self.assertNotIn("private-password", str(data))
 
     def test_empty_zip_is_valid_but_has_no_csv_schema(self):
         z = io.BytesIO()
