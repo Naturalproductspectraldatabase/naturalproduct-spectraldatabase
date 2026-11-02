@@ -21,8 +21,10 @@ jobs:
             prs: "3 6"
           - name: core-and-images
             prs: "3 6 4"
+          - name: core-and-login
+            prs: "3 6 12"
           - name: all-feature-drafts
-            prs: "3 6 4 7 5 8 9"
+            prs: "3 6 4 7 5 8 9 12"
     steps:
       - name: Initialize isolated Git checkout
         env:
@@ -82,6 +84,28 @@ jobs:
           print("PASS: app loaded in isolated snapshot mode; no Supabase credentials were available")
           PY
 
+      - name: Test fail-closed login and authorized snapshot with dummy secrets
+        if: matrix.name == 'core-and-login' || matrix.name == 'all-feature-drafts'
+        env:
+          NPDB_READ_BACKEND: snapshot
+          NPDB_ACCESS_PASSWORD_HASH: "synthetic_test_hash_not_a_password"
+          PYTHONWARNINGS: ignore
+        run: |
+          python - <<'PY'
+          from streamlit.testing.v1 import AppTest
+          target = "NMR_Database_Tyas_GitHub_Upload/scripts/app.py"
+          guest = AppTest.from_file(target,default_timeout=120).run(timeout=120)
+          assert not guest.exception, [str(x.message) for x in guest.exception]
+          assert len(guest.sidebar.markdown)==0, "Unauthenticated guest unexpectedly saw navigation"
+          owner = AppTest.from_file(target,default_timeout=120)
+          owner.session_state["npdb_authenticated"] = True
+          owner.session_state["npdb_username"] = "npdb_tyas"
+          owner.session_state["npdb_role"] = "owner"
+          owner.run(timeout=120)
+          assert not owner.exception, [str(x.message) for x in owner.exception]
+          assert len(owner.sidebar.markdown)>0, "Owner session did not reach app navigation"
+          print("PASS: guest blocked and synthetic authorized owner can enter snapshot dashboard")
+          PY
       - name: Publish tested core integration branch only (never production)
         if: matrix.name == 'core-integrity'
         env:
