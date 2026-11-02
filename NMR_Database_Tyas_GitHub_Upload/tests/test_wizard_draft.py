@@ -175,6 +175,28 @@ class WizardPersistenceTests(unittest.TestCase):
         self.assertNotIn("for key in [", region)
         self.assertLess(region.index('wizard_step = int('), region.index("hydrate_wizard_widget(key)"))
 
+    def test_hydrate_skips_read_only_file_uploader_widget_keys(self):
+        app_source = APP_PATH.read_text(encoding="utf-8")
+        tree = ast.parse(app_source, filename=str(APP_PATH))
+        node = next(x for x in tree.body if isinstance(x, ast.FunctionDef) and x.name == "hydrate_wizard_widget")
+        class UploadSafeState(dict):
+            def __setitem__(self, key, value):
+                if key in draft.UPLOAD_KEYS:
+                    raise AssertionError("cannot assign directly to Streamlit uploader widget")
+                super().__setitem__(key, value)
+        class FakeSt:
+            session_state = UploadSafeState({
+                "_draft_wizard_structure_upload": object(),
+                "_draft_wizard_submission_spectra_uploads": [object()],
+            })
+        ns = {"st": FakeSt()}
+        exec(compile(ast.Module(body=[node], type_ignores=[]), str(APP_PATH), "exec"), ns)
+        hydrate = ns["hydrate_wizard_widget"]
+        for key in draft.UPLOAD_KEYS:
+            hydrate(key)
+            self.assertNotIn(key, FakeSt.session_state)
+            self.assertIn(f"_draft_{key}", FakeSt.session_state)
+
     def test_app_source_is_syntactically_valid_without_importing_app(self):
         ast.parse(APP_PATH.read_text(encoding="utf-8"), filename=str(APP_PATH))
 
