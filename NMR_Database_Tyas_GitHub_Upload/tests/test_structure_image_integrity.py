@@ -50,6 +50,8 @@ class FakeSt:
 
     def image(self, img, **kwargs):
         self.images.append(img)
+        if kwargs.get("caption"):
+            self.captions.append(str(kwargs["caption"]))
 
     def warning(self, msg):
         self.warnings.append(str(msg))
@@ -75,6 +77,7 @@ class StructureImageIntegrityTests(unittest.TestCase):
     def ns_images(self):
         ns = {
             "Image": Image,
+            "Path": Path,
             "ImageOps": ImageOps,
             "STRUCTURE_DETAIL_IMAGE_SIZE": (300, 240),
             "STRUCTURE_THUMBNAIL_IMAGE_SIZE": (160, 140),
