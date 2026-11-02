@@ -244,6 +244,86 @@ class ConcurrentEditRegressionTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "original record revision"):
             update(**kwargs)
 
+    def test_c1_compound_update_patches_only_changed_fields(self):
+        patches = []
+        ns = {
+            "UTC": UTC, "datetime": datetime,
+            "ensure_write_target_ready": lambda: None,
+            "maybe_blank": lambda x: str(x or "").strip(),
+            "_auto_structure_image_path": lambda *a, **k: "dummy.png",
+            "normalize_curation_status": lambda x, default="curated": x or default,
+            "use_supabase_write_backend": lambda: True,
+            "get_npdb_read_backend": lambda: "supabase",
+            "supabase_column_available": lambda *a, **k: True,
+            "supabase_update_row": lambda *a, **k: patches.append((a, k)),
+            "use_local_read_backend": lambda: False,
+            "invalidate_cached_views": lambda: None,
+            "_readback_value_matches": lambda old, new: old == new,
+        }
+        update = isolated_function("update_compound_record", ns)
+        kwargs = {
+            name: "" for name in inspect.signature(update).parameters
+            if name != "original_row"
+        }
+        kwargs.update(
+            compound_id=101, trivial_name="New name",
+            structure_image_path="dummy.png", curation_status="reviewed",
+        )
+        baseline = {name: val for name, val in kwargs.items() if name != "compound_id"}
+        baseline["trivial_name"] = "Old name"
+        baseline["updated_at"] = "2026-11-01T12:00:00+00:00"
+        kwargs["original_row"] = baseline
+        update(**kwargs)
+        self.assertEqual(len(patches), 1)
+        args, call_kwargs = patches[0]
+        self.assertEqual(args[:2], ("compounds", 101))
+        self.assertEqual(set(args[2]), {"trivial_name", "updated_at"})
+        self.assertEqual(args[2]["trivial_name"], "New name")
+        self.assertEqual(call_kwargs["expected_updated_at"], baseline["updated_at"])
+
+    def test_c1_noop_edit_does_not_write_whole_record(self):
+        patches = []
+        ns = {
+            "UTC": UTC, "datetime": datetime,
+            "ensure_write_target_ready": lambda: None,
+            "maybe_blank": lambda x: str(x or "").strip(),
+            "_auto_structure_image_path": lambda *a, **k: "dummy.png",
+            "normalize_curation_status": lambda x, default="curated": x or default,
+            "use_supabase_write_backend": lambda: True,
+            "get_npdb_read_backend": lambda: "supabase",
+            "supabase_column_available": lambda *a, **k: True,
+            "supabase_update_row": lambda *a, **k: patches.append((a, k)),
+            "use_local_read_backend": lambda: False,
+            "invalidate_cached_views": lambda: None,
+            "_readback_value_matches": lambda old, new: old == new,
+        }
+        update = isolated_function("update_compound_record", ns)
+        kwargs = {
+            name: "" for name in inspect.signature(update).parameters
+            if name != "original_row"
+        }
+        kwargs.update(compound_id=101, structure_image_path="dummy.png", curation_status="reviewed")
+        baseline = {name: val for name, val in kwargs.items() if name != "compound_id"}
+        baseline["updated_at"] = "2026-11-01T12:00:00+00:00"
+        kwargs["original_row"] = baseline
+        update(**kwargs)
+        self.assertEqual(patches, [], "A form with no changes must not PATCH 36 old fields")
+
+    def test_c1_preflight_rejects_a_changed_cloud_revision(self):
+        ns = {
+            "use_supabase_write_backend": lambda: True,
+            "get_npdb_read_backend": lambda: "supabase",
+            "maybe_blank": lambda x: str(x or "").strip(),
+            "datetime": datetime,
+            "_supabase_request": lambda *a, **k: [
+                {"id": 101, "updated_at": "2026-11-02T09:00:00+00:00"}
+            ],
+        }
+        isolated_function("_revision_matches", ns)
+        preflight = isolated_function("verify_compound_editor_revision", ns)
+        with self.assertRaisesRegex(RuntimeError, "changed in another session"):
+            preflight(101, "2026-11-01T09:00:00+00:00")
+
     def test_c1_revision_helper_accepts_equivalent_time_zone_offsets(self):
         ns = {"datetime": datetime, "maybe_blank": lambda x: str(x or "").strip()}
         matches = isolated_function("_revision_matches", ns)
