@@ -1,0 +1,61 @@
+name: NPDB integration experiment (no production access)
+
+on:
+  push:
+    branches: [ci/npdb-integration-lab-20261103]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  merge-and-test:
+    name: Offline integration ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: core-integrity
+            prs: "3 6"
+          - name: core-and-images
+            prs: "3 6 4"
+          - name: all-feature-drafts
+            prs: "3 6 4 7 5 8 9"
+    steps:
+      - name: Initialize isolated Git checkout
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          AUTH="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w 0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${AUTH}" fetch --no-tags --depth=1 origin "${GITHUB_REF}"
+          git -c advice.detachedHead=false checkout --detach FETCH_HEAD
+          git config user.name "NPDB Offline Integration"
+          git config user.email "ci@users.noreply.github.com"
+      - name: Fetch and merge candidate PRs locally, never push
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_LIST: ${{ matrix.prs }}
+        run: |
+          AUTH="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w 0)"
+          for number in ${PR_LIST}; do
+            echo "::group::Merging PR #${number} into disposable runner checkout"
+            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${AUTH}" fetch --no-tags --unshallow origin "pull/${number}/head:refs/remotes/npdb-pr-${number}" || git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${AUTH}" fetch --no-tags origin "pull/${number}/head:refs/remotes/npdb-pr-${number}"
+            git merge --no-ff --no-edit "refs/remotes/npdb-pr-${number}" || { git status --short; exit 1; }
+            echo "::endgroup::"
+          done
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install offline test dependencies
+        run: python -m pip install --disable-pip-version-check "pandas>=2.2,<3.1" "pillow>=10,<13"
+      - name: Compile combined code
+        run: |
+          python -m py_compile NMR_Database_Tyas_GitHub_Upload/scripts/app.py
+          python -m compileall -q NMR_Database_Tyas_GitHub_Upload/scripts
+      - name: Run all combined offline regression tests
+        run: python -m unittest discover -s NMR_Database_Tyas_GitHub_Upload/tests -p 'test_*.py' -v
