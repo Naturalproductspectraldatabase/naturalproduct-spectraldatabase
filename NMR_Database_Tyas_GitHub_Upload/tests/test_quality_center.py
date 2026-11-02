@@ -254,6 +254,7 @@ class QualityCenterRoutingTests(unittest.TestCase):
         self.assertIn('if section in QUALITY_DEMO_SECTIONS:', source)
         self.assertIn('return pd.DataFrame()', source)
         self.assertIn('if not quality_demo_page:\n    render_cloud_sync_notice()', source)
+        self.assertIn('workflow_editable = not demo_nav_mode and can_edit_database()', source)
 
     def test_prototype_module_exposes_no_sql_or_real_email_transport(self):
         source = MODULE_PATH.read_text(encoding="utf-8")
