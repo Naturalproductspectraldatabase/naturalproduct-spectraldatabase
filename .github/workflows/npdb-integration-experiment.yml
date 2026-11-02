@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   merge-and-test:
@@ -31,7 +31,7 @@ jobs:
           git init .
           git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
           AUTH="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w 0)"
-          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${AUTH}" fetch --no-tags --depth=1 origin "${GITHUB_REF}"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${AUTH}" fetch --no-tags --depth=1 origin "refs/heads/main"
           git -c advice.detachedHead=false checkout --detach FETCH_HEAD
           git config user.name "NPDB Offline Integration"
           git config user.email "ci@users.noreply.github.com"
@@ -81,3 +81,11 @@ jobs:
               raise AssertionError("Offline dashboard load raised exceptions: " + " / ".join(errors[:4]))
           print("PASS: app loaded in isolated snapshot mode; no Supabase credentials were available")
           PY
+
+      - name: Publish tested core integration branch only (never production)
+        if: matrix.name == 'core-integrity'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          AUTH="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w 0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${AUTH}" push origin HEAD:refs/heads/qa/npdb-core-integrity-20261103
