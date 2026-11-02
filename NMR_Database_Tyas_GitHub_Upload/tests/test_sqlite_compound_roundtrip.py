@@ -127,6 +127,7 @@ class ProductionFunctionSqliteRoundtrip(unittest.TestCase):
                              f"{field} changed or vanished during SQLite insert/read-back")
         self.assertTrue(persisted["created_at"])
         self.assertTrue(persisted["updated_at"])
+        self.assertEqual(self.query_one("compounds", new_id)["sample_code"], "QA-TEST-001")
         self.assertEqual(len(self.network_invocations), 0)
         self.assertEqual(len(self.events), 1, "Successful insert should emit exactly one audit call")
         self.assertEqual(self.events[0][0][:2], ("insert", "compounds"))
