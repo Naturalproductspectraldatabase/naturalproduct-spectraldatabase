@@ -5275,8 +5275,11 @@ def parse_peak_input(text: str):
         if not item:
             continue
         try:
-            peaks.append(float(item))
-        except ValueError:
+            value = float(item)
+            # Exclude NaN/Infinity, which otherwise destabilize search scoring.
+            if math.isfinite(value):
+                peaks.append(value)
+        except (ValueError, OverflowError):
             pass
     return peaks
 
