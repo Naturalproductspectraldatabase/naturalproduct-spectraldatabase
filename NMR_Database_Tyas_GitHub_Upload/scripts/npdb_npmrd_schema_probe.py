@@ -20,8 +20,8 @@ SOURCE_URLS = {
 }
 
 MAX_ZIP_BYTES = 2_000_000
-MAX_UNCOMPRESSED_BYTES = 30_000_000
-MAX_MEMBERS = 2000
+MAX_UNCOMPRESSED_BYTES = 250_000_000
+MAX_MEMBERS = 40_000
 MAX_FIELDS = 100
 
 
@@ -40,9 +40,22 @@ def zip_schema_report(payload: bytes) -> dict:
             raise ValueError("ZIP exceeds safe decompressed size")
         formats = Counter()
         csv_headers = []
+        text_field_labels = Counter()
         for info in infos:
             suffix = PurePosixPath(info.filename).suffix.lower() or "(none)"
             formats[suffix] += 1
+            if suffix == ".txt" and len(text_field_labels) < 80:
+                # TXT archive members are data records. Inspect keys only;
+                # NEVER print raw shifts, filenames, data rows, or compounds.
+                import re
+                with archive.open(info) as txt:
+                    for _ in range(20):
+                        line = txt.readline(4096).decode("utf-8", errors="ignore")
+                        if not line:
+                            break
+                        m = re.match(r"^([A-Za-z][A-Za-z _-]{1,48})\s*[:=]", line)
+                        if m:
+                            text_field_labels[m.group(1).strip()] += 1
             if suffix != ".csv":
                 continue
             with archive.open(info) as raw:
@@ -70,6 +83,7 @@ def zip_schema_report(payload: bytes) -> dict:
             "files_total": len(infos),
             "file_extensions": dict(sorted(formats.items())),
             "csv_files": len(csv_headers),
+            "txt_field_labels": dict(text_field_labels.most_common(40)),
             "unique_csv_headers": [
                 list(v) for v in sorted({tuple(v) for v in csv_headers})
             ],
@@ -104,8 +118,16 @@ def main():
             print(json.dumps({"dataset": label, **report}, sort_keys=True))
         except Exception as exc:
             # No URL query, path, raw CSV line, or retrieved sample content in logs.
+            known = {
+                "ZIP has too many files",
+                "ZIP exceeds safe decompressed size",
+                "non-schema-looking CSV header; not printing it",
+                "downloaded content is not a ZIP archive",
+                "source ZIP larger than permitted probe limit",
+            }
+            message = str(exc) if isinstance(exc, ValueError) and str(exc) in known else type(exc).__name__
             print(json.dumps({"dataset": label, "status": "unable_to_inspect",
-                              "exception_type": type(exc).__name__}, sort_keys=True))
+                              "safe_reason": message}, sort_keys=True))
 
 
 if __name__ == "__main__":
