@@ -5046,31 +5046,25 @@ def molecule_fingerprint(mol):
         return None
 
 
-@st.cache_resource(show_spinner=False)
-def build_structure_candidate_index(db_signature: float):
+@st.cache_resource(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS, max_entries=16)
+def build_structure_candidate_index(structure_records: tuple):
+    """Cache chemistry only, keyed by explicit IDs and unmodified SMILES.
+
+    Never fetch global records here: the caller supplies its current filtered
+    snapshot. Live display metadata is joined by the caller, not cached here.
+    """
     if not is_structure_backend_available():
         return []
-
     candidates = []
-    compounds_df = load_all_compounds()
-    for _, row in compounds_df.iterrows():
-        candidate_smiles = maybe_blank(row.get("smiles"))
+    for compound_id, candidate_smiles in structure_records:
         if not candidate_smiles:
             continue
         candidate_mol = smiles_to_mol(candidate_smiles)
         if candidate_mol is None:
             continue
-        candidate_fp = molecule_fingerprint(candidate_mol)
-        candidates.append(
-            {
-                "id": int(row.get("id")),
-                "row": row.to_dict(),
-                "smiles": candidate_smiles,
-                "mol": candidate_mol,
-                "fp": candidate_fp,
-                "canonical": canonicalize_smiles(candidate_smiles),
-            }
-        )
+        candidates.append({"id": compound_id, "smiles": candidate_smiles,
+                           "mol": candidate_mol, "fp": molecule_fingerprint(candidate_mol),
+                           "canonical": canonicalize_smiles(candidate_smiles)})
     return candidates
 
 
@@ -5080,6 +5074,21 @@ def search_by_structure(
     search_type: str,
     similarity_threshold: float = 0.35,
 ):
+    if search_type not in {"Identity Search", "Substructure Search", "Similarity Search"}:
+        return [], "Choose a supported structure search mode."
+    try:
+        similarity_threshold = float(similarity_threshold)
+        if not math.isfinite(similarity_threshold) or not 0 <= similarity_threshold <= 1:
+            raise ValueError
+    except (ValueError, TypeError, OverflowError):
+        return [], "Similarity threshold must be a finite number between zero and one."
+    if compounds_df.empty or not {"id", "smiles"}.issubset(compounds_df.columns):
+        return [], "No searchable structures are available in the current filtered dataset."
+    numeric_ids = pd.to_numeric(compounds_df["id"], errors="coerce")
+    if numeric_ids.isna().any() or not numeric_ids.map(lambda value: math.isfinite(value) and value > 0 and int(value) == value).all():
+        return [], "The filtered dataset contains invalid compound identifiers; ask a curator to review it."
+    if numeric_ids.duplicated().any():
+        return [], "The filtered dataset contains duplicate compound identifiers; ask a curator to review it."
     query_text = maybe_blank(query_smiles)
     if not query_text:
         return [], "Please draw a structure and click Apply in the editor first, or paste a valid SMILES / Molfile query."
@@ -5093,13 +5102,19 @@ def search_by_structure(
 
     query_canonical = canonicalize_smiles(query_text)
     query_fp = molecule_fingerprint(query_mol)
-    allowed_ids = set(compounds_df["id"].astype(int).tolist()) if "id" in compounds_df.columns else set()
-    indexed_candidates = build_structure_candidate_index(get_db_signature())
+    try:
+        current_rows = {int(row["id"]): row.to_dict() for _, row in compounds_df.iterrows()}
+    except (ValueError, TypeError, OverflowError):
+        return [], "The filtered dataset contains invalid compound identifiers; ask a curator to review it."
+    structure_records = tuple(sorted((compound_id, maybe_blank(row.get("smiles")))
+                                     for compound_id, row in current_rows.items()))
+    allowed_ids = set(current_rows)
+    indexed_candidates = build_structure_candidate_index(structure_records)
     results = []
     searchable_candidates = 0
 
     for candidate in indexed_candidates:
-        if allowed_ids and int(candidate["id"]) not in allowed_ids:
+        if int(candidate["id"]) not in allowed_ids:
             continue
         candidate_smiles = candidate["smiles"]
         candidate_mol = candidate["mol"]
@@ -5133,7 +5148,7 @@ def search_by_structure(
             match_label = "Similarity"
 
         if matched:
-            item = dict(candidate["row"])
+            item = dict(current_rows[int(candidate["id"])])
             item["structure_score"] = score * 100
             item["structure_match_type"] = match_label
             item["query_smiles"] = query_text
@@ -12980,16 +12995,19 @@ def get_db_signature():
     backend = get_npdb_read_backend()
     if backend == "supabase":
         return supabase_compounds_signature()
-    if backend == "snapshot":
+    def file_stamp(path):
         try:
-            csv_files = list(CSV_SNAPSHOT_DIR.glob("*.csv"))
-            latest_mtime = max((path.stat().st_mtime for path in csv_files), default=0.0)
-            return f"snapshot:{latest_mtime}"
-        except Exception:
-            return "snapshot:0"
-    if not DB_PATH.exists():
-        return 0.0
-    return DB_PATH.stat().st_mtime
+            value = path.stat()
+            return (path.name, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns)
+        except FileNotFoundError:
+            return (path.name, None)
+    if backend == "snapshot":
+        # Hash the inventory, not only max mtime: removals/replacements matter.
+        stamps = [file_stamp(path) for path in sorted(CSV_SNAPSHOT_DIR.glob("*.csv"))]
+        return "snapshot:" + hashlib.sha256(repr(stamps).encode()).hexdigest()
+    # A WAL commit may leave SQLite's main-file timestamp unchanged.
+    stamps = [file_stamp(DB_PATH), file_stamp(Path(str(DB_PATH) + "-wal"))]
+    return "sqlite:" + hashlib.sha256(repr(stamps).encode()).hexdigest()
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
