@@ -79,6 +79,7 @@ For sensitive edits, support a restricted change history with selected before/af
 Read-only investigation on **2026-11-02** found:
 - The production Supabase DB contains an `audit_events` table with columns including `event_time`, `actor_username`, `actor_role`, `action`, `table_name`, `row_id`, `backend`, and `details`.
 - The current `scripts/app.py` calls audit-event recording primarily on **successful insert/update/delete** operations. The audit insert path catches exceptions without reporting them to the owner, so a write can succeed while its audit write fails silently.
+- The Supabase `audit_events` RLS policy observed on 2026-11-02 grants `ALL` commands to `service_role`. This does **not** establish tamper-proof storage: a privileged service-role credential can alter or remove audit records. Investigate a narrowly scoped append-only audit writer and independent tamper-evident archive in a separate approved security change; do **not** casually remove existing access while the app depends on it.
 - The observed historical table contains only insert/update/delete actions and has no recent events despite ongoing development history; this **does not prove** there have been no app logins, reads, downloads or administrative actions. Those were not demonstrated to be covered by the same audit table.
 - No evidence yet establishes an owner-only audit dashboard, comprehensive login/download tracking, or automatic security notifications.
 
