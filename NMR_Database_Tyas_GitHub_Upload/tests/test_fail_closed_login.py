@@ -1,6 +1,7 @@
 """Fail-closed authentication regression tests. Runs without secrets or network."""
 import ast
 import unittest
+from authorization_fixture import bind_authorization
 from pathlib import Path
 
 APP = Path(__file__).resolve().parents[1] / "scripts" / "app.py"
@@ -40,7 +41,10 @@ class FailClosedLoginTests(unittest.TestCase):
 
     def test_validly_configured_authenticated_session_continues(self):
         st = FakeSt(authorized=True)
-        verify = isolated_verify({"st":st,"is_access_gate_enabled":lambda:True})
+        ns = bind_authorization()
+        st.session_state.update(ns["st"].session_state)
+        ns.update(st=st, is_access_gate_enabled=lambda: True)
+        verify = isolated_verify(ns)
         self.assertIsNone(verify())
         self.assertEqual(st.messages, [])
 

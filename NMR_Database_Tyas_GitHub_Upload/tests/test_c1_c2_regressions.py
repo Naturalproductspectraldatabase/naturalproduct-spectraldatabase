@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 import inspect
 from pathlib import Path
 import unittest
+from authorization_fixture import bind_authorization
 
 import pandas as pd
 
@@ -26,6 +27,9 @@ def isolated_function(name, namespace):
     Never imports app.py or executes its top-level Streamlit application, and
     never uses the real Supabase client or real credentials.
     """
+    if "require_backend_permission" not in namespace:
+        for key, value in bind_authorization().items():
+            namespace.setdefault(key, value)
     tree = ast.parse(APP_PATH.read_text(encoding="utf-8"), filename=str(APP_PATH))
     matches = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name]
     if not matches:
