@@ -380,7 +380,17 @@ SIDEBAR_NAV_GROUPS = [
         {"label": "Specimen Library", "section": "Specimen Library"},
         {"label": "Guide", "section": "Guide"},
     ]),
+    ("Owner Workspace", [
+        {"label": "Quality & Operations Center", "section": "Quality & Operations Center"},
+    ]),
+    ("Curator Workspace", [
+        {"label": "My Curation Tasks", "section": "My Curation Tasks"},
+    ]),
 ]
+
+# Read-only prototype screens. Real issue ingestion and permission grants
+# are NOT active; keep the demo completely separate from production records.
+QUALITY_DEMO_SECTIONS = {"Quality & Operations Center", "My Curation Tasks"}
 
 DEFAULT_CLASS_OPTIONS = [
     "Alkaloid",
@@ -6490,13 +6500,26 @@ def render_sidebar_workspace_summary(active_section: str, all_compounds_df: pd.D
 def render_sidebar_navigation():
     current_section = st.session_state.get("nav_section", "Dashboard")
     current_compound_page = st.session_state.get("compound_page", "Browse Record")
+    # The dummy-only workspaces must not make backend health requests merely
+    # to decide whether to show existing data-writing navigation links.
+    demo_nav_mode = current_section in QUALITY_DEMO_SECTIONS
+    workflow_editable = not demo_nav_mode and can_edit_database()
 
     for group_title, items in SIDEBAR_NAV_GROUPS:
+        if group_title == "Owner Workspace" and not is_owner_editor():
+            continue
+        if group_title == "Curator Workspace":
+            from npdb_quality_center import authorized_for_tasks
+            if not authorized_for_tasks(
+                st.session_state.get("npdb_username", ""),
+                st.session_state.get("npdb_role", ""),
+            ):
+                continue
         visible_items = [
             item for item in items
             if not (
                 item.get("compound_page")
-                and not can_edit_database()
+                and not workflow_editable
                 and item.get("compound_page") != "Browse Record"
             )
         ]
@@ -12984,6 +13007,9 @@ except Exception:
 
 
 def load_compounds_for_section(section: str) -> pd.DataFrame:
+    if section in QUALITY_DEMO_SECTIONS:
+        # A lightweight admin/curator dashboard must never fetch all compounds.
+        return pd.DataFrame()
     if section == "Dashboard":
         return load_dashboard_compounds()
     if section == "Search & Match":
@@ -14350,14 +14376,16 @@ def show_specimen_library_pages():
 # =========================
 apply_navigation_query_params()
 main_section = st.session_state.get("nav_section", "Dashboard")
+quality_demo_page = main_section in QUALITY_DEMO_SECTIONS
 all_compounds_df = load_compounds_for_section(main_section)
-render_cloud_sync_notice()
-if use_supabase_backend() and all_compounds_df.empty:
-    try:
-        clear_compounds_cache_for_section(main_section)
-    except Exception:
-        pass
-    all_compounds_df = load_compounds_for_section(main_section)
+if not quality_demo_page:
+    render_cloud_sync_notice()
+    if use_supabase_backend() and all_compounds_df.empty:
+        try:
+            clear_compounds_cache_for_section(main_section)
+        except Exception:
+            pass
+        all_compounds_df = load_compounds_for_section(main_section)
 
 
 # =========================
@@ -14365,14 +14393,42 @@ if use_supabase_backend() and all_compounds_df.empty:
 # =========================
 with st.sidebar:
     active_section = st.session_state.get("main_section_radio", st.session_state.get("nav_section", "Dashboard"))
-    render_sidebar_workspace_summary(active_section, all_compounds_df)
+    if quality_demo_page:
+        st.caption("Quality workflow prototype — DEMO DATA ONLY")
+    else:
+        render_sidebar_workspace_summary(active_section, all_compounds_df)
     render_sidebar_navigation()
 
 render_workspace_headbar(main_section)
 # =========================
 # Main routing
 # =========================
-if main_section == "Dashboard":
+if main_section == "Quality & Operations Center":
+    if not is_owner_editor():
+        st.error("Access denied: this page is for the NPDB owner only.")
+    else:
+        from npdb_quality_center import render_owner_quality_center
+        render_owner_quality_center(
+            st,
+            st.session_state.get("npdb_username", ""),
+            st.session_state.get("npdb_role", ""),
+        )
+
+elif main_section == "My Curation Tasks":
+    from npdb_quality_center import authorized_for_tasks, render_curator_tasks
+    if not authorized_for_tasks(
+        st.session_state.get("npdb_username", ""),
+        st.session_state.get("npdb_role", ""),
+    ):
+        st.error("Access denied: curator task access has not been granted.")
+    else:
+        render_curator_tasks(
+            st,
+            st.session_state.get("npdb_username", ""),
+            st.session_state.get("npdb_role", ""),
+        )
+
+elif main_section == "Dashboard":
     show_overview_page(all_compounds_df)
 
 elif main_section == "Search & Match":
