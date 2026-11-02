@@ -4745,55 +4745,11 @@ def reset_compound_wizard():
     st.session_state["compound_wizard_step"] = 1
 
 
-def persist_wizard_inputs():
-    wizard_keys = [
-        "wizard_trivial_name",
-        "wizard_iupac_name",
-        "wizard_formula",
-        "wizard_molecular_weight",
-        "wizard_smiles",
-        "wizard_inchi",
-        "wizard_inchikey",
-        "wizard_compound_class_select",
-        "wizard_compound_class_custom",
-        "wizard_compound_subclass_select",
-        "wizard_compound_subclass_custom",
-        "wizard_data_source_select",
-        "wizard_data_source_custom",
-        "wizard_source_category_select",
-        "wizard_source_category_custom",
-        "wizard_source_organism",
-        "wizard_sample_code",
-        "wizard_collection_location",
-        "wizard_gps_coordinates",
-        "wizard_depth_m",
-        "wizard_uv_data",
-        "wizard_ftir_data",
-        "wizard_cd_data",
-        "wizard_optical_rotation",
-        "wizard_melting_point",
-        "wizard_crystallization_method",
-        "wizard_ccdc_number",
-        "wizard_hrms_data",
-        "wizard_structure_path",
-        "wizard_structure_upload",
-        "wizard_submission_spectrum_type_select",
-        "wizard_submission_spectrum_type_custom",
-        "wizard_submission_spectra_note",
-        "wizard_submission_spectra_uploads",
-        "wizard_journal_name",
-        "wizard_article_title",
-        "wizard_publication_year",
-        "wizard_volume",
-        "wizard_issue",
-        "wizard_pages",
-        "wizard_doi",
-        "wizard_curation_status",
-        "wizard_note",
-    ]
-    for key in wizard_keys:
-        if key in st.session_state:
-            st.session_state[f"_draft_{key}"] = st.session_state[key]
+def persist_wizard_inputs(step: int | None = None):
+    """Save only the currently rendered wizard step; never stale hidden fields."""
+    from npdb_wizard_draft import persist_visible_wizard_step
+    current_step = int(step if step is not None else st.session_state.get("compound_wizard_step", 1))
+    persist_visible_wizard_step(st.session_state, current_step)
 
 
 def get_wizard_value(key: str, default=""):
@@ -10301,7 +10257,8 @@ def show_compound_pages():
 
         compounds_df = load_all_compounds()
         spectra_df = load_all_spectra_files()
-        persist_wizard_inputs()
+        # Do not persist here: Streamlit may have just deleted the widgets
+        # from a previous step, while the durable _draft_ values remain.
         for key in [
             "wizard_trivial_name",
             "wizard_iupac_name",
@@ -10514,18 +10471,48 @@ def show_compound_pages():
                 st.write(f"**Journal:** {clean_text(get_wizard_value('wizard_journal_name'))}")
                 st.write(f"**Article:** {clean_text(get_wizard_value('wizard_article_title'))}")
                 st.markdown('</div>', unsafe_allow_html=True)
+                with st.expander("Review all Origin and Spectral Data before saving", expanded=True):
+                    st.caption(
+                        "Check the details entered in Steps 2 and 3. Empty values "
+                        "will be saved as empty; return to the relevant step to correct them."
+                    )
+                    for label, wizard_key in (
+                        ("Source organism", "wizard_source_organism"),
+                        ("Sample code", "wizard_sample_code"),
+                        ("Collection location", "wizard_collection_location"),
+                        ("GPS coordinates", "wizard_gps_coordinates"),
+                        ("Depth (m)", "wizard_depth_m"),
+                        ("Notes", "wizard_note"),
+                        ("UV", "wizard_uv_data"),
+                        ("FTIR", "wizard_ftir_data"),
+                        ("CD/ECD", "wizard_cd_data"),
+                        ("Optical rotation", "wizard_optical_rotation"),
+                        ("Melting point", "wizard_melting_point"),
+                        ("Crystallization", "wizard_crystallization_method"),
+                        ("HRMS", "wizard_hrms_data"),
+                        ("CCDC", "wizard_ccdc_number"),
+                        ("Structure image path", "wizard_structure_path"),
+                    ):
+                        value = get_wizard_value(wizard_key, "")
+                        st.write(f"**{label}:** {clean_text(value) if value else 'Not provided'}")
+                    spectrum_uploads_preview = get_wizard_value("wizard_submission_spectra_uploads") or []
+                    st.write(f"**Supporting spectra uploads:** {len(spectrum_uploads_preview)}")
+                    st.write(
+                        f"**Structure image upload:** "
+                        f"{'Selected' if get_wizard_value('wizard_structure_upload') else 'Not provided'}"
+                    )
 
         nav_left, nav_right = st.columns([1, 1])
         with nav_left:
             if wizard_step > 1 and st.button("Back", width="stretch", key=f"wizard_back_{wizard_step}"):
-                persist_wizard_inputs()
+                persist_wizard_inputs(wizard_step)
                 st.session_state["compound_wizard_step"] = wizard_step - 1
                 st.rerun()
 
         with nav_right:
             if wizard_step < 4:
                 if st.button("Continue", width="stretch", key=f"wizard_next_{wizard_step}"):
-                    persist_wizard_inputs()
+                    persist_wizard_inputs(wizard_step)
                     if wizard_step == 1 and not maybe_blank(get_wizard_value("wizard_trivial_name")):
                         st.error("Trivial Name is required before moving to the next step.")
                     else:
@@ -10533,7 +10520,7 @@ def show_compound_pages():
                         st.rerun()
             else:
                 if st.button("Save New Record", width="stretch", key="wizard_submit_compound"):
-                    persist_wizard_inputs()
+                    persist_wizard_inputs(wizard_step)
                     trivial_name = maybe_blank(get_wizard_value("wizard_trivial_name"))
                     iupac_name = maybe_blank(get_wizard_value("wizard_iupac_name"))
                     molecular_formula = maybe_blank(get_wizard_value("wizard_formula"))
