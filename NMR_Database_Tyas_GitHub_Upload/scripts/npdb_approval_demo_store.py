@@ -107,7 +107,8 @@ def seed_demo_record(
     """Only synthetic records and issue IDs are admitted."""
     _demo_id(record_id)
     issue_id = f"DEMO-ISSUE-{record_id[5:]}"
-    with db:
+    db.execute("BEGIN IMMEDIATE")
+    try:
         db.execute(
             "INSERT INTO demo_records(record_id,value) VALUES (?,?)",
             (record_id, value),
@@ -117,6 +118,10 @@ def seed_demo_record(
             "VALUES (?,?,?,?,?)",
             (issue_id, record_id, assignee, severity, "open"),
         )
+        db.commit()
+    except BaseException:
+        db.rollback()
+        raise
     return issue_id
 
 
@@ -189,7 +194,8 @@ def propose_demo_edit(
         "record_id": row["record_id"], "proposed_value": proposed_value,
         "expected_version": row["version"], "requester": actor,
     }
-    with db:
+    db.execute("BEGIN IMMEDIATE")
+    try:
         db.execute(
             "INSERT INTO approval_requests "
             "(request_id,issue_id,record_id,proposed_value,proposed_hash,"
@@ -204,6 +210,10 @@ def propose_demo_edit(
             request_id=request_id, outcome="pending_owner_approval",
             message="A dummy curation proposal needs owner review.", now=ts,
         )
+        db.commit()
+    except BaseException:
+        db.rollback()
+        raise
     return request_id
 
 
