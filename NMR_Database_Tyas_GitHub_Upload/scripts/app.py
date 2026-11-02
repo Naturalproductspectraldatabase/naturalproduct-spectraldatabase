@@ -4689,6 +4689,36 @@ def guard_edit_compound_record_switch(compound_id: int):
     st.session_state["_active_edit_compound_id"] = compound_id
 
 
+def _revision_matches(current, expected) -> bool:
+    """Compare PostgreSQL timestamptz revisions without losing precision."""
+    if not maybe_blank(current) or not maybe_blank(expected):
+        return False
+    try:
+        current_dt = datetime.fromisoformat(maybe_blank(current).replace("Z", "+00:00"))
+        expected_dt = datetime.fromisoformat(maybe_blank(expected).replace("Z", "+00:00"))
+        return current_dt == expected_dt
+    except ValueError:
+        return maybe_blank(current) == maybe_blank(expected)
+
+
+def verify_compound_editor_revision(compound_id: int, expected_updated_at):
+    """Check revision before file uploads; PATCH still performs atomic CAS."""
+    if not use_supabase_write_backend():
+        return
+    if get_npdb_read_backend() != "supabase":
+        raise RuntimeError("Live Supabase data is unavailable. Reopen the editor when the cloud recovers.")
+    revision = maybe_blank(expected_updated_at)
+    if not revision:
+        raise RuntimeError("This edit has no reliable cloud revision. Refresh the record before saving.")
+    rows = _supabase_request(
+        "GET", "/rest/v1/compounds",
+        query={"select": "id,updated_at", "id": f"eq.{compound_id}", "limit": "1"},
+        write=False,
+    ) or []
+    if not rows or not _revision_matches(rows[0].get("updated_at"), revision):
+        raise RuntimeError("This compound changed in another session. Refresh the form and review the latest values before saving.")
+
+
 def reset_compound_wizard():
     wizard_keys = [
         "compound_wizard_step",
@@ -10737,7 +10767,12 @@ def show_compound_pages():
                 st.error("Record not found.")
             else:
                 row = row_df.iloc[0]
-
+                baseline_key = f"_draft_edit_baseline_{edit_compound_id}"
+                if baseline_key not in st.session_state:
+                    # Keep the version actually seen by the editor, not a
+                    # later revision read during a subsequent rerun.
+                    st.session_state[baseline_key] = row.to_dict()
+                edit_baseline = st.session_state[baseline_key]
 
                 col1, col2 = st.columns(2)
 
@@ -10840,6 +10875,10 @@ def show_compound_pages():
                                 st.stop()
 
                         try:
+                            ensure_write_target_ready()
+                            verify_compound_editor_revision(
+                                edit_compound_id, edit_baseline.get("updated_at")
+                            )
                             if structure_upload is not None:
                                 structure_image_path = save_uploaded_asset(
                                     structure_upload,
@@ -10889,7 +10928,8 @@ def show_compound_pages():
                                 hrms_data=hrms_data.strip(),
                                 data_source=data_source.strip(),
                                 curation_status=normalize_curation_status(curation_status, default="curated"),
-                                note=note.strip()
+                                note=note.strip(),
+                                original_row=edit_baseline,
                             )
                             confirm_compound_fields_persisted(
                                 edit_compound_id,
@@ -10931,6 +10971,9 @@ def show_compound_pages():
                                 },
                                 "Perubahan record",
                             )
+                            saved_row = load_compound_row(edit_compound_id)
+                            if not saved_row.empty:
+                                st.session_state[baseline_key] = saved_row.iloc[0].to_dict()
                         except Exception as exc:
                             stop_after_save_error("Perubahan record", exc)
 
@@ -14349,6 +14392,13 @@ def show_specimen_library_pages():
 # App boot
 # =========================
 apply_navigation_query_params()
+# Invalidate snapshot-derived caches before loading any page on backend change.
+active_read_backend = get_npdb_read_backend()
+previous_read_backend = st.session_state.get("_npdb_last_read_backend")
+if previous_read_backend is not None and previous_read_backend != active_read_backend:
+    invalidate_cached_views()
+    clear_edit_compound_form_state()
+st.session_state["_npdb_last_read_backend"] = active_read_backend
 main_section = st.session_state.get("nav_section", "Dashboard")
 all_compounds_df = load_compounds_for_section(main_section)
 render_cloud_sync_notice()
