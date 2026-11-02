@@ -10259,51 +10259,14 @@ def show_compound_pages():
         spectra_df = load_all_spectra_files()
         # Do not persist here: Streamlit may have just deleted the widgets
         # from a previous step, while the durable _draft_ values remain.
-        for key in [
-            "wizard_trivial_name",
-            "wizard_iupac_name",
-            "wizard_formula",
-            "wizard_molecular_weight",
-            "wizard_smiles",
-            "wizard_inchi",
-            "wizard_inchikey",
-            "wizard_compound_class_select",
-            "wizard_compound_class_custom",
-            "wizard_compound_subclass_select",
-            "wizard_compound_subclass_custom",
-            "wizard_data_source_select",
-            "wizard_data_source_custom",
-            "wizard_source_category_select",
-            "wizard_source_category_custom",
-            "wizard_source_organism",
-            "wizard_sample_code",
-            "wizard_collection_location",
-            "wizard_gps_coordinates",
-            "wizard_depth_m",
-            "wizard_uv_data",
-            "wizard_ftir_data",
-            "wizard_cd_data",
-            "wizard_optical_rotation",
-            "wizard_melting_point",
-            "wizard_crystallization_method",
-            "wizard_ccdc_number",
-            "wizard_hrms_data",
-            "wizard_structure_path",
-            "wizard_submission_spectrum_type_select",
-            "wizard_submission_spectrum_type_custom",
-            "wizard_submission_spectra_note",
-            "wizard_journal_name",
-            "wizard_article_title",
-            "wizard_publication_year",
-            "wizard_volume",
-            "wizard_issue",
-            "wizard_pages",
-            "wizard_doi",
-            "wizard_curation_status",
-            "wizard_note",
-        ]:
+        # Streamlit clears keys for widgets hidden in another wizard step.
+        # Hydrate ONLY the step that is about to render. Hydrating all steps
+        # recreates hidden widget keys with blank values, which can later
+        # overwrite intact persisted drafts on a Back/Continue cycle.
+        from npdb_wizard_draft import WIZARD_STEP_FIELDS
+        wizard_step = int(st.session_state.get("compound_wizard_step", 1))
+        for key in WIZARD_STEP_FIELDS[wizard_step]:
             hydrate_wizard_widget(key)
-        wizard_step = st.session_state.get("compound_wizard_step", 1)
         step_labels = {
             1: "Identity",
             2: "Origin",
