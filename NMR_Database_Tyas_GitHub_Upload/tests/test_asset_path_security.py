@@ -105,3 +105,28 @@ class AssetPathSecurityTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ExclusiveAssetWriteTests(unittest.TestCase):
+    def test_existing_science_file_and_symlink_are_never_overwritten(self):
+        from npdb_asset_paths import write_local_asset
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            original = root / 'science.png'
+            original.write_bytes(b'curated')
+            result = write_local_asset(b'new', root=root, filename='science.png')
+            self.assertNotEqual(result, original)
+            self.assertEqual(original.read_bytes(), b'curated')
+            (root / 'link.png').symlink_to(original)
+            result = write_local_asset(b'new', root=root, filename='link.png')
+            self.assertEqual(original.read_bytes(), b'curated')
+            self.assertFalse(result.is_symlink())
+
+    def test_symlink_root_and_filename_traversal_rejected(self):
+        from npdb_asset_paths import write_local_asset
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            (root / 'linked').symlink_to(root, target_is_directory=True)
+            for target, name in ((root/'linked', 'new.png'), (root, '../new.png')):
+                with self.assertRaises(AssetAccessError):
+                    write_local_asset(b'new', root=target, filename=name)

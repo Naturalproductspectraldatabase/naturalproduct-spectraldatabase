@@ -14,6 +14,7 @@ import unittest
 from pathlib import Path
 
 from PIL import Image, ImageOps
+from test_asset_reader_integration import reader_namespace
 
 
 APP = Path(__file__).resolve().parents[1] / "scripts" / "app.py"
@@ -77,6 +78,7 @@ class StructureImageIntegrityTests(unittest.TestCase):
     def ns_images(self):
         ns = {
             "Image": Image,
+            "LOCAL_ASSET_MAX_BYTES": 1024*1024,
             "Path": Path,
             "ImageOps": ImageOps,
             "STRUCTURE_DETAIL_IMAGE_SIZE": (300, 240),
@@ -96,7 +98,9 @@ class StructureImageIntegrityTests(unittest.TestCase):
         ns = self.ns_images()
         loader = isolated("load_standardized_structure_image", ns)
         with tempfile.TemporaryDirectory() as directory:
-            p = Path(directory) / "curated.png"
+            p = Path(directory).resolve() / "data/structures/curated.png"
+            p.parent.mkdir(parents=True)
+            ns.update(reader_namespace(Path(directory).resolve()))
             # Solid colors survive resampling deterministically.
             im = Image.new("RGB", (120, 60), (20, 50, 80))
             im.save(p)

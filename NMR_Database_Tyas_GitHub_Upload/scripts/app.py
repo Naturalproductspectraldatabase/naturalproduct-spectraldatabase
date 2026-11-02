@@ -31,6 +31,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from npdb_asset_paths import AssetAccessError, read_local_asset, validate_asset_content, write_local_asset
+
 try:
     from PIL import Image, ImageOps
 except Exception:
@@ -4586,8 +4588,8 @@ def validate_spectrum_entry(file_path_value: str, spectrum_type_value: str) -> t
         return errors, warnings
 
     full_path = get_full_file_path(path_text)
-    if full_path is None or not full_path.exists():
-        warnings.append("Local file path was saved, but the file does not currently exist at that location.")
+    if full_path is None:
+        warnings.append("Local asset is unavailable or not permitted. Ask a curator to review its registered location.")
     elif is_raw_spectrum_type(spectrum_text):
         warnings.append("Raw-data file is stored locally. Google Drive is safer for public deployment and laptop storage.")
     return errors, warnings
@@ -5437,18 +5439,39 @@ def can_preview_external_image(file_path_value, spectrum_type_value="") -> bool:
     return path_text.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif"))
 
 
+# Local attachment roots are server constants, never record-provided directories.
+LOCAL_ASSET_MAX_BYTES = 64 * 1024 * 1024
+LOCAL_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif", ".tif", ".tiff"})
+LOCAL_SPECTRUM_SUFFIXES = LOCAL_IMAGE_SUFFIXES | frozenset({
+    ".pdf", ".jdx", ".dx", ".jcamp", ".csv", ".tsv", ".txt", ".mnova", ".fid", ".zip",
+})
+
+
+def read_scientific_asset(source, kind="attachment"):
+    roots = {"structure": (STRUCTURES_DIR,), "spectrum": (SPECTRA_DIR,),
+             "specimen": (SPECIMENS_DIR,),
+             "attachment": (STRUCTURES_DIR, SPECTRA_DIR, SPECIMENS_DIR)}
+    suffixes = LOCAL_IMAGE_SUFFIXES if kind in {"structure", "specimen"} else LOCAL_SPECTRUM_SUFFIXES
+    data = read_local_asset(source, project=PROJECT_DIR, roots=roots[kind],
+                            max_bytes=LOCAL_ASSET_MAX_BYTES, allowed_suffixes=suffixes)
+    validate_asset_content(data, Path(source).suffix)
+    return data
+
+
+def local_asset_available(source, kind="attachment"):
+    try:
+        read_scientific_asset(source, kind)
+        return True
+    except (AssetAccessError, OSError, ValueError, TypeError):
+        return False
+
+
 def get_full_file_path(relative_path):
-    if relative_path is None:
-        return None
-    relative_path = str(relative_path).strip()
-    if not relative_path:
-        return None
-    if is_external_url(relative_path):
+    """Compatibility locator only; readers must use read_scientific_asset bytes."""
+    if not local_asset_available(relative_path):
         return None
     candidate = Path(relative_path)
-    if candidate.is_absolute():
-        return candidate
-    return PROJECT_DIR / candidate
+    return candidate if candidate.is_absolute() else PROJECT_DIR / candidate
 
 def is_image_file(path: Path):
     return path.suffix.lower() in [".png", ".jpg", ".jpeg", ".webp"]
@@ -5749,10 +5772,10 @@ def first_structure_identifier(smiles: str = "", inchi: str = "", inchikey: str 
 
 
 def load_standardized_structure_image(image_path: Path, size=STRUCTURE_DETAIL_IMAGE_SIZE, fallback_smiles: str = ""):
-    if Image is None or image_path is None or not image_path.exists():
+    if Image is None or image_path is None:
         return None
     try:
-        with Image.open(image_path) as image:
+        with Image.open(io.BytesIO(read_scientific_asset(image_path, "structure"))) as image:
             # A curated PNG remains authoritative even when it is small.
             # Replacing it with an unrelated SMILES would silently corrupt
             # the scientific depiction; upscale it on an opaque white canvas.
@@ -5771,7 +5794,9 @@ def load_external_structure_png_bytes(source_text: str, size=STRUCTURE_DETAIL_IM
         return b""
     try:
         with urllib.request.urlopen(url, timeout=8, context=_supabase_ssl_context()) as response:
-            raw = response.read()
+            raw = response.read(LOCAL_ASSET_MAX_BYTES + 1)
+        if len(raw) > LOCAL_ASSET_MAX_BYTES:
+            return b""
         with Image.open(io.BytesIO(raw)) as image:
             # Never silently substitute a downloaded/uploaded structure
             # with an RDKit image based on an unverified structure string.
@@ -5803,10 +5828,7 @@ def load_standardized_structure_source(source_value, size=STRUCTURE_DETAIL_IMAGE
         except Exception:
             return None
 
-    full_path = get_full_file_path(source_text)
-    if full_path is None or not full_path.exists():
-        return None
-    return load_standardized_structure_image(full_path, size=size, fallback_smiles=fallback_smiles)
+    return load_standardized_structure_image(source_text, size=size, fallback_smiles=fallback_smiles)
 
 
 def render_structure_preview(smiles_text: str, caption: str | None = None, empty_message: bool = True, size=STRUCTURE_DETAIL_IMAGE_SIZE):
@@ -8696,28 +8718,31 @@ def _archive_safe_name(value: str, fallback: str = "file") -> str:
     return slugify_value(value, fallback=fallback).replace(" ", "_")
 
 
-def _asset_bytes_from_source(source_value: str) -> tuple[bytes, str]:
+def _asset_bytes_from_source(source_value: str, kind="attachment") -> tuple[bytes, str]:
     source_text = maybe_blank(source_value)
     if not source_text:
         return b"", ""
     try:
         if is_external_url(source_text) or is_supabase_storage_reference(source_text):
             with urllib.request.urlopen(display_asset_url(source_text), timeout=30, context=_supabase_ssl_context()) as response:
-                data = response.read()
+                data = response.read(LOCAL_ASSET_MAX_BYTES + 1)
+                if len(data) > LOCAL_ASSET_MAX_BYTES:
+                    return b"", ""
                 suffix = Path(urlparse(source_text).path).suffix or mimetypes.guess_extension(response.headers.get_content_type()) or ".bin"
+                validate_asset_content(data, suffix)
                 return data, suffix
-        full_path = get_full_file_path(source_text)
-        if full_path is not None and full_path.exists():
-            return full_path.read_bytes(), full_path.suffix or ".bin"
+        return read_scientific_asset(source_text, kind), Path(source_text).suffix.lower()
     except Exception:
         return b"", ""
     return b"", ""
 
 
 def _compound_structure_asset(row_data) -> tuple[bytes, str]:
-    structure_bytes, suffix = _asset_bytes_from_source(row_data.get("structure_image_path"))
+    structure_bytes, suffix = _asset_bytes_from_source(row_data.get("structure_image_path"), kind="structure")
     if structure_bytes:
         return structure_bytes, suffix or ".png"
+    if maybe_blank(row_data.get("structure_image_path")):
+        return b"", ""
     smiles_value = maybe_blank(row_data.get("smiles"))
     if smiles_value:
         generated = structure_smiles_png_bytes(smiles_value, size=STRUCTURE_DOWNLOAD_IMAGE_SIZE)
@@ -9029,7 +9054,6 @@ def render_spectra_section(compound_id):
                 file_id = row["id"]
                 file_path_value = maybe_blank(row["file_path"])
                 note_value = clean_text(row["note"])
-                full_path = get_full_file_path(file_path_value)
                 _, file_warnings = validate_spectrum_entry(file_path_value, spectrum_type)
                 note_markup = (
                     f'<div class="badge-row"><strong>Note:</strong> {html_text(note_value)}</div>'
@@ -9064,36 +9088,8 @@ def render_spectra_section(compound_id):
                         render_external_link_card("Remote file", display_asset_url(file_path_value), None)
                     continue
 
-                if full_path is None or not full_path.exists():
-                    st.warning("File not found.")
-                    if is_owner_editor() and full_path is not None:
-                        st.code(str(full_path))
-                    continue
-
-                if is_image_file(full_path):
-                    st.image(str(full_path), caption=full_path.name, width="stretch")
-
-                elif is_pdf_file(full_path):
-                    with open(full_path, "rb") as f:
-                        pdf_bytes = f.read()
-                    st.download_button(
-                        label=f"Download {full_path.name}",
-                        data=pdf_bytes,
-                        file_name=full_path.name,
-                        mime="application/pdf",
-                        key=f"pdf_download_{file_id}"
-                    )
-
-                else:
-                    with open(full_path, "rb") as f:
-                        file_bytes = f.read()
-                    st.download_button(
-                        label=f"Download {full_path.name}",
-                        data=file_bytes,
-                        file_name=full_path.name,
-                        mime="application/octet-stream",
-                        key=f"file_download_{file_id}"
-	                    )
+                render_registered_file_preview(file_path_value, spectrum_type=spectrum_type,
+                                               key_prefix=f"spectrum_{file_id}", kind="spectrum")
 
 	# =========================
 	# Gallery and specimen previews
@@ -9115,7 +9111,7 @@ def is_carbon_spectrum_label(value) -> bool:
     return "13c" in compact or "carbon" in compact or "c13" in compact
 
 
-def render_registered_file_preview(file_path_value, caption: str = "", spectrum_type: str = "", missing_label: str = "File not found.", key_prefix: str = "registered"):
+def render_registered_file_preview(file_path_value, caption: str = "", spectrum_type: str = "", missing_label: str = "File not found.", key_prefix: str = "registered", kind: str = "attachment"):
     path_text = maybe_blank(file_path_value)
     if not path_text:
         st.info("No file registered.")
@@ -9138,31 +9134,19 @@ def render_registered_file_preview(file_path_value, caption: str = "", spectrum_
                     st.caption(path_text)
         return
 
-    full_path = get_full_file_path(path_text)
-    if full_path is None or not full_path.exists():
-        st.warning(missing_label)
-        if is_owner_editor() and full_path is not None:
-            st.caption(str(full_path))
-        return
-
-    if is_image_file(full_path):
-        st.image(str(full_path), caption=caption or full_path.name, width="stretch")
-        return
-
     try:
-        file_bytes = full_path.read_bytes()
-    except Exception:
-        st.warning("File is registered, but could not be opened.")
+        file_bytes = read_scientific_asset(path_text, kind)
+    except (AssetAccessError, OSError, ValueError, TypeError):
+        st.warning("Local asset is unavailable or not permitted. Ask a curator to review its registered location.")
         return
-
-    mime = "application/pdf" if is_pdf_file(full_path) else "application/octet-stream"
-    st.download_button(
-        label=f"Download {full_path.name}",
-        data=file_bytes,
-        file_name=full_path.name,
-        mime=mime,
-        key=f"download_{slugify_value(key_prefix)}_{slugify_value(str(full_path))}_{hashlib.sha1(str(full_path).encode('utf-8')).hexdigest()[:10]}",
-    )
+    name = Path(path_text).name
+    suffix = Path(name).suffix.lower()
+    if suffix in LOCAL_IMAGE_SUFFIXES:
+        st.image(file_bytes, caption=caption or name, width="stretch")
+        return
+    mime = "application/pdf" if suffix == ".pdf" else "application/octet-stream"
+    st.download_button(label=f"Download {name}", data=file_bytes, file_name=name, mime=mime,
+                       key=f"download_{slugify_value(key_prefix)}_{hashlib.sha256(path_text.encode()).hexdigest()[:16]}")
 
 
 def render_compound_structure_from_row(row_data, caption: str = "Structure", size=STRUCTURE_THUMBNAIL_IMAGE_SIZE):
@@ -11964,7 +11948,7 @@ def show_spectra_library_overview():
         lambda value: is_external_url(value) or is_supabase_storage_reference(value)
     )
     spectra_df["exists_locally"] = spectra_df["file_path"].fillna("").astype(str).apply(
-        lambda value: True if (is_external_url(value) or is_supabase_storage_reference(value)) else bool(get_full_file_path(value) and get_full_file_path(value).exists())
+        lambda value: True if (is_external_url(value) or is_supabase_storage_reference(value)) else local_asset_available(value, "spectrum")
     )
 
     m1, m2, m3, m4 = st.columns(4)
@@ -12916,7 +12900,15 @@ def _local_binary_path(target_dir: Path, base_name: str, suffix: str) -> Path:
 
 def save_uploaded_asset(uploaded_file, target_dir: Path, base_name: str) -> str:
     suffix = Path(uploaded_file.name).suffix.lower() or ".bin"
+    if target_dir not in (STRUCTURES_DIR, SPECTRA_DIR, SPECIMENS_DIR):
+        raise AssetAccessError("Asset upload destination is not permitted.")
+    suffixes = LOCAL_SPECTRUM_SUFFIXES if target_dir == SPECTRA_DIR else LOCAL_IMAGE_SUFFIXES
+    if suffix not in suffixes or uploaded_file.size > LOCAL_ASSET_MAX_BYTES:
+        raise AssetAccessError("Asset type or size is not permitted.")
     data = uploaded_file.getbuffer().tobytes()
+    if len(data) > LOCAL_ASSET_MAX_BYTES:
+        raise AssetAccessError("Asset type or size is not permitted.")
+    validate_asset_content(data, suffix)
     if use_supabase_write_backend():
         bucket = "exports"
         public_bucket = False
@@ -12937,14 +12929,10 @@ def save_uploaded_asset(uploaded_file, target_dir: Path, base_name: str) -> str:
             raise RuntimeError(
                 f"Cloud asset upload failed for '{uploaded_file.name}'. The file was not committed as a cloud-backed record."
             ) from exc
-    candidate = _local_binary_path(target_dir, base_name, suffix)
-    candidate.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with open(candidate, "wb") as output_file:
-            output_file.write(data)
-    except Exception:
-        pass
-    return relative_project_path(candidate) if candidate.exists() else str(candidate)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    candidate = write_local_asset(data, root=target_dir,
+                                 filename=slugify_value(base_name, fallback="asset") + suffix)
+    return relative_project_path(candidate)
 
 
 def _merge_compound_names(df: pd.DataFrame) -> pd.DataFrame:
@@ -13995,8 +13983,7 @@ def _save_generated_structure_image(compound_id: int, mol) -> str:
                 f"Cloud structure image upload failed for compound ID {compound_id}. The structure metadata was not saved."
             ) from exc
 
-    candidate = _local_binary_path(STRUCTURES_DIR, f"compound_{compound_id}_structure", ".png")
-    candidate.write_bytes(data)
+    candidate = write_local_asset(data, root=STRUCTURES_DIR, filename=f"compound_{compound_id}_structure.png")
     return str(candidate.relative_to(PROJECT_DIR))
 
 
@@ -14241,13 +14228,7 @@ def _render_specimen_image(image_path: str, caption: str = "Specimen"):
         if is_owner_editor():
             st.caption(path_text)
         return
-    full_path = get_full_file_path(path_text)
-    if full_path is not None and full_path.exists() and is_image_file(full_path):
-        st.image(str(full_path), caption=caption, width="stretch")
-        return
-    st.warning("Specimen image file not found.")
-    if is_owner_editor() and full_path is not None:
-        st.caption(str(full_path))
+    render_registered_file_preview(path_text, caption=caption, kind="specimen", key_prefix="specimen")
 
 
 def show_specimen_library_pages():
