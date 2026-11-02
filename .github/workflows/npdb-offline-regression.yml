@@ -2,7 +2,7 @@ name: NPDB offline regression checks
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, qa/npdb-reviewed-integration-20261103]
   push:
     branches: [main]
   workflow_dispatch:
@@ -47,3 +47,25 @@ jobs:
       - name: Run offline regression test suite
         run: |
           python -m unittest discover -s NMR_Database_Tyas_GitHub_Upload/tests -p 'test_*.py' -v
+
+  streamlit-login-integration:
+    name: Streamlit / isolated full-script login
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Fetch exact revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          AUTH="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w 0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${AUTH}" fetch --no-tags --depth=1 origin "${GITHUB_REF}"
+          git -c advice.detachedHead=false checkout --detach FETCH_HEAD
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install tested UI dependencies
+        run: python -m pip install "streamlit==1.66.1" "plotly==7.1.0" "pandas==2.2.3" "pillow==12.3.0"
+      - name: Run synthetic login integration checks
+        run: python -m unittest discover -s NMR_Database_Tyas_GitHub_Upload/tests -p 'test_streamlit_login_integration.py' -v
