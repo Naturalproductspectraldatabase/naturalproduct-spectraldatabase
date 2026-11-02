@@ -4,6 +4,11 @@ import sqlite3
 import tempfile
 import unittest
 from contextlib import closing
+import ast
+import sys
+
+APP = Path(__file__).resolve().parents[1] / "scripts" / "app.py"
+sys.path.insert(0, str(APP.parent))
 from npdb_sqlite_snapshot import verified_sqlite_snapshot_bytes, SQLiteSnapshotError
 
 
@@ -67,6 +72,39 @@ class SnapshotTests(unittest.TestCase):
             verified_sqlite_snapshot_bytes(self.db, max_bytes=100)
         with self.assertRaises(SQLiteSnapshotError):
             verified_sqlite_snapshot_bytes(self.db, max_bytes=0)
+
+
+    def test_real_app_backup_boundary_checks_owner_and_reads_wal(self):
+        # Extract the actual production function, without importing Streamlit
+        # or touching credentials, services or private NPDB data.
+        tree = ast.parse(APP.read_text(encoding="utf-8"), filename=str(APP))
+        function = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "get_backup_bytes"][-1]
+        seen = []
+        def require(action):
+            seen.append(action)
+            if self.role != "owner":
+                raise PermissionError("Denied by synthetic role gate")
+        with closing(sqlite3.connect(self.db)) as writer:
+            writer.execute("PRAGMA journal_mode=WAL")
+            writer.execute("PRAGMA wal_autocheckpoint=0")
+            writer.execute("CREATE TABLE sample (v INTEGER)")
+            writer.commit()
+            writer.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            writer.execute("INSERT INTO sample VALUES (42)")
+            writer.commit()
+            namespace = {"DB_PATH": self.db, "require_backend_permission": require,
+                         "verified_sqlite_snapshot_bytes": verified_sqlite_snapshot_bytes}
+            exec(compile(ast.Module(body=[function], type_ignores=[]), str(APP), "exec"), namespace)
+            self.role = "viewer"
+            with self.assertRaises(PermissionError):
+                namespace["get_backup_bytes"]()
+            self.role = "owner"
+            snapshot = namespace["get_backup_bytes"]()
+            self.assertEqual(seen, ["admin", "admin"])
+            with closing(sqlite3.connect(":memory:")) as restored:
+                restored.deserialize(snapshot)
+                self.assertEqual(restored.execute("SELECT v FROM sample").fetchone(), (42,))
+                self.assertEqual(restored.execute("PRAGMA integrity_check").fetchone(), ("ok",))
 
 
 if __name__ == "__main__":
