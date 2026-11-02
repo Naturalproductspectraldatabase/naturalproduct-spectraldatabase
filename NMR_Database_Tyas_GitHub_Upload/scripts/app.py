@@ -967,8 +967,11 @@ def is_access_gate_enabled() -> bool:
 
 
 def verify_access_gate():
+    # Fail closed: a missing or malformed Streamlit secret must never
+    # silently expose the compound database without authentication.
     if not is_access_gate_enabled():
-        return
+        st.error("NPDB access is temporarily unavailable because login is not configured. Please contact the database administrator.")
+        st.stop()
 
     if st.session_state.get("npdb_authenticated"):
         return
