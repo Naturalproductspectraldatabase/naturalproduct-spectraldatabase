@@ -54,7 +54,7 @@ class HomeVisualRhythmTests(unittest.TestCase):
             ".dashboard-workspace-card .dashboard-workspace-title",
         ):
             self.assertIn(required, self.source)
-        self.assertIn("aria-hidden=\\"true\\"", self.source)
+        self.assertIn('aria-hidden="true"', self.source)
 
     def test_mobile_css_has_separate_spacing(self):
         self.assertIn("@media (max-width: 900px)", self.source)
