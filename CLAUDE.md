@@ -58,3 +58,14 @@ Treat production data-loss claims as **potential risks unless actual data loss i
 ChatGPT coordinates requirements and reviews evidence through its connected services; Codex can handle owner-approved local development; Claude Code is an independent reviewer or separate implementer. **These are suggested roles, not automatic system-to-system connections or shared permissions.**
 
 Keep this file concise and update it when decisions change. Do not put private research records, secrets, or personal data in instructions committed to this public repository.
+
+## Mandatory owner approval and audit procedures
+
+Read [NPDB_SECURITY_AND_AUDIT_POLICY.md](NPDB_SECURITY_AND_AUDIT_POLICY.md) before taking action. The owner requires specific approval for **each project-affecting operation** (read-only as well as write), or a clearly enumerated and bounded batch. No vague invitation to help grants indefinite authority. State target tools/resources, expected result, data/security impact and rollback. Stop if a step expands beyond approval; provide a result log afterward.
+
+For Claude Code specifically:
+- Keep cloud/web repository access distinct from access to the owner's desktop. Never infer prior ChatGPT/Codex permissions also authorize Claude.
+- Use the most restrictive available permission mode, avoid bypass/auto-accept/full-computer options, and get separate approval for pushing branches, PR merge, production deployment, schema or credential changes.
+- Any future audit implementation must protect privileged logs, record user identities and denied attempts, avoid recording credentials or sensitive search/compound contents, and distinguish app events from provider events.
+- Existing `audit_events` records **do not** establish comprehensive viewer/login/download access history, and security alerts are only proposed; never claim monitoring is active without verified tests.
+- Work on a separate branch and request owner approval for each new PR/step instead of silently continuing from an old plan.
