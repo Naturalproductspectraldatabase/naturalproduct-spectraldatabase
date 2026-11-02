@@ -5281,30 +5281,9 @@ def parse_peak_input(text: str):
     return peaks
 
 def find_best_matches(query_peaks, db_peaks, tolerance):
-    matched_query_peaks = []
-    matched_db_indexes = set()
-
-    for q in query_peaks:
-        best_match = None
-        best_diff = None
-        best_index = None
-
-        for i, db_peak in enumerate(db_peaks):
-            if i in matched_db_indexes:
-                continue
-
-            diff = abs(q - db_peak)
-            if diff <= tolerance:
-                if best_diff is None or diff < best_diff:
-                    best_diff = diff
-                    best_match = db_peak
-                    best_index = i
-
-        if best_match is not None:
-            matched_query_peaks.append((q, best_match, best_diff))
-            matched_db_indexes.add(best_index)
-
-    return matched_query_peaks
+    """Order-independent optimal one-to-one matching of numeric NMR peaks."""
+    from npdb_peak_matching import optimal_nmr_peak_matches
+    return optimal_nmr_peak_matches(query_peaks, db_peaks, tolerance)
 
 def is_external_url(value) -> bool:
     text = maybe_blank(value)
