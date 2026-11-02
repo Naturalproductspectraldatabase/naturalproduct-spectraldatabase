@@ -1,11 +1,11 @@
-"""Isolated NPDB C1/C2 regression tests; no app import, network, or production DB.
+"""Isolated C1/C2 regression tests against real app.py function definitions.
 
 Run from a repository checkout:
     python -m unittest discover -s NMR_Database_Tyas_GitHub_Upload/tests -p 'test_c1_c2_regressions.py' -v
 
-The intentionally failing expectations are annotated @expectedFailure to document
-known defects on main. A fix should turn them into unexpected successes; then
-remove @expectedFailure and keep the passing regression tests.
+The suite uses dummy records and mocked Supabase/Streamlit interfaces.
+It does not import app.py as a full app, read secrets, or contact production.
+The tests are intended to pass on the C1/C2 fix branch (and to fail on main).
 """
 
 import ast
@@ -82,7 +82,6 @@ class SourceAndCacheRegressionTests(unittest.TestCase):
         }
         return state, namespace
 
-    @unittest.expectedFailure
     def test_c1_list_cache_refreshes_after_snapshot_to_cloud_transition(self):
         state, ns = self.make_namespace()
         isolated_function("_load_all_compounds_cached", ns)
@@ -91,7 +90,6 @@ class SourceAndCacheRegressionTests(unittest.TestCase):
         state["backend"] = "supabase"
         self.assertEqual(load_all().iloc[0]["trivial_name"], "fresh cloud")
 
-    @unittest.expectedFailure
     def test_c1_record_cache_refreshes_after_snapshot_to_cloud_transition(self):
         state, ns = self.make_namespace()
         isolated_function("_load_compound_row_cached", ns)
@@ -135,15 +133,13 @@ class ColumnProbeRegressionTests(unittest.TestCase):
         probe = isolated_function("supabase_column_available", ns)
         return state, probe
 
-    @unittest.expectedFailure
     def test_c2_transient_network_failure_must_not_cache_column_absent(self):
         state, probe = self.make_probe()
-        try:
-            self.assertFalse(probe("compounds", "curation_status"))
-        except RuntimeError:
-            pass  # Safe fix may propagate transient failure rather than cache False.
+        with self.assertRaises(RuntimeError):
+            probe("compounds", "curation_status")
         state["healthy"] = True
         self.assertTrue(probe("compounds", "curation_status"))
+        self.assertEqual(state["requests"], 2, "Transient errors must not poison the cache")
 
     def test_c2_positive_probe_works_with_fake_network(self):
         state, probe = self.make_probe()
@@ -151,7 +147,6 @@ class ColumnProbeRegressionTests(unittest.TestCase):
         self.assertTrue(probe("compounds", "curation_status"))
         self.assertEqual(state["requests"], 1)
 
-    @unittest.expectedFailure
     def test_c2_unknown_schema_must_block_write_instead_of_dropping_status(self):
         patches = []
         ns = {
@@ -163,23 +158,27 @@ class ColumnProbeRegressionTests(unittest.TestCase):
             "normalize_curation_status": lambda val, default="curated": val or default,
             "use_supabase_write_backend": lambda: True,
             "supabase_column_available": lambda *a, **k: False,  # Uncertain after network failure.
-            "supabase_update_row": lambda *a: patches.append(a),
+            "supabase_update_row": lambda *a, **k: patches.append((a, k)),
             "use_local_read_backend": lambda: False,
+            "get_npdb_read_backend": lambda: "supabase",
             "invalidate_cached_views": lambda: None,
             "_upsert_compound_local": lambda row: None,
         }
         update = isolated_function("update_compound_record", ns)
-        kwargs = {name: "" for name in inspect.signature(update).parameters}
+        kwargs = {
+            name: "" for name in inspect.signature(update).parameters
+            if name != "original_row"
+        }
         kwargs.update(compound_id=101, structure_image_path="dummy.png", curation_status="reviewed")
-        try:
+        original = {key: value for key, value in kwargs.items() if key != "compound_id"}
+        original["updated_at"] = "2026-11-01T10:00:00+00:00"
+        kwargs["original_row"] = original
+        with self.assertRaisesRegex(RuntimeError, "curation_status"):
             update(**kwargs)
-        except RuntimeError:
-            pass  # Explicit refusal is an acceptable safe behavior.
-        self.assertEqual(patches, [], "Unknown column status must block the save, not silently omit curation_status")
+        self.assertEqual(patches, [], "Unknown column status must block writes")
 
 
 class ConcurrentEditRegressionTests(unittest.TestCase):
-    @unittest.expectedFailure
     def test_c1_patch_requires_record_version_in_addition_to_id(self):
         calls = []
 
@@ -189,14 +188,67 @@ class ConcurrentEditRegressionTests(unittest.TestCase):
 
         ns = {
             "_json_ready": lambda x: x,
+            "maybe_blank": lambda x: str(x or "").strip(),
             "_supabase_request": fake_request,
             "record_audit_event": lambda *a, **k: None,
         }
         patch = isolated_function("supabase_update_row", ns)
-        patch("compounds", 101, {"trivial_name": "edited", "updated_at": "2026-11-02T00:00:00Z"})
+        revision = "2026-11-01T10:00:00+00:00"
+        patch(
+            "compounds", 101, {"trivial_name": "edited", "updated_at": "2026-11-02T00:00:00Z"},
+            expected_updated_at=revision,
+        )
         self.assertEqual(len(calls), 1)
         filters = calls[0]["kwargs"]["query"]
-        self.assertTrue(any(k in filters for k in ("updated_at", "version", "revision")), "PATCH needs an optimistic-concurrency predicate")
+        self.assertEqual(filters["id"], "eq.101")
+        self.assertEqual(filters["updated_at"], "eq." + revision)
+
+    def test_c1_stale_row_conflict_is_reported_and_not_audited(self):
+        calls, events = [], []
+
+        def fake_request(*args, **kwargs):
+            calls.append(kwargs)
+            return []  # Fake PostgREST: no row matched the original revision.
+
+        ns = {
+            "_json_ready": lambda x: x,
+            "maybe_blank": lambda x: str(x or "").strip(),
+            "_supabase_request": fake_request,
+            "record_audit_event": lambda *a, **k: events.append((a, k)),
+        }
+        patch = isolated_function("supabase_update_row", ns)
+        with self.assertRaisesRegex(RuntimeError, "changed or removed"):
+            patch(
+                "compounds", 101, {"trivial_name": "stale"},
+                expected_updated_at="2026-11-01T10:00:00+00:00",
+            )
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(events, [], "Failed CAS must not generate a successful update audit event")
+
+    def test_c1_missing_original_revision_blocks_compound_save(self):
+        ns = {
+            "UTC": UTC, "datetime": datetime,
+            "ensure_write_target_ready": lambda: None,
+            "maybe_blank": lambda x: str(x or "").strip(),
+            "_auto_structure_image_path": lambda *a, **k: "dummy.png",
+            "normalize_curation_status": lambda x, default="curated": x or default,
+            "use_supabase_write_backend": lambda: True,
+            "get_npdb_read_backend": lambda: "supabase",
+        }
+        update = isolated_function("update_compound_record", ns)
+        kwargs = {
+            name: "" for name in inspect.signature(update).parameters
+            if name != "original_row"
+        }
+        kwargs.update(compound_id=101, structure_image_path="dummy.png")
+        with self.assertRaisesRegex(RuntimeError, "original record revision"):
+            update(**kwargs)
+
+    def test_c1_revision_helper_accepts_equivalent_time_zone_offsets(self):
+        ns = {"datetime": datetime, "maybe_blank": lambda x: str(x or "").strip()}
+        matches = isolated_function("_revision_matches", ns)
+        self.assertTrue(matches("2026-11-02T09:00:00+09:00", "2026-11-02T00:00:00+00:00"))
+        self.assertFalse(matches("2026-11-02T00:00:01Z", "2026-11-02T00:00:00Z"))
 
 
 if __name__ == "__main__":
