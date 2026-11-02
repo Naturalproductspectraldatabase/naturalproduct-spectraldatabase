@@ -31,6 +31,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from npdb_sqlite_snapshot import verified_sqlite_snapshot_bytes
+
 try:
     from PIL import Image, ImageOps
 except Exception:
@@ -5917,8 +5919,7 @@ def render_structure_preview(smiles_text: str, caption: str | None = None, empty
 
 def get_backup_bytes():
     require_backend_permission("admin")
-    with open(DB_PATH, "rb") as f:
-        return f.read()
+    return verified_sqlite_snapshot_bytes(DB_PATH)
 
 def count_related_records(filtered_ids):
     filtered_ids = [int(item) for item in filtered_ids if str(item).strip()]
