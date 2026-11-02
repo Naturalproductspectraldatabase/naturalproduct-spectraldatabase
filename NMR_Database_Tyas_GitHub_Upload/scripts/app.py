@@ -319,6 +319,7 @@ SIDEBAR_NAV_LABEL_ICONS = {
     "Bioactivity": ":material/biotech:",
     "1H Peaks": ":material/monitoring:",
     "1H Spectra Gallery": ":material/photo_library:",
+    "13C Spectra Gallery": ":material/photo_library:",
     "13C Peaks": ":material/analytics:",
     "Spectra Library": ":material/folder_open:",
     "Specimen Library": ":material/image_search:",
@@ -337,6 +338,7 @@ SIDEBAR_NAV_ICON_PATHS = {
     "Bioactivity": pick_branding_asset("bioactivity.png", "updated.png"),
     "1H Peaks": pick_branding_asset("spectra.png", "updated.png"),
     "1H Spectra Gallery": pick_branding_asset("spectra.png", "Search spectra.png"),
+    "13C Spectra Gallery": pick_branding_asset("spectra.png", "updated.png"),
     "13C Peaks": pick_branding_asset("updated.png", "spectra.png"),
     "Spectra Library": pick_branding_asset("spectra.png", "updated.png"),
     "Specimen Library": pick_branding_asset("compounds.png", "structures.png"),
@@ -375,6 +377,7 @@ SIDEBAR_NAV_GROUPS = [
         {"label": "Bioactivity", "section": "Bioactivity"},
         {"label": "1H Peaks", "section": "1H Peaks"},
         {"label": "1H Spectra Gallery", "section": "1H Spectra Gallery"},
+        {"label": "13C Spectra Gallery", "section": "13C Spectra Gallery"},
         {"label": "13C Peaks", "section": "13C Peaks"},
         {"label": "Spectra Library", "section": "Spectra Library"},
         {"label": "Specimen Library", "section": "Specimen Library"},
@@ -601,6 +604,10 @@ NAV_SECTION_COPY = {
     "1H Spectra Gallery": {
         "title": "1H Spectra Gallery",
         "summary": "Compare 1H spectra previews alongside compound structures.",
+    },
+    "13C Spectra Gallery": {
+        "title": "13C Spectra Gallery",
+        "summary": "Compare 13C spectra previews alongside compound structures.",
     },
     "13C Peaks": {
         "title": "13C Peaks",
@@ -9085,6 +9092,15 @@ def is_proton_spectrum_label(value) -> bool:
     return "1h" in compact or "proton" in text or "h1" in compact
 
 
+def is_carbon_spectrum_label(value) -> bool:
+    """Carbon-13 1D files; do not mix in 2D HSQC/HMBC or proton files."""
+    text = maybe_blank(value).casefold()
+    compact = re.sub(r"[^a-z0-9]+", "", text)
+    if any(token in compact for token in ("hsqc", "hmbc", "cosy", "noesy", "tocsy")):
+        return False
+    return "13c" in compact or "carbon" in compact or "c13" in compact
+
+
 def render_registered_file_preview(file_path_value, caption: str = "", spectrum_type: str = "", missing_label: str = "File not found.", key_prefix: str = "registered"):
     path_text = maybe_blank(file_path_value)
     if not path_text:
@@ -13952,96 +13968,131 @@ def _compound_ids_from_labels(labels: list[str]) -> list[int]:
     return compound_ids
 
 
-def show_proton_spectra_gallery():
+def _set_spectra_gallery_page(prefix: str, target: int, total_pages: int):
+    from npdb_gallery_pagination import set_gallery_page
+    set_gallery_page(st.session_state, prefix, target, total_pages)
+
+
+def _jump_spectra_gallery_page(prefix: str, widget_key: str, total_pages: int):
+    _set_spectra_gallery_page(prefix, st.session_state[widget_key], total_pages)
+
+
+def _render_spectra_gallery_pagination(prefix: str, total_pages: int, position: str):
+    """Two accessible controls, one shared canonical page and jump state."""
+    from npdb_gallery_pagination import bounded_page
+    page = bounded_page(st.session_state.get(f"{prefix}_page", 1), total_pages)
+    prev_col, status_col, next_col, jump_col = st.columns([1.1, 1, 1.1, 1.1], gap="small")
+    with prev_col:
+        st.button(
+            "‹ Previous", key=f"{prefix}_{position}_previous",
+            disabled=page <= 1, width="stretch",
+            on_click=_set_spectra_gallery_page, args=(prefix, page - 1, total_pages),
+        )
+    with status_col:
+        st.caption(f"Page {page} of {total_pages}")
+    with next_col:
+        st.button(
+            "Next ›", key=f"{prefix}_{position}_next",
+            disabled=page >= total_pages, width="stretch",
+            on_click=_set_spectra_gallery_page, args=(prefix, page + 1, total_pages),
+        )
+    with jump_col:
+        key = f"{prefix}_{position}_jump"
+        st.number_input(
+            f"Jump to page ({position})", min_value=1, max_value=total_pages,
+            step=1, key=key,
+            on_change=_jump_spectra_gallery_page, args=(prefix, key, total_pages),
+        )
+
+
+def show_registered_nmr_spectra_gallery(nucleus: str):
+    """Shared 1H / 13C gallery; only registered spectrum files are displayed."""
+    if nucleus not in {"1H", "13C"}:
+        raise ValueError("Unsupported NMR gallery nucleus")
+    is_proton = nucleus == "1H"
+    prefix = "one_h_gallery" if is_proton else "thirteen_c_gallery"
+    spectrum_filter = is_proton_spectrum_label if is_proton else is_carbon_spectrum_label
     section_header(
-        "1H Spectra Gallery",
-        "Browse registered proton spectra beside compound structures for fast visual comparison.",
+        f"{nucleus} Spectra Gallery",
+        f"Browse registered {nucleus} NMR spectra beside their compound structures.",
     )
     spectra_df = load_all_spectra_files()
-    if spectra_df.empty:
+    if spectra_df.empty or "spectrum_type" not in spectra_df.columns:
         st.info("No spectra file records available.")
         return
 
-    proton_df = spectra_df[spectra_df["spectrum_type"].apply(is_proton_spectrum_label)].copy()
-    if proton_df.empty:
-        st.info("No registered 1H spectrum images are available yet.")
+    gallery_df = spectra_df[spectra_df["spectrum_type"].apply(spectrum_filter)].copy()
+    if gallery_df.empty:
+        st.info(f"No registered {nucleus} spectrum files are available yet.")
         return
 
     compounds_df = load_all_compounds()
     if not compounds_df.empty:
-        compound_columns = [
-            "id",
-            "trivial_name",
-            "molecular_formula",
-            "compound_class",
-            "source_category",
-            "source_organism",
-            "structure_image_path",
-            "smiles",
-            "inchi",
-            "inchikey",
+        columns = [
+            "id", "trivial_name", "molecular_formula", "compound_class",
+            "source_category", "source_organism", "structure_image_path",
+            "smiles", "inchi", "inchikey",
         ]
-        available_columns = [column for column in compound_columns if column in compounds_df.columns]
-        compound_lookup = compounds_df[available_columns].copy()
-        compound_lookup["id"] = pd.to_numeric(compound_lookup["id"], errors="coerce")
-        proton_df["compound_id"] = pd.to_numeric(proton_df["compound_id"], errors="coerce")
-        proton_df = proton_df.merge(
-            compound_lookup.rename(columns={"id": "compound_id"}),
-            on="compound_id",
-            how="left",
-            suffixes=("_file", ""),
+        available = [column for column in columns if column in compounds_df.columns]
+        lookup = compounds_df[available].copy()
+        lookup["id"] = pd.to_numeric(lookup["id"], errors="coerce")
+        gallery_df["compound_id"] = pd.to_numeric(gallery_df["compound_id"], errors="coerce")
+        gallery_df = gallery_df.merge(
+            lookup.rename(columns={"id": "compound_id"}),
+            on="compound_id", how="left", suffixes=("_file", ""),
         )
 
     search_text = st.text_input(
         "Search gallery",
-        placeholder="Compound name, formula, class, source, or spectrum type",
-        key="one_h_gallery_search",
+        placeholder="Compound name, formula, class, source or spectrum type",
+        key=f"{prefix}_search",
     )
     if search_text.strip():
-        searchable_columns = [
-            column
-            for column in [
-                "trivial_name",
-                "molecular_formula",
-                "compound_class",
-                "source_category",
-                "source_organism",
-                "spectrum_type",
-                "note",
-                "file_path",
-            ]
-            if column in proton_df.columns
+        searchable = [
+            col for col in (
+                "trivial_name", "molecular_formula", "compound_class",
+                "source_category", "source_organism", "spectrum_type",
+                "note", "file_path",
+            ) if col in gallery_df.columns
         ]
-        combined = proton_df[searchable_columns].fillna("").astype(str).agg(" ".join, axis=1).str.casefold()
-        for token in [item.casefold() for item in re.split(r"\s+", search_text.strip()) if item]:
-            proton_df = proton_df[combined.str.contains(re.escape(token), regex=True)]
-            combined = combined.loc[proton_df.index]
+        combined = gallery_df[searchable].fillna("").astype(str).agg(" ".join, axis=1).str.casefold()
+        for token in (item.casefold() for item in re.split(r"\s+", search_text.strip()) if item):
+            gallery_df = gallery_df[combined.str.contains(re.escape(token), regex=True)]
+            combined = combined.loc[gallery_df.index]
 
-    if proton_df.empty:
-        st.info("No 1H spectrum records match the current filter.")
+    if gallery_df.empty:
+        st.info(f"No {nucleus} spectrum files match the search.")
         return
 
-    sort_columns = [column for column in ["trivial_name", "compound_id", "id"] if column in proton_df.columns]
-    proton_df = proton_df.sort_values(by=sort_columns, kind="stable")
-    page_size = st.selectbox("Spectra per page", [10, 20, 40], index=0, key="one_h_gallery_page_size")
-    total_records = len(proton_df)
-    total_pages = max(1, math.ceil(total_records / int(page_size)))
-    page_number = int(
-        st.number_input(
-            "Page",
-            min_value=1,
-            max_value=total_pages,
-            value=min(int(st.session_state.get("one_h_gallery_page", 1)), total_pages),
-            key="one_h_gallery_page",
-        )
+    sort_cols = [c for c in ("trivial_name", "compound_id", "id") if c in gallery_df.columns]
+    gallery_df = gallery_df.sort_values(by=sort_cols, kind="stable")
+
+    from npdb_gallery_pagination import apply_gallery_criteria, pagination_window
+    page_size = st.selectbox(
+        "Spectra per page", [10, 20, 40], index=0,
+        key=f"{prefix}_page_size",
     )
-    start = (page_number - 1) * int(page_size)
-    current_page = proton_df.iloc[start:start + int(page_size)]
-    st.caption(f"Showing {start + 1}-{start + len(current_page)} of {total_records} registered 1H spectrum record(s).")
+    _, _, pages = pagination_window(len(gallery_df), int(page_size), 1)
+    page = apply_gallery_criteria(
+        st.session_state, prefix=prefix, search_text=search_text,
+        page_size=int(page_size), total_pages=pages,
+    )
+    start, end, _ = pagination_window(len(gallery_df), int(page_size), page)
+    current_page = gallery_df.iloc[start:end]
+
+    anchor = f"npdb-gallery-{prefix}"
+    st.markdown(f'<div id="{anchor}"></div>', unsafe_allow_html=True)
+    _render_spectra_gallery_pagination(prefix, pages, "top")
+    st.caption(
+        f"Showing {start + 1}-{end} of {len(gallery_df)} registered {nucleus} spectra."
+    )
 
     for _, row in current_page.iterrows():
         compound_id = int(row["compound_id"]) if not pd.isna(row.get("compound_id")) else None
-        title = clean_text(row.get("trivial_name")) if maybe_blank(row.get("trivial_name")) else f"Compound ID {compound_id}"
+        title = (
+            clean_text(row.get("trivial_name")) if maybe_blank(row.get("trivial_name"))
+            else f"Compound ID {compound_id}"
+        )
         st.markdown('<div class="panel-card">', unsafe_allow_html=True)
         st.markdown(f"### {html_text(title)}")
         meta_bits = [
@@ -14049,23 +14100,37 @@ def show_proton_spectra_gallery():
             clean_text(row.get("molecular_formula")) if maybe_blank(row.get("molecular_formula")) else "",
             clean_text(row.get("spectrum_type")) if maybe_blank(row.get("spectrum_type")) else "",
         ]
-        st.caption(" · ".join(bit for bit in meta_bits if bit))
+        st.caption(" · ".join(part for part in meta_bits if part))
         left_col, right_col = st.columns([0.36, 0.64], gap="large")
         with left_col:
-            render_compound_structure_from_row(row, caption="Structure", size=STRUCTURE_THUMBNAIL_IMAGE_SIZE)
-            if compound_id and st.button("Open Record", key=f"one_h_gallery_open_{compound_id}_{row.get('id')}"):
+            render_compound_structure_from_row(
+                row, caption="Structure", size=STRUCTURE_THUMBNAIL_IMAGE_SIZE
+            )
+            if compound_id and st.button(
+                "Open Record", key=f"{prefix}_open_{compound_id}_{row.get('id')}"
+            ):
                 open_compound_detail(compound_id)
                 st.rerun()
         with right_col:
             render_registered_file_preview(
-                row.get("file_path"),
-                caption=clean_text(row.get("spectrum_type")),
+                row.get("file_path"), caption=clean_text(row.get("spectrum_type")),
                 spectrum_type=maybe_blank(row.get("spectrum_type")),
-                key_prefix=f"one_h_gallery_{row.get('id')}_{compound_id}",
+                key_prefix=f"{prefix}_{row.get('id')}_{compound_id}",
             )
             if maybe_blank(row.get("note")):
                 st.caption(clean_text(row.get("note")))
         st.markdown('</div>', unsafe_allow_html=True)
+
+    _render_spectra_gallery_pagination(prefix, pages, "bottom")
+    st.markdown(f"[↑ Back to gallery top](#{anchor})")
+
+
+def show_proton_spectra_gallery():
+    show_registered_nmr_spectra_gallery("1H")
+
+
+def show_carbon_spectra_gallery():
+    show_registered_nmr_spectra_gallery("13C")
 
 
 def _render_specimen_image(image_path: str, caption: str = "Specimen"):
@@ -14395,6 +14460,9 @@ elif main_section == "Spectra Library":
 
 elif main_section == "1H Spectra Gallery":
     show_proton_spectra_gallery()
+
+elif main_section == "13C Spectra Gallery":
+    show_carbon_spectra_gallery()
 
 elif main_section == "Specimen Library":
     show_specimen_library_pages()
