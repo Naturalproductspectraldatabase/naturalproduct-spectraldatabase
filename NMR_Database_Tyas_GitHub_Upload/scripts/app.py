@@ -3819,6 +3819,8 @@ def invalidate_cached_views():
         "load_search_index",
         "load_dashboard_preview_records",
         "load_structure_search_index",
+        "build_structure_candidate_index",
+        "supabase_column_available",
     ]
     for function_name in cached_function_names:
         cached_function = globals().get(function_name)
@@ -4689,6 +4691,36 @@ def guard_edit_compound_record_switch(compound_id: int):
     st.session_state["_active_edit_compound_id"] = compound_id
 
 
+def _revision_matches(current, expected) -> bool:
+    """Compare PostgreSQL timestamptz revisions without losing precision."""
+    if not maybe_blank(current) or not maybe_blank(expected):
+        return False
+    try:
+        current_dt = datetime.fromisoformat(maybe_blank(current).replace("Z", "+00:00"))
+        expected_dt = datetime.fromisoformat(maybe_blank(expected).replace("Z", "+00:00"))
+        return current_dt == expected_dt
+    except ValueError:
+        return maybe_blank(current) == maybe_blank(expected)
+
+
+def verify_compound_editor_revision(compound_id: int, expected_updated_at):
+    """Check revision before file uploads; PATCH still performs atomic CAS."""
+    if not use_supabase_write_backend():
+        return
+    if get_npdb_read_backend() != "supabase":
+        raise RuntimeError("Live Supabase data is unavailable. Reopen the editor when the cloud recovers.")
+    revision = maybe_blank(expected_updated_at)
+    if not revision:
+        raise RuntimeError("This edit has no reliable cloud revision. Refresh the record before saving.")
+    rows = _supabase_request(
+        "GET", "/rest/v1/compounds",
+        query={"select": "id,updated_at", "id": f"eq.{compound_id}", "limit": "1"},
+        write=False,
+    ) or []
+    if not rows or not _revision_matches(rows[0].get("updated_at"), revision):
+        raise RuntimeError("This compound changed in another session. Refresh the form and review the latest values before saving.")
+
+
 def reset_compound_wizard():
     wizard_keys = [
         "compound_wizard_step",
@@ -5013,7 +5045,7 @@ def molecule_fingerprint(mol):
 
 
 @st.cache_resource(show_spinner=False)
-def build_structure_candidate_index(_db_signature: float):
+def build_structure_candidate_index(db_signature: float):
     if not is_structure_backend_available():
         return []
 
@@ -5900,7 +5932,7 @@ def supabase_count_rows(table: str, filters: dict | None = None) -> int:
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
-def count_database_totals(_db_signature: float):
+def count_database_totals(db_signature: float):
     backend = get_npdb_read_backend()
     if backend == "supabase":
         return {
@@ -8265,7 +8297,7 @@ def get_db_signature():
 
 
 @st.cache_data(show_spinner=False)
-def load_search_index(_db_signature: float):
+def load_search_index(db_signature: float):
     conn = get_connection()
     try:
         compounds_df = pd.read_sql_query(
@@ -10737,7 +10769,12 @@ def show_compound_pages():
                 st.error("Record not found.")
             else:
                 row = row_df.iloc[0]
-
+                baseline_key = f"_draft_edit_baseline_{edit_compound_id}"
+                if baseline_key not in st.session_state:
+                    # Keep the version actually seen by the editor, not a
+                    # later revision read during a subsequent rerun.
+                    st.session_state[baseline_key] = row.to_dict()
+                edit_baseline = st.session_state[baseline_key]
 
                 col1, col2 = st.columns(2)
 
@@ -10840,6 +10877,10 @@ def show_compound_pages():
                                 st.stop()
 
                         try:
+                            ensure_write_target_ready()
+                            verify_compound_editor_revision(
+                                edit_compound_id, edit_baseline.get("updated_at")
+                            )
                             if structure_upload is not None:
                                 structure_image_path = save_uploaded_asset(
                                     structure_upload,
@@ -10889,7 +10930,8 @@ def show_compound_pages():
                                 hrms_data=hrms_data.strip(),
                                 data_source=data_source.strip(),
                                 curation_status=normalize_curation_status(curation_status, default="curated"),
-                                note=note.strip()
+                                note=note.strip(),
+                                original_row=edit_baseline,
                             )
                             confirm_compound_fields_persisted(
                                 edit_compound_id,
@@ -10931,6 +10973,9 @@ def show_compound_pages():
                                 },
                                 "Perubahan record",
                             )
+                            saved_row = load_compound_row(edit_compound_id)
+                            if not saved_row.empty:
+                                st.session_state[baseline_key] = saved_row.iloc[0].to_dict()
                         except Exception as exc:
                             stop_after_save_error("Perubahan record", exc)
 
@@ -12469,7 +12514,9 @@ def _supabase_request(method: str, path: str, query: dict | None = None, body=No
     base = get_supabase_url().rstrip("/")
     url = f"{base}{path}"
     if query:
-        query_text = urlencode(query, doseq=True, safe=",().:*+-")
+        # Never leave literal + in query timestamps: PostgREST interprets + as
+        # a space in URL queries, breaking optimistic-concurrency filters.
+        query_text = urlencode(query, doseq=True, safe=",().:*-")
         url = f"{url}?{query_text}"
     payload = None
     if body is not None:
@@ -12567,10 +12614,10 @@ def is_duplicate_primary_key_error(exc: Exception) -> bool:
     return "23505" in message and ("duplicate key" in message or "_pkey" in message)
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=60)
 def supabase_column_available(table: str, column: str) -> bool:
     if not use_supabase_backend():
-        return False
+        raise RuntimeError("Supabase is not available; column presence cannot be confirmed.")
     try:
         _supabase_request(
             "GET",
@@ -12581,9 +12628,11 @@ def supabase_column_available(table: str, column: str) -> bool:
         return True
     except RuntimeError as exc:
         message = str(exc).lower()
-        if "connection failed" in message or "timed out" in message or "unreachable" in message:
-            return False
-        if "column" in message and column.lower() in message:
+        # Only definitive undefined-column errors indicate absence. Transient
+        # DNS, timeout, HTTP permission and other errors must never be cached.
+        if "42703" in message or (
+            "does not exist" in message and "column" in message and column.lower() in message
+        ):
             return False
         raise
 
@@ -12703,12 +12752,18 @@ def supabase_insert_row(table: str, row: dict):
     return {}
 
 
-def supabase_update_row(table: str, row_id: int, row: dict):
+def supabase_update_row(table: str, row_id: int, row: dict, *, expected_updated_at=None):
     payload = {k: _json_ready(v) for k, v in row.items() if k and k != "id"}
+    query = {"id": f"eq.{row_id}", "select": "id,updated_at" if table == "compounds" else "id"}
+    if expected_updated_at is not None:
+        revision = maybe_blank(expected_updated_at)
+        if not revision:
+            raise RuntimeError("Cannot update a record without a valid original revision.")
+        query["updated_at"] = f"eq.{revision}"
     response = _supabase_request(
         "PATCH",
         f"/rest/v1/{table}",
-        query={"id": f"eq.{row_id}", "select": "id"},
+        query=query,
         body=payload,
         write=True,
         extra_headers={"Prefer": "return=representation"},
@@ -12716,6 +12771,8 @@ def supabase_update_row(table: str, row_id: int, row: dict):
     if response:
         record_audit_event("update", table, row_id, "supabase", payload)
         return response[0]
+    if expected_updated_at is not None:
+        raise RuntimeError("Record was changed or removed by another session. No changes were saved; reload before retrying.")
     return {}
 
 
@@ -12901,9 +12958,9 @@ def get_db_signature():
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
-def _load_all_compounds_cached(source_normalization_version: str, _db_signature):
+def _load_all_compounds_cached(source_normalization_version: str, db_signature):
     _ = source_normalization_version
-    __ = _db_signature
+    __ = db_signature
     columns = compound_select_columns()
     backend = get_npdb_read_backend()
     if backend == "supabase":
@@ -12929,9 +12986,9 @@ except Exception:
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
-def _load_dashboard_compounds_cached(source_normalization_version: str, _db_signature):
+def _load_dashboard_compounds_cached(source_normalization_version: str, db_signature):
     _ = source_normalization_version
-    __ = _db_signature
+    __ = db_signature
     columns = dashboard_compound_select_columns()
     backend = get_npdb_read_backend()
     if backend == "supabase":
@@ -12956,9 +13013,9 @@ except Exception:
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
-def _load_search_compounds_cached(source_normalization_version: str, _db_signature):
+def _load_search_compounds_cached(source_normalization_version: str, db_signature):
     _ = source_normalization_version
-    __ = _db_signature
+    __ = db_signature
     columns = search_compound_select_columns()
     backend = get_npdb_read_backend()
     if backend == "supabase":
@@ -13001,9 +13058,9 @@ def clear_compounds_cache_for_section(section: str):
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
-def _load_compound_row_cached(compound_id, source_normalization_version: str, _db_signature):
+def _load_compound_row_cached(compound_id, source_normalization_version: str, db_signature):
     _ = source_normalization_version
-    __ = _db_signature
+    __ = db_signature
     columns = compound_select_columns()
     backend = get_npdb_read_backend()
     if backend == "supabase":
@@ -13228,7 +13285,7 @@ def _empty_dataframe_for_columns(columns: str) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
-def load_all_specimens(_db_signature=None):
+def load_all_specimens(db_signature=None):
     backend = get_npdb_read_backend()
     if backend == "supabase":
         try:
@@ -13241,7 +13298,7 @@ def load_all_specimens(_db_signature=None):
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
-def load_specimen_row(specimen_id, _db_signature=None):
+def load_specimen_row(specimen_id, db_signature=None):
     backend = get_npdb_read_backend()
     if backend == "supabase":
         try:
@@ -13258,7 +13315,7 @@ def load_specimen_row(specimen_id, _db_signature=None):
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
-def load_specimen_compound_links(specimen_id=None, _db_signature=None):
+def load_specimen_compound_links(specimen_id=None, db_signature=None):
     backend = get_npdb_read_backend()
     if backend == "supabase":
         try:
@@ -13293,7 +13350,7 @@ def load_specimen_compound_links(specimen_id=None, _db_signature=None):
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
-def load_specimen_extracts(specimen_id=None, _db_signature=None):
+def load_specimen_extracts(specimen_id=None, db_signature=None):
     backend = get_npdb_read_backend()
     if backend == "supabase":
         try:
@@ -13421,7 +13478,7 @@ def count_bioactivity_records(filtered_ids):
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
-def load_search_index(_db_signature: float):
+def load_search_index(db_signature: float):
     compounds_df = load_all_compounds()
     all_proton_df = load_all_proton_data()
     all_carbon_df = load_all_carbon_data()
@@ -13498,7 +13555,7 @@ def insert_compound_record(trivial_name, iupac_name, molecular_formula, compound
     }
     if use_supabase_write_backend():
         if not supabase_column_available("compounds", "curation_status"):
-            row.pop("curation_status", None)
+            raise RuntimeError("Cloud curation_status column is missing; submission is blocked to protect metadata.")
         inserted = supabase_insert_row("compounds", row)
         row_id = int(inserted.get("id")) if inserted and inserted.get("id") is not None else None
         if row_id is None:
@@ -13524,7 +13581,7 @@ def insert_compound_record(trivial_name, iupac_name, molecular_formula, compound
     return row_id
 
 
-def update_compound_record(compound_id, trivial_name, iupac_name, molecular_formula, compound_class, compound_subclass, smiles, inchi, inchikey, source_category, source_organism, source_material, sample_code, collection_location, gps_coordinates, depth_m, uv_data, ftir_data, cd_data, optical_rotation, melting_point, crystallization_method, structure_image_path, journal_name, article_title, publication_year, volume, issue, pages, doi, ccdc_number, molecular_weight, hrms_data, data_source, curation_status, note):
+def update_compound_record(compound_id, trivial_name, iupac_name, molecular_formula, compound_class, compound_subclass, smiles, inchi, inchikey, source_category, source_organism, source_material, sample_code, collection_location, gps_coordinates, depth_m, uv_data, ftir_data, cd_data, optical_rotation, melting_point, crystallization_method, structure_image_path, journal_name, article_title, publication_year, volume, issue, pages, doi, ccdc_number, molecular_weight, hrms_data, data_source, curation_status, note, *, original_row=None):
     ensure_write_target_ready()
     structure_image_path = maybe_blank(structure_image_path)
     if not structure_image_path:
@@ -13569,9 +13626,27 @@ def update_compound_record(compound_id, trivial_name, iupac_name, molecular_form
         "updated_at": datetime.now(UTC).isoformat(),
     }
     if use_supabase_write_backend():
+        if get_npdb_read_backend() != "supabase":
+            raise RuntimeError("Live Supabase is not ready. Reload the editor before saving.")
+        if not isinstance(original_row, dict) or not maybe_blank(original_row.get("updated_at")):
+            raise RuntimeError("No trusted original record revision is available. Reopen the editor before saving.")
         if not supabase_column_available("compounds", "curation_status"):
-            row.pop("curation_status", None)
-        supabase_update_row("compounds", compound_id, row)
+            raise RuntimeError("Cloud curation_status column is missing. Editing is blocked rather than dropping metadata.")
+        if any(field not in original_row for field in row if field not in {"id", "updated_at"}):
+            raise RuntimeError("The editor's original record is incomplete. Reopen the record before saving.")
+        # Send only changed scientific fields instead of rewriting a stale form.
+        changes = {
+            field: value for field, value in row.items()
+            if field not in {"id", "updated_at"}
+            and not _readback_value_matches(original_row.get(field), value)
+        }
+        if not changes:
+            return
+        changes["updated_at"] = row["updated_at"]
+        supabase_update_row(
+            "compounds", compound_id, changes,
+            expected_updated_at=original_row["updated_at"],
+        )
         if not use_local_read_backend():
             invalidate_cached_views()
             return
@@ -14349,6 +14424,13 @@ def show_specimen_library_pages():
 # App boot
 # =========================
 apply_navigation_query_params()
+# Invalidate snapshot-derived caches before loading any page on backend change.
+active_read_backend = get_npdb_read_backend()
+previous_read_backend = st.session_state.get("_npdb_last_read_backend")
+if previous_read_backend is not None and previous_read_backend != active_read_backend:
+    invalidate_cached_views()
+    clear_edit_compound_form_state()
+st.session_state["_npdb_last_read_backend"] = active_read_backend
 main_section = st.session_state.get("nav_section", "Dashboard")
 all_compounds_df = load_compounds_for_section(main_section)
 render_cloud_sync_notice()
