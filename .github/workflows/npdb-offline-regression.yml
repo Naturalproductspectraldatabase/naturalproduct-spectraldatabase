@@ -47,3 +47,30 @@ jobs:
       - name: Run offline regression test suite
         run: |
           python -m unittest discover -s NMR_Database_Tyas_GitHub_Upload/tests -p 'test_*.py' -v
+
+  streamlit-wizard-ui:
+    name: Streamlit synthetic wizard roundtrip
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NPDB_READ_BACKEND: snapshot
+      NPDB_ACCESS_PASSWORD_HASH: "synthetic_dummy_hash"
+      PYTHONWARNINGS: ignore
+    steps:
+      - name: Fetch exact repository revision without malformed gitlink traversal
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          AUTH="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w 0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${AUTH}" fetch --no-tags --depth=1 origin "${GITHUB_REF}"
+          git -c advice.detachedHead=false checkout --detach FETCH_HEAD
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install offline Streamlit dependencies
+        run: python -m pip install --disable-pip-version-check "streamlit==1.66.1" "pandas>=2.2,<3.1" "pillow>=10,<13" "plotly>=6,<7" "openpyxl>=3.1,<4" "certifi>=2024"
+      - name: Run interactive wizard regression with synthetic records
+        run: python -m unittest discover -s NMR_Database_Tyas_GitHub_Upload/tests -p 'test_wizard_ui_smoke.py' -v
