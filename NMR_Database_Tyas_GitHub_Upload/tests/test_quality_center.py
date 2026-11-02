@@ -221,5 +221,50 @@ class QualityCenterApprovalTests(unittest.TestCase):
         self.assertEqual(fake.session_state, {})
 
 
+class QualityCenterRoutingTests(unittest.TestCase):
+    """Code-level guards; staging UI tests are still required."""
+
+    def app_source(self):
+        return (MODULE_PATH.parent / "app.py").read_text(encoding="utf-8")
+
+    def test_navigation_is_separately_restricted_for_owner_and_curator(self):
+        source = self.app_source()
+        self.assertIn('group_title == "Owner Workspace" and not is_owner_editor()', source)
+        self.assertIn('group_title == "Curator Workspace"', source)
+        self.assertIn('from npdb_quality_center import authorized_for_tasks', source)
+
+    def test_direct_link_routing_has_its_own_owner_guard(self):
+        source = self.app_source()
+        route_start = source.rfind('if main_section == "Quality & Operations Center":')
+        self.assertGreater(route_start, 0)
+        block = source[route_start:route_start + 550]
+        self.assertIn("if not is_owner_editor():", block)
+        self.assertIn("render_owner_quality_center(", block)
+
+    def test_direct_link_routing_has_its_own_curator_guard(self):
+        source = self.app_source()
+        route_start = source.rfind('elif main_section == "My Curation Tasks":')
+        self.assertGreater(route_start, 0)
+        block = source[route_start:route_start + 750]
+        self.assertIn("if not authorized_for_tasks(", block)
+        self.assertIn("render_curator_tasks(", block)
+
+    def test_demo_sections_skip_bulk_compound_load_and_live_scan_retry(self):
+        source = self.app_source()
+        self.assertIn('if section in QUALITY_DEMO_SECTIONS:', source)
+        self.assertIn('return pd.DataFrame()', source)
+        self.assertIn('if not quality_demo_page:\n    render_cloud_sync_notice()', source)
+
+    def test_prototype_module_exposes_no_sql_or_real_email_transport(self):
+        source = MODULE_PATH.read_text(encoding="utf-8")
+        for unsafe in (
+            "supabase_insert_row(", "supabase_update_row(", "supabase_delete_row(",
+            "smtplib.SMTP(", "requests.post(", "httpx.post(",
+            "execute_sql(", "send_email(", "storage.objects",
+        ):
+            self.assertNotIn(unsafe, source)
+
+
+
 if __name__ == "__main__":
     unittest.main()
