@@ -4792,6 +4792,10 @@ def get_wizard_value(key: str, default=""):
 
 
 def hydrate_wizard_widget(key: str, default=""):
+    # Streamlit file_uploader widgets cannot be populated from session_state.
+    # Keep their uploaded files in the _draft_ keys for later review/save.
+    if key in {"wizard_structure_upload", "wizard_submission_spectra_uploads"}:
+        return
     draft_key = f"_draft_{key}"
     if key not in st.session_state:
         if draft_key in st.session_state:
