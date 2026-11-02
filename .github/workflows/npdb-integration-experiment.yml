@@ -166,4 +166,4 @@ jobs:
           assert app.session_state.get("_draft_wizard_hrms_data")=="TEST m/z 500.0000", "HRMS draft changed after back/forward navigation"
           print("PASS: Synthetic Streamlit wizard persisted Origin/Spectral inputs across forward/back navigation, without save")
           PY
-      # Candidate branch is managed independently; never overwrite it from this CI experiment.
+      # Retest corrected wizard navigation and safe uploader hydration; never push to production.
