@@ -64,6 +64,16 @@ class PeakMatchingTests(unittest.TestCase):
         self.assertEqual(len(actual),optimum[0])
         self.assertAlmostEqual(sum(x[2] for x in actual),optimum[1],places=8)
 
+    def test_app_peak_parser_disallows_nonfinite_values(self):
+        import re
+        source = APP.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        fn = next(x for x in tree.body if isinstance(x, ast.FunctionDef) and x.name == "parse_peak_input")
+        namespace = {"math": math, "re": re, "maybe_blank": lambda x: str(x or "").strip()}
+        exec(compile(ast.Module(body=[fn], type_ignores=[]), str(APP), "exec"), namespace)
+        values=namespace["parse_peak_input"]("1.20; NaN inf -0.10 2.45 text")
+        self.assertEqual(values,[1.2,-0.1,2.45])
+
     def test_live_app_uses_new_matcher_without_duplicated_greedy_loop(self):
         src=APP.read_text(encoding="utf-8")
         tree=ast.parse(src)
