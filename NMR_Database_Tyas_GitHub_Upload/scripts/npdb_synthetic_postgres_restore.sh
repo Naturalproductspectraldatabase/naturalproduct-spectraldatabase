@@ -3,6 +3,12 @@
 # Never connect this script to production Supabase or external database hosts.
 set -euo pipefail
 
+# libpq PGHOSTADDR overrides PGHOST. Never allow an external database
+# target even when the visible PGHOST environment variable looks local.
+if [[ -n "${PGHOSTADDR:-}" && "${PGHOSTADDR}" != "127.0.0.1" ]] || [[ -n "${PGSERVICE:-}" ]]; then
+  echo "REFUSING: indirect or nonlocal PostgreSQL connection override" >&2
+  exit 2
+fi
 if [[ "${NPDB_SYNTHETIC_RESTORE:-}" != "1" || "${PGHOST:-}" != "127.0.0.1" || "${PGPORT:-}" != "5432" ]]; then
   echo "REFUSING: requires synthetic-only flag and local PostgreSQL at 127.0.0.1:5432" >&2
   exit 2
@@ -58,6 +64,25 @@ done
 # Each experimental/solvent-specific NMR measurement must remain separate.
 nmr_count="$(psql -X -qAt -d "$target_db" -c "SELECT count(*) FROM public.nmr_datasets;")"
 [[ "$nmr_count" == 3 ]] || { echo "RESTORE FAILED: NMR datasets merged or lost" >&2; exit 1; }
+
+# Scientific provenance gate: the same compound may have experimental
+# 1H and 13C measurements plus predicted peaks. They must remain separate
+# by nucleus, solvent and spectral origin. This tests the SYNTHETIC future
+# dataset design, not the current production Supabase schema.
+exp_cdcl3_1h="$(psql -X -qAt -v ON_ERROR_STOP=1 -d "$target_db" -c "SELECT count(*) FROM public.nmr_datasets WHERE compound_id=1 AND nucleus='1H' AND solvent='CDCl3' AND spectral_origin='experimental';")"
+pred_dmso_1h="$(psql -X -qAt -v ON_ERROR_STOP=1 -d "$target_db" -c "SELECT count(*) FROM public.nmr_datasets WHERE compound_id=1 AND nucleus='1H' AND solvent='DMSO-d6' AND spectral_origin='predicted';")"
+exp_dmso_1h="$(psql -X -qAt -v ON_ERROR_STOP=1 -d "$target_db" -c "SELECT count(*) FROM public.nmr_datasets WHERE compound_id=1 AND nucleus='1H' AND solvent='DMSO-d6' AND spectral_origin='experimental';")"
+exp_cdcl3_13c="$(psql -X -qAt -v ON_ERROR_STOP=1 -d "$target_db" -c "SELECT count(*) FROM public.nmr_datasets WHERE compound_id=1 AND nucleus='13C' AND solvent='CDCl3' AND spectral_origin='experimental';")"
+[[ "$exp_cdcl3_1h" == 1 && "$pred_dmso_1h" == 1 && "$exp_dmso_1h" == 0 && "$exp_cdcl3_13c" == 1 ]] || {
+  echo "RESTORE FAILED: synthetic NMR experiment provenance or filtering changed" >&2; exit 1;
+}
+# A join between spectral datasets and peaks must never combine a predicted
+# DMSO-d6 shift into a measured CDCl3 dereplication result.
+exp_peak_count="$(psql -X -qAt -v ON_ERROR_STOP=1 -d "$target_db" -c "SELECT count(*) FROM public.nmr_peaks p JOIN public.nmr_datasets n ON n.id=p.dataset_id WHERE n.nucleus='1H' AND n.solvent='CDCl3' AND n.spectral_origin='experimental';")"
+pred_peak_count="$(psql -X -qAt -v ON_ERROR_STOP=1 -d "$target_db" -c "SELECT count(*) FROM public.nmr_peaks p JOIN public.nmr_datasets n ON n.id=p.dataset_id WHERE n.nucleus='1H' AND n.spectral_origin='predicted';")"
+[[ "$exp_peak_count" == 1 && "$pred_peak_count" == 1 ]] || {
+  echo "RESTORE FAILED: synthetic NMR peak data pooled across experiment types" >&2; exit 1;
+}
 
 # Check schema-level constraints and RLS policies, not merely row counts.
 rls="$(psql -X -qAt -d "$target_db" -c "SELECT relrowsecurity FROM pg_class WHERE oid='public.compounds'::regclass;")"

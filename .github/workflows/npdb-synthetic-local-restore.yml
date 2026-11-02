@@ -56,5 +56,15 @@ jobs:
           psql --version
           pg_dump --version
           pg_restore --version
+      - name: Refuse indirect nonlocal libpq connection settings
+        run: |
+          set +e
+          PGHOSTADDR=198.51.100.25 bash NMR_Database_Tyas_GitHub_Upload/scripts/npdb_synthetic_postgres_restore.sh > /dev/null 2>&1
+          result_hostaddr=$?
+          PGSERVICE=outside-ci bash NMR_Database_Tyas_GitHub_Upload/scripts/npdb_synthetic_postgres_restore.sh > /dev/null 2>&1
+          result_service=$?
+          set -e
+          test "$result_hostaddr" -eq 2
+          test "$result_service" -eq 2
       - name: Dump and restore synthetic records with ACL/RLS/FK checks
         run: bash NMR_Database_Tyas_GitHub_Upload/scripts/npdb_synthetic_postgres_restore.sh
