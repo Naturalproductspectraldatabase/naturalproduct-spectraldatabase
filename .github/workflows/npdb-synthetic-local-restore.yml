@@ -1,0 +1,58 @@
+name: NPDB synthetic local PostgreSQL restore rehearsal
+
+on:
+  push:
+    branches: [test/npdb-local-postgres-restore-smoke-20261103]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: synthetic-restore-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  isolated-postgres-restore:
+    name: Dump and restore synthetic NPDB records
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: npdb_ci
+          POSTGRES_PASSWORD: synthetic_ci_only
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U npdb_ci -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: "5432"
+      PGUSER: npdb_ci
+      PGPASSWORD: synthetic_ci_only
+      NPDB_SYNTHETIC_RESTORE: "1"
+    steps:
+      - name: Checkout exact commit (no submodules and no stored credentials)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          AUTH="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w 0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${AUTH}" fetch --no-tags --depth=1 origin "${GITHUB_REF}"
+          git -c advice.detachedHead=false checkout --detach FETCH_HEAD
+      - name: Confirm disposable local database only
+        run: |
+          test "${PGHOST}" = "127.0.0.1"
+          test "${NPDB_SYNTHETIC_RESTORE}" = "1"
+          psql --version
+          pg_dump --version
+          pg_restore --version
+      - name: Dump and restore synthetic records with ACL/RLS/FK checks
+        run: bash NMR_Database_Tyas_GitHub_Upload/scripts/npdb_synthetic_postgres_restore.sh
