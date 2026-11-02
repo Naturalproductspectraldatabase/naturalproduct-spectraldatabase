@@ -1,15 +1,17 @@
 name: NPDB synthetic local PostgreSQL restore rehearsal
 
 on:
+  pull_request:
+    branches: [main, qa/npdb-reviewed-integration-20261103]
   push:
-    branches: [test/npdb-local-postgres-restore-smoke-20261103]
+    branches: [qa/npdb-reviewed-integration-20261103]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: synthetic-restore-${{ github.ref }}
+  group: synthetic-restore-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
