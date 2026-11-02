@@ -6510,9 +6510,9 @@ def render_sidebar_workspace_summary(active_section: str, all_compounds_df: pd.D
                 <span class="sidebar-status-dot"></span>
             </div>
             <div class="sidebar-meta-divider"></div>
-            <div class="sidebar-meta-title">Dataset Quality</div>
-            <div class="sidebar-quality-value">{quality_pct}% Verified</div>
-            <div class="sidebar-quality-track">
+            <div class="sidebar-meta-title">Metadata Coverage</div>
+            <div class="sidebar-quality-value">{quality_pct}% basic fields complete</div>
+            <div class="sidebar-quality-track" title="Name, compound class, and at least one source field present. Field completeness does not imply scientific verification.">
                 <div class="sidebar-quality-fill" style="width:{quality_pct}%"></div>
             </div>
         </div>
@@ -12336,7 +12336,8 @@ def _snapshot_dataframe(table: str, columns: str | list[str] | None = None) -> p
     if not path.exists():
         return pd.DataFrame()
     try:
-        df = pd.read_csv(path).fillna("")
+        df = pd.read_csv(path).astype(object)
+        df = df.where(df.notna(), "")
     except Exception:
         return pd.DataFrame()
     return _select_existing_columns(df, columns)
