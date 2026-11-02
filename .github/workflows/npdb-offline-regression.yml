@@ -24,10 +24,16 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12"]
     steps:
-      - name: Checkout exact revision
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
+      - name: Fetch exact revision without malformed gitlink traversal
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          AUTH="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w 0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${AUTH}" fetch --no-tags --depth=1 origin "${GITHUB_REF}"
+          git -c advice.detachedHead=false checkout --detach FETCH_HEAD
+          git rev-parse --short HEAD
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
