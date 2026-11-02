@@ -105,6 +105,16 @@ class SourceAndCacheRegressionTests(unittest.TestCase):
         self.assertEqual(state["backend"], "snapshot")
         self.assertFalse(any("SUPABASE" in key for key in ns))
 
+    def test_target_function_definitions_are_present(self):
+        tree = ast.parse(APP_PATH.read_text(encoding="utf-8"), filename=str(APP_PATH))
+        names = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
+        expected = {
+            "_load_all_compounds_cached", "_load_compound_row_cached",
+            "load_all_compounds", "load_compound_row",
+            "supabase_column_available", "update_compound_record", "supabase_update_row",
+        }
+        self.assertFalse(expected - names, f"Missing application functions: {expected - names}")
+
 
 class ColumnProbeRegressionTests(unittest.TestCase):
     def make_probe(self):
