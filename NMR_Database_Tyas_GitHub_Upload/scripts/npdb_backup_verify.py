@@ -122,6 +122,8 @@ def verify_backup(root: Path, manifest_path: Path, required_buckets=("structures
         total_bytes += size
 
     database_root = root / "database"
+    if database_root.is_symlink() or not database_root.resolve().is_relative_to(root):
+        raise ValueError("invalid database backup directory")
     for item in database:
         verify_entry(database_root, item)
     result["database_files"] = len(database)
@@ -157,6 +159,8 @@ def verify_backup(root: Path, manifest_path: Path, required_buckets=("structures
         if len(objects) != expected:
             raise ValueError("object count differs from manifest expectation")
         bucket_root = root / "storage" / name
+        if bucket_root.is_symlink() or not bucket_root.resolve().is_relative_to(root):
+            raise ValueError("invalid bucket backup directory")
         if not bucket_root.is_dir():
             raise ValueError("declared bucket backup folder is missing")
         count = 0
@@ -176,6 +180,8 @@ def verify_backup(root: Path, manifest_path: Path, required_buckets=("structures
     if missing:
         raise ValueError("required buckets missing from manifest")
     storage_root = root / "storage"
+    if storage_root.is_symlink() or not storage_root.resolve().is_relative_to(root):
+        raise ValueError("invalid Storage backup directory")
     if not storage_root.is_dir():
         raise ValueError("Storage backup directory is missing")
     for child in storage_root.iterdir():
@@ -195,8 +201,9 @@ def main(argv=None):
     try:
         summary = verify_backup(args.backup_root, args.manifest, required)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
-        # Intentionally omit full paths, secrets and filenames from output.
-        print(f"BACKUP CHECK FAILED: {type(exc).__name__}: {exc}", file=sys.stderr)
+        # OS errors may echo private filenames, so do not print raw details.
+        # Report a generic category; detailed exceptions remain in offline tests.
+        print(f"BACKUP CHECK FAILED ({type(exc).__name__}). Check the private manifest, file inventory and checksums.", file=sys.stderr)
         return 1
     print("BACKUP FILE INTEGRITY CHECK PASSED (not a database restore test)")
     print(json.dumps(summary, sort_keys=True))
