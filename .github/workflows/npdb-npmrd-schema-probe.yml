@@ -1,0 +1,33 @@
+name: NP-MRD public mini-archive schema inspection
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/npdb-npmrd-schema-probe-20261103]
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-headers-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact research branch without traversing historical gitlinks
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          AUTH="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w 0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${AUTH}" fetch --no-tags --depth=1 origin "${GITHUB_REF}"
+          git -c advice.detachedHead=false checkout --detach FETCH_HEAD
+      - name: Use Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Synthetic tests with no network
+        run: python -m unittest discover -s NMR_Database_Tyas_GitHub_Upload/tests -p test_npmrd_schema_probe.py -v
+      - name: Probe only two small official ZIPs, print headers not record rows
+        run: |
+          python NMR_Database_Tyas_GitHub_Upload/scripts/npdb_npmrd_schema_probe.py --probe
