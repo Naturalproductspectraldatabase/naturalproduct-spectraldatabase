@@ -59,3 +59,25 @@ jobs:
           python -m compileall -q NMR_Database_Tyas_GitHub_Upload/scripts
       - name: Run all combined offline regression tests
         run: python -m unittest discover -s NMR_Database_Tyas_GitHub_Upload/tests -p 'test_*.py' -v
+
+      - name: Install Streamlit AppTest runtime
+        run: python -m pip install --disable-pip-version-check "streamlit==1.66.1" "plotly>=6,<7" "openpyxl>=3.1,<4" "certifi>=2024"
+      - name: Run offline Streamlit UI smoke test using bundled snapshot
+        env:
+          NPDB_READ_BACKEND: snapshot
+          PYTHONWARNINGS: ignore
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from streamlit.testing.v1 import AppTest
+          app_file = Path("NMR_Database_Tyas_GitHub_Upload/scripts/app.py")
+          test_app = AppTest.from_file(str(app_file), default_timeout=120)
+          test_app.run(timeout=120)
+          errors = [str(e.message) for e in test_app.exception]
+          print("AppTest exceptions:", errors)
+          print("Titles:", [str(t.value)[:90] for t in test_app.title][:12])
+          print("Sidebar messages:", len(test_app.sidebar.markdown))
+          if errors:
+              raise AssertionError("Offline dashboard load raised exceptions: " + " / ".join(errors[:4]))
+          print("PASS: app loaded in isolated snapshot mode; no Supabase credentials were available")
+          PY
