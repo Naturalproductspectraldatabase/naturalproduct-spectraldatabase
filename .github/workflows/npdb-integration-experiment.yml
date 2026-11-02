@@ -106,6 +106,63 @@ jobs:
           assert len(owner.sidebar.markdown)>0, "Owner session did not reach app navigation"
           print("PASS: guest blocked and synthetic authorized owner can enter snapshot dashboard")
           PY
+      - name: Test multi-step wizard UI navigation with synthetic draft
+        if: matrix.name == 'core-integrity' || matrix.name == 'core-and-login'
+        env:
+          NPDB_READ_BACKEND: snapshot
+          NPDB_ACCESS_PASSWORD_HASH: "synthetic_test_hash_not_a_password"
+          PYTHONWARNINGS: ignore
+        run: |
+          python - <<'PY'
+          from streamlit.testing.v1 import AppTest
+          target="NMR_Database_Tyas_GitHub_Upload/scripts/app.py"
+          app=AppTest.from_file(target,default_timeout=120)
+          app.session_state["npdb_authenticated"]=True
+          app.session_state["npdb_username"]="npdb_tyas"
+          app.session_state["npdb_role"]="owner"
+          app.session_state["nav_section"]="Compound Workspace"
+          app.session_state["compound_page"]="New Submission"
+          app.session_state["compound_wizard_step"]=1
+          def no_errors(stage):
+              assert not app.exception, f"{stage}: "+str([x.message for x in app.exception])
+          app.run(timeout=120)
+          no_errors("initial")
+          assert app.session_state["compound_wizard_step"]==1
+          app.text_input(key="wizard_trivial_name").set_value("SYNTHETIC-UI-TEST")
+          app.button(key="wizard_next_1").click().run(timeout=120)
+          no_errors("step 2")
+          assert app.session_state["compound_wizard_step"]==2
+          app.text_input(key="wizard_source_organism").set_value("TEST Spongia sp.")
+          app.text_input(key="wizard_sample_code").set_value("DEMO-XYZ")
+          app.button(key="wizard_next_2").click().run(timeout=120)
+          no_errors("step 3")
+          assert app.session_state["compound_wizard_step"]==3
+          app.text_input(key="wizard_uv_data").set_value("TEST 210 nm")
+          app.text_input(key="wizard_ftir_data").set_value("TEST 1700 cm-1")
+          app.text_area(key="wizard_hrms_data").set_value("TEST m/z 500.0000")
+          app.button(key="wizard_next_3").click().run(timeout=120)
+          no_errors("step 4")
+          assert app.session_state["compound_wizard_step"]==4
+          for key,expected in {
+              "wizard_source_organism":"TEST Spongia sp.",
+              "wizard_sample_code":"DEMO-XYZ",
+              "wizard_uv_data":"TEST 210 nm",
+              "wizard_ftir_data":"TEST 1700 cm-1",
+              "wizard_hrms_data":"TEST m/z 500.0000",
+          }.items():
+              assert app.session_state.get("_draft_"+key)==expected, (key,app.session_state.get("_draft_"+key))
+          app.button(key="wizard_back_4").click().run(timeout=120)
+          no_errors("back to 3")
+          assert app.session_state["compound_wizard_step"]==3
+          app.button(key="wizard_back_3").click().run(timeout=120)
+          no_errors("back to 2")
+          assert app.session_state["compound_wizard_step"]==2
+          assert app.session_state.get("_draft_wizard_sample_code")=="DEMO-XYZ"
+          app.button(key="wizard_next_2").click().run(timeout=120)
+          no_errors("forward to 3")
+          assert app.session_state.get("_draft_wizard_hrms_data")=="TEST m/z 500.0000"
+          print("PASS: Synthetic Streamlit wizard persisted Origin/Spectral inputs across forward/back navigation, without save")
+          PY
       - name: Publish tested core integration branch only (never production)
         if: matrix.name == 'core-integrity'
         env:
