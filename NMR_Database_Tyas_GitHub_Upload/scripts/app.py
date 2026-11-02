@@ -6814,6 +6814,8 @@ def render_compound_card(row, show_preview: bool = True, prefer_fast_asset: bool
                 )
                 if standardized_image is not None:
                     st.image(standardized_image, width="stretch")
+                    if is_generated_structure_reference(source_value):
+                        st.caption("Computed from SMILES (unverified).")
                 else:
                     st.caption("Structure image temporarily unavailable.")
             else:
@@ -9144,12 +9146,11 @@ def render_compound_structure_from_row(row_data, caption: str = "Structure", siz
         )
         if standardized_image is not None:
             st.image(standardized_image, caption=caption, width="stretch")
+            if is_generated_structure_reference(source_value):
+                st.caption("Computed from SMILES; chemical identity has not been curator-verified.")
             return
-        if is_external_url(source_value) or is_supabase_storage_reference(source_value):
-            display_url = browser_displayable_asset_url(source_value)
-            if display_url:
-                st.image(display_url, caption=caption, width="stretch")
-                return
+        # Do not expose the raw/possibly transparent URL when normalization
+        # failed. Report the problem; never silently switch to SMILES.
         # A referenced but inaccessible image must not be replaced with a
         # potentially incorrect SMILES-derived structure.
         st.warning("Registered structure image unavailable. Original depiction was not replaced by SMILES.")
@@ -9298,6 +9299,8 @@ def show_compound_detail(compound_id):
             )
             if standardized_image is not None:
                 st.image(standardized_image, width="stretch")
+                if is_generated_structure_reference(structure_path):
+                    st.caption("This depiction was generated from SMILES; its structure is not yet curator-verified.")
             else:
                 st.warning(
                     "Registered structure image could not be displayed. "
