@@ -319,6 +319,7 @@ SIDEBAR_NAV_LABEL_ICONS = {
     "Bioactivity": ":material/biotech:",
     "1H Peaks": ":material/monitoring:",
     "1H Spectra Gallery": ":material/photo_library:",
+    "13C Spectra Gallery": ":material/photo_library:",
     "13C Peaks": ":material/analytics:",
     "Spectra Library": ":material/folder_open:",
     "Specimen Library": ":material/image_search:",
@@ -337,6 +338,7 @@ SIDEBAR_NAV_ICON_PATHS = {
     "Bioactivity": pick_branding_asset("bioactivity.png", "updated.png"),
     "1H Peaks": pick_branding_asset("spectra.png", "updated.png"),
     "1H Spectra Gallery": pick_branding_asset("spectra.png", "Search spectra.png"),
+    "13C Spectra Gallery": pick_branding_asset("spectra.png", "updated.png"),
     "13C Peaks": pick_branding_asset("updated.png", "spectra.png"),
     "Spectra Library": pick_branding_asset("spectra.png", "updated.png"),
     "Specimen Library": pick_branding_asset("compounds.png", "structures.png"),
@@ -375,6 +377,7 @@ SIDEBAR_NAV_GROUPS = [
         {"label": "Bioactivity", "section": "Bioactivity"},
         {"label": "1H Peaks", "section": "1H Peaks"},
         {"label": "1H Spectra Gallery", "section": "1H Spectra Gallery"},
+        {"label": "13C Spectra Gallery", "section": "13C Spectra Gallery"},
         {"label": "13C Peaks", "section": "13C Peaks"},
         {"label": "Spectra Library", "section": "Spectra Library"},
         {"label": "Specimen Library", "section": "Specimen Library"},
@@ -601,6 +604,10 @@ NAV_SECTION_COPY = {
     "1H Spectra Gallery": {
         "title": "1H Spectra Gallery",
         "summary": "Compare 1H spectra previews alongside compound structures.",
+    },
+    "13C Spectra Gallery": {
+        "title": "13C Spectra Gallery",
+        "summary": "Compare 13C spectra previews alongside compound structures.",
     },
     "13C Peaks": {
         "title": "13C Peaks",
@@ -967,8 +974,11 @@ def is_access_gate_enabled() -> bool:
 
 
 def verify_access_gate():
+    # Fail closed: a missing or malformed Streamlit secret must never
+    # silently expose the compound database without authentication.
     if not is_access_gate_enabled():
-        return
+        st.error("NPDB access is temporarily unavailable because login is not configured. Please contact the database administrator.")
+        st.stop()
 
     if st.session_state.get("npdb_authenticated"):
         return
@@ -3750,6 +3760,42 @@ div[data-baseweb="select"] {
     overflow-wrap: anywhere;
 }
 
+/* Home visual rhythm: clear section boundaries, matched action alignment,
+   and comfortable card-to-button spacing. No global widget overrides. */
+.dashboard-home-section-gap {
+    height: clamp(1rem, 1.8vw, 1.5rem);
+}
+
+.st-key-dashboard_search_action {
+    padding-top: 1.35rem;
+}
+
+.dashboard-workspace-card .dashboard-workspace-title {
+    margin-bottom: 0.55rem;
+    line-height: 1.35;
+}
+
+.dashboard-workspace-card .dashboard-workspace-copy {
+    line-height: 1.5;
+}
+
+.dashboard-workspace-card .dashboard-workspace-copy + .dashboard-workspace-copy {
+    margin-top: 0.5rem;
+}
+
+.st-key-dashboard_workspace_cta {
+    margin-top: 0.85rem;
+}
+
+@media (max-width: 900px) {
+    .st-key-dashboard_search_action {
+        padding-top: 0.4rem;
+    }
+    .dashboard-home-section-gap {
+        height: 0.8rem;
+    }
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -3819,6 +3865,8 @@ def invalidate_cached_views():
         "load_search_index",
         "load_dashboard_preview_records",
         "load_structure_search_index",
+        "build_structure_candidate_index",
+        "supabase_column_available",
     ]
     for function_name in cached_function_names:
         cached_function = globals().get(function_name)
@@ -4689,6 +4737,36 @@ def guard_edit_compound_record_switch(compound_id: int):
     st.session_state["_active_edit_compound_id"] = compound_id
 
 
+def _revision_matches(current, expected) -> bool:
+    """Compare PostgreSQL timestamptz revisions without losing precision."""
+    if not maybe_blank(current) or not maybe_blank(expected):
+        return False
+    try:
+        current_dt = datetime.fromisoformat(maybe_blank(current).replace("Z", "+00:00"))
+        expected_dt = datetime.fromisoformat(maybe_blank(expected).replace("Z", "+00:00"))
+        return current_dt == expected_dt
+    except ValueError:
+        return maybe_blank(current) == maybe_blank(expected)
+
+
+def verify_compound_editor_revision(compound_id: int, expected_updated_at):
+    """Check revision before file uploads; PATCH still performs atomic CAS."""
+    if not use_supabase_write_backend():
+        return
+    if get_npdb_read_backend() != "supabase":
+        raise RuntimeError("Live Supabase data is unavailable. Reopen the editor when the cloud recovers.")
+    revision = maybe_blank(expected_updated_at)
+    if not revision:
+        raise RuntimeError("This edit has no reliable cloud revision. Refresh the record before saving.")
+    rows = _supabase_request(
+        "GET", "/rest/v1/compounds",
+        query={"select": "id,updated_at", "id": f"eq.{compound_id}", "limit": "1"},
+        write=False,
+    ) or []
+    if not rows or not _revision_matches(rows[0].get("updated_at"), revision):
+        raise RuntimeError("This compound changed in another session. Refresh the form and review the latest values before saving.")
+
+
 def reset_compound_wizard():
     wizard_keys = [
         "compound_wizard_step",
@@ -4745,55 +4823,11 @@ def reset_compound_wizard():
     st.session_state["compound_wizard_step"] = 1
 
 
-def persist_wizard_inputs():
-    wizard_keys = [
-        "wizard_trivial_name",
-        "wizard_iupac_name",
-        "wizard_formula",
-        "wizard_molecular_weight",
-        "wizard_smiles",
-        "wizard_inchi",
-        "wizard_inchikey",
-        "wizard_compound_class_select",
-        "wizard_compound_class_custom",
-        "wizard_compound_subclass_select",
-        "wizard_compound_subclass_custom",
-        "wizard_data_source_select",
-        "wizard_data_source_custom",
-        "wizard_source_category_select",
-        "wizard_source_category_custom",
-        "wizard_source_organism",
-        "wizard_sample_code",
-        "wizard_collection_location",
-        "wizard_gps_coordinates",
-        "wizard_depth_m",
-        "wizard_uv_data",
-        "wizard_ftir_data",
-        "wizard_cd_data",
-        "wizard_optical_rotation",
-        "wizard_melting_point",
-        "wizard_crystallization_method",
-        "wizard_ccdc_number",
-        "wizard_hrms_data",
-        "wizard_structure_path",
-        "wizard_structure_upload",
-        "wizard_submission_spectrum_type_select",
-        "wizard_submission_spectrum_type_custom",
-        "wizard_submission_spectra_note",
-        "wizard_submission_spectra_uploads",
-        "wizard_journal_name",
-        "wizard_article_title",
-        "wizard_publication_year",
-        "wizard_volume",
-        "wizard_issue",
-        "wizard_pages",
-        "wizard_doi",
-        "wizard_curation_status",
-        "wizard_note",
-    ]
-    for key in wizard_keys:
-        if key in st.session_state:
-            st.session_state[f"_draft_{key}"] = st.session_state[key]
+def persist_wizard_inputs(step: int | None = None):
+    """Save only the currently rendered wizard step; never stale hidden fields."""
+    from npdb_wizard_draft import persist_visible_wizard_step
+    current_step = int(step if step is not None else st.session_state.get("compound_wizard_step", 1))
+    persist_visible_wizard_step(st.session_state, current_step)
 
 
 def get_wizard_value(key: str, default=""):
@@ -5013,7 +5047,7 @@ def molecule_fingerprint(mol):
 
 
 @st.cache_resource(show_spinner=False)
-def build_structure_candidate_index(_db_signature: float):
+def build_structure_candidate_index(db_signature: float):
     if not is_structure_backend_available():
         return []
 
@@ -5737,10 +5771,9 @@ def load_standardized_structure_image(image_path: Path, size=STRUCTURE_DETAIL_IM
         return None
     try:
         with Image.open(image_path) as image:
-            if fallback_smiles and max(image.size) < STRUCTURE_MIN_CRISP_ASSET_EDGE:
-                generated = standardized_structure_from_smiles(fallback_smiles, size=size)
-                if generated is not None:
-                    return generated
+            # A curated PNG remains authoritative even when it is small.
+            # Replacing it with an unrelated SMILES would silently corrupt
+            # the scientific depiction; upscale it on an opaque white canvas.
             return normalize_structure_image(image, size=size)
     except Exception:
         return None
@@ -5758,10 +5791,8 @@ def load_external_structure_png_bytes(source_text: str, size=STRUCTURE_DETAIL_IM
         with urllib.request.urlopen(url, timeout=8, context=_supabase_ssl_context()) as response:
             raw = response.read()
         with Image.open(io.BytesIO(raw)) as image:
-            if fallback_smiles and max(image.size) < STRUCTURE_MIN_CRISP_ASSET_EDGE:
-                generated = standardized_structure_from_smiles(fallback_smiles, size=size)
-                if generated is not None:
-                    return pil_image_to_png_bytes(generated)
+            # Never silently substitute a downloaded/uploaded structure
+            # with an RDKit image based on an unverified structure string.
             normalized = normalize_structure_image(image, size=size)
             return pil_image_to_png_bytes(normalized)
     except Exception:
@@ -5900,7 +5931,7 @@ def supabase_count_rows(table: str, filters: dict | None = None) -> int:
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
-def count_database_totals(_db_signature: float):
+def count_database_totals(db_signature: float):
     backend = get_npdb_read_backend()
     if backend == "supabase":
         return {
@@ -6162,7 +6193,9 @@ def render_dashboard_pie_chart(df: pd.DataFrame, names_col: str, values_col: str
         textfont=dict(size=11, color="#F7FBFF"),
         insidetextorientation="auto",
         sort=False,
-        pull=[0.025] + [0] * max(len(chart_df) - 1, 0),
+        # A neutral scientific distribution chart is a complete, centered ring.
+        # The former 2.5% offset made the first segment protrude unnecessarily.
+        pull=0,
         marker=dict(line=dict(color="rgba(7,17,29,0.95)", width=2)),
         hovertemplate=f"%{{label}}<br>%{{value}} {values_col.lower()}<br>%{{percent}}<extra></extra>",
     )
@@ -6575,12 +6608,15 @@ def render_dashboard_showcase(
             unsafe_allow_html=True,
         )
     with search_button_col:
-        st.write("")
-        st.write("")
-        if st.button("Start Searching ->", key="dashboard_start_search", width="stretch", type="primary", icon=":material/search:"):
-            navigate_internal("Search & Match")
-            st.rerun()
+        # Use a styled action container instead of two empty st.write() calls;
+        # the previous alignment varied unpredictably with browser zoom.
+        with st.container(key="dashboard_search_action"):
+            if st.button("Start Searching ->", key="dashboard_start_search", width="stretch", type="primary", icon=":material/search:"):
+                navigate_internal("Search & Match")
+                st.rerun()
 
+    # Separate the search affordance from the next functional section.
+    st.markdown('<div class="dashboard-home-section-gap" aria-hidden="true"></div>', unsafe_allow_html=True)
     workflow_col, workspace_col = st.columns([2.18, 0.82], gap="medium")
     with workflow_col:
         user_can_edit = can_edit_database()
@@ -6807,10 +6843,9 @@ def render_compound_card(row, show_preview: bool = True, prefer_fast_asset: bool
                 is_external_url(str(source_value).strip()) or is_supabase_storage_reference(source_value)
             )
             source_is_generated_asset = source_value and is_generated_structure_reference(str(source_value).strip())
-            if prefer_fast_asset and source_is_remote_asset and not source_is_generated_asset:
-                safe_url = display_asset_url(source_value).replace('"', "&quot;")
-                st.image(safe_url, width="stretch")
-            else:
+            if source_value:
+                # Even fast cards must normalize the real PNG onto white and
+                # must never use unverified SMILES when the image is missing.
                 standardized_image = load_standardized_structure_source(
                     source_value,
                     size=STRUCTURE_THUMBNAIL_IMAGE_SIZE,
@@ -6818,20 +6853,24 @@ def render_compound_card(row, show_preview: bool = True, prefer_fast_asset: bool
                 )
                 if standardized_image is not None:
                     st.image(standardized_image, width="stretch")
-                elif source_is_remote_asset:
-                    safe_url = display_asset_url(source_value).replace('"', "&quot;")
-                    st.image(safe_url, width="stretch")
+                    if is_generated_structure_reference(source_value):
+                        st.caption("Computed from SMILES (unverified).")
                 else:
-                    structure_png = structure_smiles_png_bytes(
-                        first_structure_identifier(row.get("smiles"), row.get("inchi"), row.get("inchikey")),
-                        size=STRUCTURE_THUMBNAIL_IMAGE_SIZE,
+                    st.caption("Structure image temporarily unavailable.")
+            else:
+                st.caption("No curated image registered; computed depiction is unverified.")
+                structure_png = structure_smiles_png_bytes(
+                    first_structure_identifier(row.get("smiles"), row.get("inchi"), row.get("inchikey")),
+                    size=STRUCTURE_THUMBNAIL_IMAGE_SIZE,
+                )
+                if structure_png:
+                    st.image(structure_png, width="stretch")
+                else:
+                    structure_url = structure_smiles_image_url(
+                        first_structure_identifier(row.get("smiles"), row.get("inchi"), row.get("inchikey"))
                     )
-                    if structure_png:
-                        st.image(structure_png, width="stretch")
-                    else:
-                        structure_url = structure_smiles_image_url(first_structure_identifier(row.get("smiles"), row.get("inchi"), row.get("inchikey")))
-                        if structure_url:
-                            st.image(structure_url, width="stretch")
+                    if structure_url:
+                        st.image(structure_url, width="stretch")
     with info_col:
         st.markdown(
             f"""
@@ -8265,7 +8304,7 @@ def get_db_signature():
 
 
 @st.cache_data(show_spinner=False)
-def load_search_index(_db_signature: float):
+def load_search_index(db_signature: float):
     conn = get_connection()
     try:
         compounds_df = pd.read_sql_query(
@@ -9085,6 +9124,15 @@ def is_proton_spectrum_label(value) -> bool:
     return "1h" in compact or "proton" in text or "h1" in compact
 
 
+def is_carbon_spectrum_label(value) -> bool:
+    """Carbon-13 1D files; do not mix in 2D HSQC/HMBC or proton files."""
+    text = maybe_blank(value).casefold()
+    compact = re.sub(r"[^a-z0-9]+", "", text)
+    if any(token in compact for token in ("hsqc", "hmbc", "cosy", "noesy", "tocsy")):
+        return False
+    return "13c" in compact or "carbon" in compact or "c13" in compact
+
+
 def render_registered_file_preview(file_path_value, caption: str = "", spectrum_type: str = "", missing_label: str = "File not found.", key_prefix: str = "registered"):
     path_text = maybe_blank(file_path_value)
     if not path_text:
@@ -9146,13 +9194,17 @@ def render_compound_structure_from_row(row_data, caption: str = "Structure", siz
         )
         if standardized_image is not None:
             st.image(standardized_image, caption=caption, width="stretch")
+            if is_generated_structure_reference(source_value):
+                st.caption("Unverified SMILES depiction — chemical identity has not been curator-verified.")
             return
-        if is_external_url(source_value) or is_supabase_storage_reference(source_value):
-            display_url = browser_displayable_asset_url(source_value)
-            if display_url:
-                st.image(display_url, caption=caption, width="stretch")
-                return
+        # Do not expose the raw/possibly transparent URL when normalization
+        # failed. Report the problem; never silently switch to SMILES.
+        # A referenced but inaccessible image must not be replaced with a
+        # potentially incorrect SMILES-derived structure.
+        st.warning("Registered structure image unavailable. Original depiction was not replaced by SMILES.")
+        return
     if fallback_structure:
+        st.caption("No curated image registered; depiction below is generated from unverified structure text.")
         structure_png = structure_smiles_png_bytes(fallback_structure, size=size)
         if structure_png:
             st.image(structure_png, caption=caption, width="stretch")
@@ -9295,13 +9347,15 @@ def show_compound_detail(compound_id):
             )
             if standardized_image is not None:
                 st.image(standardized_image, width="stretch")
+                if is_generated_structure_reference(structure_path):
+                    st.caption("This depiction was generated from SMILES; its structure is not yet curator-verified.")
             else:
-                render_structure_preview(
-                    first_structure_identifier(row_data.get("smiles"), row_data.get("inchi"), row_data.get("inchikey")),
-                    caption=None,
-                    size=STRUCTURE_DETAIL_IMAGE_SIZE,
+                st.warning(
+                    "Registered structure image could not be displayed. "
+                    "NPDB has withheld automatic SMILES fallback to avoid displaying a scientifically incorrect structure."
                 )
         else:
+            st.caption("No curated image registered; depiction below is generated from unverified structure text.")
             render_structure_preview(
                 first_structure_identifier(row_data.get("smiles"), row_data.get("inchi"), row_data.get("inchikey")),
                 caption=None,
@@ -10301,7 +10355,8 @@ def show_compound_pages():
 
         compounds_df = load_all_compounds()
         spectra_df = load_all_spectra_files()
-        persist_wizard_inputs()
+        # Do not persist here: Streamlit may have just deleted the widgets
+        # from a previous step, while the durable _draft_ values remain.
         for key in [
             "wizard_trivial_name",
             "wizard_iupac_name",
@@ -10514,18 +10569,48 @@ def show_compound_pages():
                 st.write(f"**Journal:** {clean_text(get_wizard_value('wizard_journal_name'))}")
                 st.write(f"**Article:** {clean_text(get_wizard_value('wizard_article_title'))}")
                 st.markdown('</div>', unsafe_allow_html=True)
+                with st.expander("Review all Origin and Spectral Data before saving", expanded=True):
+                    st.caption(
+                        "Check the details entered in Steps 2 and 3. Empty values "
+                        "will be saved as empty; return to the relevant step to correct them."
+                    )
+                    for label, wizard_key in (
+                        ("Source organism", "wizard_source_organism"),
+                        ("Sample code", "wizard_sample_code"),
+                        ("Collection location", "wizard_collection_location"),
+                        ("GPS coordinates", "wizard_gps_coordinates"),
+                        ("Depth (m)", "wizard_depth_m"),
+                        ("Notes", "wizard_note"),
+                        ("UV", "wizard_uv_data"),
+                        ("FTIR", "wizard_ftir_data"),
+                        ("CD/ECD", "wizard_cd_data"),
+                        ("Optical rotation", "wizard_optical_rotation"),
+                        ("Melting point", "wizard_melting_point"),
+                        ("Crystallization", "wizard_crystallization_method"),
+                        ("HRMS", "wizard_hrms_data"),
+                        ("CCDC", "wizard_ccdc_number"),
+                        ("Structure image path", "wizard_structure_path"),
+                    ):
+                        value = get_wizard_value(wizard_key, "")
+                        st.write(f"**{label}:** {clean_text(value) if value else 'Not provided'}")
+                    spectrum_uploads_preview = get_wizard_value("wizard_submission_spectra_uploads") or []
+                    st.write(f"**Supporting spectra uploads:** {len(spectrum_uploads_preview)}")
+                    st.write(
+                        f"**Structure image upload:** "
+                        f"{'Selected' if get_wizard_value('wizard_structure_upload') else 'Not provided'}"
+                    )
 
         nav_left, nav_right = st.columns([1, 1])
         with nav_left:
             if wizard_step > 1 and st.button("Back", width="stretch", key=f"wizard_back_{wizard_step}"):
-                persist_wizard_inputs()
+                persist_wizard_inputs(wizard_step)
                 st.session_state["compound_wizard_step"] = wizard_step - 1
                 st.rerun()
 
         with nav_right:
             if wizard_step < 4:
                 if st.button("Continue", width="stretch", key=f"wizard_next_{wizard_step}"):
-                    persist_wizard_inputs()
+                    persist_wizard_inputs(wizard_step)
                     if wizard_step == 1 and not maybe_blank(get_wizard_value("wizard_trivial_name")):
                         st.error("Trivial Name is required before moving to the next step.")
                     else:
@@ -10533,7 +10618,7 @@ def show_compound_pages():
                         st.rerun()
             else:
                 if st.button("Save New Record", width="stretch", key="wizard_submit_compound"):
-                    persist_wizard_inputs()
+                    persist_wizard_inputs(wizard_step)
                     trivial_name = maybe_blank(get_wizard_value("wizard_trivial_name"))
                     iupac_name = maybe_blank(get_wizard_value("wizard_iupac_name"))
                     molecular_formula = maybe_blank(get_wizard_value("wizard_formula"))
@@ -10737,7 +10822,12 @@ def show_compound_pages():
                 st.error("Record not found.")
             else:
                 row = row_df.iloc[0]
-
+                baseline_key = f"_draft_edit_baseline_{edit_compound_id}"
+                if baseline_key not in st.session_state:
+                    # Keep the version actually seen by the editor, not a
+                    # later revision read during a subsequent rerun.
+                    st.session_state[baseline_key] = row.to_dict()
+                edit_baseline = st.session_state[baseline_key]
 
                 col1, col2 = st.columns(2)
 
@@ -10840,6 +10930,10 @@ def show_compound_pages():
                                 st.stop()
 
                         try:
+                            ensure_write_target_ready()
+                            verify_compound_editor_revision(
+                                edit_compound_id, edit_baseline.get("updated_at")
+                            )
                             if structure_upload is not None:
                                 structure_image_path = save_uploaded_asset(
                                     structure_upload,
@@ -10889,7 +10983,8 @@ def show_compound_pages():
                                 hrms_data=hrms_data.strip(),
                                 data_source=data_source.strip(),
                                 curation_status=normalize_curation_status(curation_status, default="curated"),
-                                note=note.strip()
+                                note=note.strip(),
+                                original_row=edit_baseline,
                             )
                             confirm_compound_fields_persisted(
                                 edit_compound_id,
@@ -10931,6 +11026,9 @@ def show_compound_pages():
                                 },
                                 "Perubahan record",
                             )
+                            saved_row = load_compound_row(edit_compound_id)
+                            if not saved_row.empty:
+                                st.session_state[baseline_key] = saved_row.iloc[0].to_dict()
                         except Exception as exc:
                             stop_after_save_error("Perubahan record", exc)
 
@@ -12469,7 +12567,9 @@ def _supabase_request(method: str, path: str, query: dict | None = None, body=No
     base = get_supabase_url().rstrip("/")
     url = f"{base}{path}"
     if query:
-        query_text = urlencode(query, doseq=True, safe=",().:*+-")
+        # Never leave literal + in query timestamps: PostgREST interprets + as
+        # a space in URL queries, breaking optimistic-concurrency filters.
+        query_text = urlencode(query, doseq=True, safe=",().:*-")
         url = f"{url}?{query_text}"
     payload = None
     if body is not None:
@@ -12567,10 +12667,10 @@ def is_duplicate_primary_key_error(exc: Exception) -> bool:
     return "23505" in message and ("duplicate key" in message or "_pkey" in message)
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=60)
 def supabase_column_available(table: str, column: str) -> bool:
     if not use_supabase_backend():
-        return False
+        raise RuntimeError("Supabase is not available; column presence cannot be confirmed.")
     try:
         _supabase_request(
             "GET",
@@ -12581,9 +12681,11 @@ def supabase_column_available(table: str, column: str) -> bool:
         return True
     except RuntimeError as exc:
         message = str(exc).lower()
-        if "connection failed" in message or "timed out" in message or "unreachable" in message:
-            return False
-        if "column" in message and column.lower() in message:
+        # Only definitive undefined-column errors indicate absence. Transient
+        # DNS, timeout, HTTP permission and other errors must never be cached.
+        if "42703" in message or (
+            "does not exist" in message and "column" in message and column.lower() in message
+        ):
             return False
         raise
 
@@ -12703,12 +12805,18 @@ def supabase_insert_row(table: str, row: dict):
     return {}
 
 
-def supabase_update_row(table: str, row_id: int, row: dict):
+def supabase_update_row(table: str, row_id: int, row: dict, *, expected_updated_at=None):
     payload = {k: _json_ready(v) for k, v in row.items() if k and k != "id"}
+    query = {"id": f"eq.{row_id}", "select": "id,updated_at" if table == "compounds" else "id"}
+    if expected_updated_at is not None:
+        revision = maybe_blank(expected_updated_at)
+        if not revision:
+            raise RuntimeError("Cannot update a record without a valid original revision.")
+        query["updated_at"] = f"eq.{revision}"
     response = _supabase_request(
         "PATCH",
         f"/rest/v1/{table}",
-        query={"id": f"eq.{row_id}", "select": "id"},
+        query=query,
         body=payload,
         write=True,
         extra_headers={"Prefer": "return=representation"},
@@ -12716,6 +12824,8 @@ def supabase_update_row(table: str, row_id: int, row: dict):
     if response:
         record_audit_event("update", table, row_id, "supabase", payload)
         return response[0]
+    if expected_updated_at is not None:
+        raise RuntimeError("Record was changed or removed by another session. No changes were saved; reload before retrying.")
     return {}
 
 
@@ -12901,9 +13011,9 @@ def get_db_signature():
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
-def _load_all_compounds_cached(source_normalization_version: str, _db_signature):
+def _load_all_compounds_cached(source_normalization_version: str, db_signature):
     _ = source_normalization_version
-    __ = _db_signature
+    __ = db_signature
     columns = compound_select_columns()
     backend = get_npdb_read_backend()
     if backend == "supabase":
@@ -12929,9 +13039,9 @@ except Exception:
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
-def _load_dashboard_compounds_cached(source_normalization_version: str, _db_signature):
+def _load_dashboard_compounds_cached(source_normalization_version: str, db_signature):
     _ = source_normalization_version
-    __ = _db_signature
+    __ = db_signature
     columns = dashboard_compound_select_columns()
     backend = get_npdb_read_backend()
     if backend == "supabase":
@@ -12956,9 +13066,9 @@ except Exception:
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
-def _load_search_compounds_cached(source_normalization_version: str, _db_signature):
+def _load_search_compounds_cached(source_normalization_version: str, db_signature):
     _ = source_normalization_version
-    __ = _db_signature
+    __ = db_signature
     columns = search_compound_select_columns()
     backend = get_npdb_read_backend()
     if backend == "supabase":
@@ -13001,9 +13111,9 @@ def clear_compounds_cache_for_section(section: str):
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
-def _load_compound_row_cached(compound_id, source_normalization_version: str, _db_signature):
+def _load_compound_row_cached(compound_id, source_normalization_version: str, db_signature):
     _ = source_normalization_version
-    __ = _db_signature
+    __ = db_signature
     columns = compound_select_columns()
     backend = get_npdb_read_backend()
     if backend == "supabase":
@@ -13228,7 +13338,7 @@ def _empty_dataframe_for_columns(columns: str) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
-def load_all_specimens(_db_signature=None):
+def load_all_specimens(db_signature=None):
     backend = get_npdb_read_backend()
     if backend == "supabase":
         try:
@@ -13241,7 +13351,7 @@ def load_all_specimens(_db_signature=None):
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
-def load_specimen_row(specimen_id, _db_signature=None):
+def load_specimen_row(specimen_id, db_signature=None):
     backend = get_npdb_read_backend()
     if backend == "supabase":
         try:
@@ -13258,7 +13368,7 @@ def load_specimen_row(specimen_id, _db_signature=None):
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
-def load_specimen_compound_links(specimen_id=None, _db_signature=None):
+def load_specimen_compound_links(specimen_id=None, db_signature=None):
     backend = get_npdb_read_backend()
     if backend == "supabase":
         try:
@@ -13293,7 +13403,7 @@ def load_specimen_compound_links(specimen_id=None, _db_signature=None):
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
-def load_specimen_extracts(specimen_id=None, _db_signature=None):
+def load_specimen_extracts(specimen_id=None, db_signature=None):
     backend = get_npdb_read_backend()
     if backend == "supabase":
         try:
@@ -13421,7 +13531,7 @@ def count_bioactivity_records(filtered_ids):
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
-def load_search_index(_db_signature: float):
+def load_search_index(db_signature: float):
     compounds_df = load_all_compounds()
     all_proton_df = load_all_proton_data()
     all_carbon_df = load_all_carbon_data()
@@ -13498,7 +13608,7 @@ def insert_compound_record(trivial_name, iupac_name, molecular_formula, compound
     }
     if use_supabase_write_backend():
         if not supabase_column_available("compounds", "curation_status"):
-            row.pop("curation_status", None)
+            raise RuntimeError("Cloud curation_status column is missing; submission is blocked to protect metadata.")
         inserted = supabase_insert_row("compounds", row)
         row_id = int(inserted.get("id")) if inserted and inserted.get("id") is not None else None
         if row_id is None:
@@ -13524,7 +13634,7 @@ def insert_compound_record(trivial_name, iupac_name, molecular_formula, compound
     return row_id
 
 
-def update_compound_record(compound_id, trivial_name, iupac_name, molecular_formula, compound_class, compound_subclass, smiles, inchi, inchikey, source_category, source_organism, source_material, sample_code, collection_location, gps_coordinates, depth_m, uv_data, ftir_data, cd_data, optical_rotation, melting_point, crystallization_method, structure_image_path, journal_name, article_title, publication_year, volume, issue, pages, doi, ccdc_number, molecular_weight, hrms_data, data_source, curation_status, note):
+def update_compound_record(compound_id, trivial_name, iupac_name, molecular_formula, compound_class, compound_subclass, smiles, inchi, inchikey, source_category, source_organism, source_material, sample_code, collection_location, gps_coordinates, depth_m, uv_data, ftir_data, cd_data, optical_rotation, melting_point, crystallization_method, structure_image_path, journal_name, article_title, publication_year, volume, issue, pages, doi, ccdc_number, molecular_weight, hrms_data, data_source, curation_status, note, *, original_row=None):
     ensure_write_target_ready()
     structure_image_path = maybe_blank(structure_image_path)
     if not structure_image_path:
@@ -13569,9 +13679,27 @@ def update_compound_record(compound_id, trivial_name, iupac_name, molecular_form
         "updated_at": datetime.now(UTC).isoformat(),
     }
     if use_supabase_write_backend():
+        if get_npdb_read_backend() != "supabase":
+            raise RuntimeError("Live Supabase is not ready. Reload the editor before saving.")
+        if not isinstance(original_row, dict) or not maybe_blank(original_row.get("updated_at")):
+            raise RuntimeError("No trusted original record revision is available. Reopen the editor before saving.")
         if not supabase_column_available("compounds", "curation_status"):
-            row.pop("curation_status", None)
-        supabase_update_row("compounds", compound_id, row)
+            raise RuntimeError("Cloud curation_status column is missing. Editing is blocked rather than dropping metadata.")
+        if any(field not in original_row for field in row if field not in {"id", "updated_at"}):
+            raise RuntimeError("The editor's original record is incomplete. Reopen the record before saving.")
+        # Send only changed scientific fields instead of rewriting a stale form.
+        changes = {
+            field: value for field, value in row.items()
+            if field not in {"id", "updated_at"}
+            and not _readback_value_matches(original_row.get(field), value)
+        }
+        if not changes:
+            return
+        changes["updated_at"] = row["updated_at"]
+        supabase_update_row(
+            "compounds", compound_id, changes,
+            expected_updated_at=original_row["updated_at"],
+        )
         if not use_local_read_backend():
             invalidate_cached_views()
             return
@@ -13952,96 +14080,131 @@ def _compound_ids_from_labels(labels: list[str]) -> list[int]:
     return compound_ids
 
 
-def show_proton_spectra_gallery():
+def _set_spectra_gallery_page(prefix: str, target: int, total_pages: int):
+    from npdb_gallery_pagination import set_gallery_page
+    set_gallery_page(st.session_state, prefix, target, total_pages)
+
+
+def _jump_spectra_gallery_page(prefix: str, widget_key: str, total_pages: int):
+    _set_spectra_gallery_page(prefix, st.session_state[widget_key], total_pages)
+
+
+def _render_spectra_gallery_pagination(prefix: str, total_pages: int, position: str):
+    """Two accessible controls, one shared canonical page and jump state."""
+    from npdb_gallery_pagination import bounded_page
+    page = bounded_page(st.session_state.get(f"{prefix}_page", 1), total_pages)
+    prev_col, status_col, next_col, jump_col = st.columns([1.1, 1, 1.1, 1.1], gap="small")
+    with prev_col:
+        st.button(
+            "‹ Previous", key=f"{prefix}_{position}_previous",
+            disabled=page <= 1, width="stretch",
+            on_click=_set_spectra_gallery_page, args=(prefix, page - 1, total_pages),
+        )
+    with status_col:
+        st.caption(f"Page {page} of {total_pages}")
+    with next_col:
+        st.button(
+            "Next ›", key=f"{prefix}_{position}_next",
+            disabled=page >= total_pages, width="stretch",
+            on_click=_set_spectra_gallery_page, args=(prefix, page + 1, total_pages),
+        )
+    with jump_col:
+        key = f"{prefix}_{position}_jump"
+        st.number_input(
+            f"Jump to page ({position})", min_value=1, max_value=total_pages,
+            step=1, key=key,
+            on_change=_jump_spectra_gallery_page, args=(prefix, key, total_pages),
+        )
+
+
+def show_registered_nmr_spectra_gallery(nucleus: str):
+    """Shared 1H / 13C gallery; only registered spectrum files are displayed."""
+    if nucleus not in {"1H", "13C"}:
+        raise ValueError("Unsupported NMR gallery nucleus")
+    is_proton = nucleus == "1H"
+    prefix = "one_h_gallery" if is_proton else "thirteen_c_gallery"
+    spectrum_filter = is_proton_spectrum_label if is_proton else is_carbon_spectrum_label
     section_header(
-        "1H Spectra Gallery",
-        "Browse registered proton spectra beside compound structures for fast visual comparison.",
+        f"{nucleus} Spectra Gallery",
+        f"Browse registered {nucleus} NMR spectra beside their compound structures.",
     )
     spectra_df = load_all_spectra_files()
-    if spectra_df.empty:
+    if spectra_df.empty or "spectrum_type" not in spectra_df.columns:
         st.info("No spectra file records available.")
         return
 
-    proton_df = spectra_df[spectra_df["spectrum_type"].apply(is_proton_spectrum_label)].copy()
-    if proton_df.empty:
-        st.info("No registered 1H spectrum images are available yet.")
+    gallery_df = spectra_df[spectra_df["spectrum_type"].apply(spectrum_filter)].copy()
+    if gallery_df.empty:
+        st.info(f"No registered {nucleus} spectrum files are available yet.")
         return
 
     compounds_df = load_all_compounds()
     if not compounds_df.empty:
-        compound_columns = [
-            "id",
-            "trivial_name",
-            "molecular_formula",
-            "compound_class",
-            "source_category",
-            "source_organism",
-            "structure_image_path",
-            "smiles",
-            "inchi",
-            "inchikey",
+        columns = [
+            "id", "trivial_name", "molecular_formula", "compound_class",
+            "source_category", "source_organism", "structure_image_path",
+            "smiles", "inchi", "inchikey",
         ]
-        available_columns = [column for column in compound_columns if column in compounds_df.columns]
-        compound_lookup = compounds_df[available_columns].copy()
-        compound_lookup["id"] = pd.to_numeric(compound_lookup["id"], errors="coerce")
-        proton_df["compound_id"] = pd.to_numeric(proton_df["compound_id"], errors="coerce")
-        proton_df = proton_df.merge(
-            compound_lookup.rename(columns={"id": "compound_id"}),
-            on="compound_id",
-            how="left",
-            suffixes=("_file", ""),
+        available = [column for column in columns if column in compounds_df.columns]
+        lookup = compounds_df[available].copy()
+        lookup["id"] = pd.to_numeric(lookup["id"], errors="coerce")
+        gallery_df["compound_id"] = pd.to_numeric(gallery_df["compound_id"], errors="coerce")
+        gallery_df = gallery_df.merge(
+            lookup.rename(columns={"id": "compound_id"}),
+            on="compound_id", how="left", suffixes=("_file", ""),
         )
 
     search_text = st.text_input(
         "Search gallery",
-        placeholder="Compound name, formula, class, source, or spectrum type",
-        key="one_h_gallery_search",
+        placeholder="Compound name, formula, class, source or spectrum type",
+        key=f"{prefix}_search",
     )
     if search_text.strip():
-        searchable_columns = [
-            column
-            for column in [
-                "trivial_name",
-                "molecular_formula",
-                "compound_class",
-                "source_category",
-                "source_organism",
-                "spectrum_type",
-                "note",
-                "file_path",
-            ]
-            if column in proton_df.columns
+        searchable = [
+            col for col in (
+                "trivial_name", "molecular_formula", "compound_class",
+                "source_category", "source_organism", "spectrum_type",
+                "note", "file_path",
+            ) if col in gallery_df.columns
         ]
-        combined = proton_df[searchable_columns].fillna("").astype(str).agg(" ".join, axis=1).str.casefold()
-        for token in [item.casefold() for item in re.split(r"\s+", search_text.strip()) if item]:
-            proton_df = proton_df[combined.str.contains(re.escape(token), regex=True)]
-            combined = combined.loc[proton_df.index]
+        combined = gallery_df[searchable].fillna("").astype(str).agg(" ".join, axis=1).str.casefold()
+        for token in (item.casefold() for item in re.split(r"\s+", search_text.strip()) if item):
+            gallery_df = gallery_df[combined.str.contains(re.escape(token), regex=True)]
+            combined = combined.loc[gallery_df.index]
 
-    if proton_df.empty:
-        st.info("No 1H spectrum records match the current filter.")
+    if gallery_df.empty:
+        st.info(f"No {nucleus} spectrum files match the search.")
         return
 
-    sort_columns = [column for column in ["trivial_name", "compound_id", "id"] if column in proton_df.columns]
-    proton_df = proton_df.sort_values(by=sort_columns, kind="stable")
-    page_size = st.selectbox("Spectra per page", [10, 20, 40], index=0, key="one_h_gallery_page_size")
-    total_records = len(proton_df)
-    total_pages = max(1, math.ceil(total_records / int(page_size)))
-    page_number = int(
-        st.number_input(
-            "Page",
-            min_value=1,
-            max_value=total_pages,
-            value=min(int(st.session_state.get("one_h_gallery_page", 1)), total_pages),
-            key="one_h_gallery_page",
-        )
+    sort_cols = [c for c in ("trivial_name", "compound_id", "id") if c in gallery_df.columns]
+    gallery_df = gallery_df.sort_values(by=sort_cols, kind="stable")
+
+    from npdb_gallery_pagination import apply_gallery_criteria, pagination_window
+    page_size = st.selectbox(
+        "Spectra per page", [10, 20, 40], index=0,
+        key=f"{prefix}_page_size",
     )
-    start = (page_number - 1) * int(page_size)
-    current_page = proton_df.iloc[start:start + int(page_size)]
-    st.caption(f"Showing {start + 1}-{start + len(current_page)} of {total_records} registered 1H spectrum record(s).")
+    _, _, pages = pagination_window(len(gallery_df), int(page_size), 1)
+    page = apply_gallery_criteria(
+        st.session_state, prefix=prefix, search_text=search_text,
+        page_size=int(page_size), total_pages=pages,
+    )
+    start, end, _ = pagination_window(len(gallery_df), int(page_size), page)
+    current_page = gallery_df.iloc[start:end]
+
+    anchor = f"npdb-gallery-{prefix}"
+    st.markdown(f'<div id="{anchor}"></div>', unsafe_allow_html=True)
+    _render_spectra_gallery_pagination(prefix, pages, "top")
+    st.caption(
+        f"Showing {start + 1}-{end} of {len(gallery_df)} registered {nucleus} spectra."
+    )
 
     for _, row in current_page.iterrows():
         compound_id = int(row["compound_id"]) if not pd.isna(row.get("compound_id")) else None
-        title = clean_text(row.get("trivial_name")) if maybe_blank(row.get("trivial_name")) else f"Compound ID {compound_id}"
+        title = (
+            clean_text(row.get("trivial_name")) if maybe_blank(row.get("trivial_name"))
+            else f"Compound ID {compound_id}"
+        )
         st.markdown('<div class="panel-card">', unsafe_allow_html=True)
         st.markdown(f"### {html_text(title)}")
         meta_bits = [
@@ -14049,23 +14212,37 @@ def show_proton_spectra_gallery():
             clean_text(row.get("molecular_formula")) if maybe_blank(row.get("molecular_formula")) else "",
             clean_text(row.get("spectrum_type")) if maybe_blank(row.get("spectrum_type")) else "",
         ]
-        st.caption(" · ".join(bit for bit in meta_bits if bit))
+        st.caption(" · ".join(part for part in meta_bits if part))
         left_col, right_col = st.columns([0.36, 0.64], gap="large")
         with left_col:
-            render_compound_structure_from_row(row, caption="Structure", size=STRUCTURE_THUMBNAIL_IMAGE_SIZE)
-            if compound_id and st.button("Open Record", key=f"one_h_gallery_open_{compound_id}_{row.get('id')}"):
+            render_compound_structure_from_row(
+                row, caption="Structure", size=STRUCTURE_THUMBNAIL_IMAGE_SIZE
+            )
+            if compound_id and st.button(
+                "Open Record", key=f"{prefix}_open_{compound_id}_{row.get('id')}"
+            ):
                 open_compound_detail(compound_id)
                 st.rerun()
         with right_col:
             render_registered_file_preview(
-                row.get("file_path"),
-                caption=clean_text(row.get("spectrum_type")),
+                row.get("file_path"), caption=clean_text(row.get("spectrum_type")),
                 spectrum_type=maybe_blank(row.get("spectrum_type")),
-                key_prefix=f"one_h_gallery_{row.get('id')}_{compound_id}",
+                key_prefix=f"{prefix}_{row.get('id')}_{compound_id}",
             )
             if maybe_blank(row.get("note")):
                 st.caption(clean_text(row.get("note")))
         st.markdown('</div>', unsafe_allow_html=True)
+
+    _render_spectra_gallery_pagination(prefix, pages, "bottom")
+    st.markdown(f"[↑ Back to gallery top](#{anchor})")
+
+
+def show_proton_spectra_gallery():
+    show_registered_nmr_spectra_gallery("1H")
+
+
+def show_carbon_spectra_gallery():
+    show_registered_nmr_spectra_gallery("13C")
 
 
 def _render_specimen_image(image_path: str, caption: str = "Specimen"):
@@ -14349,6 +14526,13 @@ def show_specimen_library_pages():
 # App boot
 # =========================
 apply_navigation_query_params()
+# Invalidate snapshot-derived caches before loading any page on backend change.
+active_read_backend = get_npdb_read_backend()
+previous_read_backend = st.session_state.get("_npdb_last_read_backend")
+if previous_read_backend is not None and previous_read_backend != active_read_backend:
+    invalidate_cached_views()
+    clear_edit_compound_form_state()
+st.session_state["_npdb_last_read_backend"] = active_read_backend
 main_section = st.session_state.get("nav_section", "Dashboard")
 all_compounds_df = load_compounds_for_section(main_section)
 render_cloud_sync_notice()
@@ -14395,6 +14579,9 @@ elif main_section == "Spectra Library":
 
 elif main_section == "1H Spectra Gallery":
     show_proton_spectra_gallery()
+
+elif main_section == "13C Spectra Gallery":
+    show_carbon_spectra_gallery()
 
 elif main_section == "Specimen Library":
     show_specimen_library_pages()
