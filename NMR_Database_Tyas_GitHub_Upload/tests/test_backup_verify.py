@@ -144,6 +144,28 @@ class BackupIntegrityTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "SHA-256"):
             self.verify()
 
+    def test_cli_hides_private_path_on_failure(self):
+        self.db_data.unlink()
+        output = io.StringIO()
+        with redirect_stderr(output):
+            status = main([str(self.root), str(self.manifest_path)])
+        self.assertEqual(status, 1)
+        self.assertNotIn(str(self.root), output.getvalue())
+        self.assertNotIn("data.sql", output.getvalue())
+
+    def test_database_root_symlink_is_rejected(self):
+        other = Path(self.root.parent / "other-db")
+        other.mkdir()
+        db = self.root / "database"
+        original = self.root / "original-database"
+        db.rename(original)
+        try:
+            db.symlink_to(original, target_is_directory=True)
+        except OSError:
+            self.skipTest("filesystem does not allow symlinks")
+        with self.assertRaisesRegex(ValueError, "invalid database backup directory"):
+            self.verify()
+
     def test_no_real_data_or_network_modules_required(self):
         source = (SCRIPTS / "npdb_backup_verify.py").read_text(encoding="utf-8")
         self.assertNotIn("supabase_client", source)
