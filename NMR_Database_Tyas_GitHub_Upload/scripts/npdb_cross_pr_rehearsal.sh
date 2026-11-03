@@ -56,6 +56,9 @@ for id in asset index cas wal; do
     else
       failed=1
       head -n 12 /tmp/npdb-merge-result.txt
+      if [[ "$id" == "wal" ]]; then
+        grep -n -A 18 -B 5 '^<<<<<<< ' NMR_Database_Tyas_GitHub_Upload/scripts/app.py || true
+      fi
       break
     fi
   fi
