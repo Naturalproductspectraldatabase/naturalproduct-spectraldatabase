@@ -97,6 +97,7 @@ class StructureBundleProvenanceTests(unittest.TestCase):
             "build_compound_summary_text": lambda *args: b"SYNTHETIC RECORD ONLY",
             "_dataframes_to_record_workbook": lambda _: b"SYNTHETIC WORKBOOK ONLY",
             "_compound_structure_asset": lambda _: (structure_bytes, ".png" if structure_bytes else ""),
+            "is_generated_structure_reference": lambda value: str(value or "").startswith("storage://structures/generated/"),
         }
         bundle = extract_function("build_compound_record_bundle", env)
         compound = pd.DataFrame([{
@@ -126,6 +127,35 @@ class StructureBundleProvenanceTests(unittest.TestCase):
         self.assertEqual(manifest["structure_asset_sha256"], hashlib.sha256(asset).hexdigest())
         self.assertEqual(len(filenames), 1)
         self.assertEqual(contents[0], asset)
+
+    def test_app_generated_registered_image_has_explicit_unverified_origin(self):
+        asset = b"SYNTHETIC_COMPUTER_GENERATED_IMAGE"
+        manifest, filenames, contents = self.build_bundle(
+            path="storage://structures/generated/synthetic.png", structure_bytes=asset,
+        )
+        self.assertEqual(manifest["structure_asset_status"], "embedded_generated_unverified")
+        self.assertEqual(manifest["structure_asset_origin_class"], "generated_storage_unverified")
+        self.assertEqual(manifest["structure_asset_sha256"], hashlib.sha256(asset).hexdigest())
+        self.assertEqual(contents, [asset])
+        self.assertIn("unverified", manifest["structure_policy"])
+
+    def test_generated_registered_image_missing_has_distinct_status(self):
+        manifest, filenames, _ = self.build_bundle(
+            path="storage://structures/generated/synthetic-missing.png", structure_bytes=b"",
+        )
+        self.assertEqual(manifest["structure_asset_status"], "generated_unavailable")
+        self.assertEqual(manifest["structure_asset_origin_class"], "generated_storage_unverified")
+        self.assertEqual(filenames, [])
+
+    def test_external_https_image_does_not_claim_curated_identity(self):
+        manifest, filenames, _ = self.build_bundle(
+            path="https://cactus.nci.nih.gov/chemical/structure/synthetic/image",
+            structure_bytes=b"SYNTHETIC_IMAGE",
+        )
+        self.assertEqual(manifest["structure_asset_origin_class"], "registered_external_https_unverified")
+        self.assertEqual(manifest["structure_asset_status"], "embedded_registered")
+        self.assertIn("not proof", manifest["structure_policy"])
+
 
     def test_unregistered_image_status_is_explicit(self):
         manifest, filenames, _ = self.build_bundle(path="", structure_bytes=b"")
