@@ -4,7 +4,7 @@ on:
   push:
     branches: [fix/npdb-retina-sidebar-logo-20261103, fix/npdb-branding-asset-cache-20261103, fix/npdb-structure-bundle-provenance-20261103, fix/npdb-scientific-truthfulness-20261103, fix/npdb-nmr-bioactivity-disclosure-20261103]
   pull_request:
-    branches: [fix/npdb-preflight-security-validation-20261103, fix/npdb-retina-sidebar-logo-20261103, fix/npdb-branding-asset-cache-20261103, fix/npdb-structure-bundle-provenance-20261103]
+    branches: [fix/npdb-preflight-security-validation-20261103, fix/npdb-retina-sidebar-logo-20261103, fix/npdb-branding-asset-cache-20261103, fix/npdb-structure-bundle-provenance-20261103, fix/npdb-scientific-truthfulness-20261103]
 
 permissions:
   contents: read
