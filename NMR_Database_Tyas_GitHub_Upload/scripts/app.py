@@ -31,6 +31,9 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from npdb_asset_paths import AssetAccessError, read_local_asset, validate_asset_content, write_local_asset, validate_https_asset_url, read_https_asset
+from npdb_sqlite_snapshot import verified_sqlite_snapshot_bytes
+
 try:
     from PIL import Image, ImageOps
 except Exception:
@@ -973,6 +976,89 @@ def is_access_gate_enabled() -> bool:
     )
 
 
+def configured_session_identity():
+    """Resolve the session against current server configuration on every action."""
+    username = str(st.session_state.get("npdb_username", "")).strip()
+    mode = st.session_state.get("npdb_auth_mode", "")
+    if not username:
+        return None
+    users = load_approved_users()
+    if mode == "approved_users":
+        matches = [u for u in users if u.get("username") == username]
+        if len(matches) != 1:
+            return None
+        user = matches[0]
+        role = str(user.get("role", "viewer")).strip().lower()
+        if role != str(st.session_state.get("npdb_role", "")).strip().lower():
+            return None
+        credential = {"hash": user.get("password_hash", ""), "plain": user.get("password", "")}
+    elif mode == "single_user" and not users and not load_approved_names():
+        expected = get_secret_setting("NPDB_ACCESS_USERNAME", "access_username")
+        if not expected or username != expected:
+            return None
+        role = "owner" if username == OWNER_EDITOR_USERNAME else "viewer"
+        credential = {"hash": get_secret_setting("NPDB_ACCESS_PASSWORD_HASH", "access_password_hash"),
+                      "plain": get_secret_setting("NPDB_ACCESS_PASSWORD", "access_password") if allow_plaintext_password_secrets() else ""}
+    elif mode == "approved_names" and not users:
+        names = load_approved_names()
+        if not username.lower().startswith("npdb_") or normalize_login_slug(username[5:]) not in {normalize_login_slug(n) for n in names}:
+            return None
+        role = "viewer"
+        credential = {"hash": get_secret_setting("NPDB_APPROVED_PASSWORD_HASH", "approved_password_hash"),
+                      "plain": get_secret_setting("NPDB_APPROVED_PASSWORD", "approved_password") if allow_plaintext_password_secrets() else ""}
+    else:
+        return None
+    if not any(credential.values()):
+        return None
+    revision = hashlib.sha256(json.dumps([username, mode, role, credential], sort_keys=True).encode()).hexdigest()
+    return role, revision
+
+
+def current_backend_role():
+    if not st.session_state.get("npdb_authenticated"):
+        return ""
+    identity = configured_session_identity()
+    if identity is None or not hmac.compare_digest(identity[1], str(st.session_state.get("npdb_credential_revision", ""))):
+        return ""
+    return identity[0]
+
+
+def is_backend_owner():
+    return current_backend_role() in {"owner", "owner_editor", "admin"}
+
+
+def display_precise_gps(value):
+    """Fail closed for viewer/unauthenticated roles; never mutate stored coordinates."""
+    return value if current_backend_role() in {"owner", "owner_editor", "admin", "editor"} else ""
+
+
+def redact_private_gps_for_current_user(frame):
+    """Role-specific COPY after cached reads, to prevent cross-session cache reuse leaks."""
+    safe = frame.copy()
+    if "gps_coordinates" in safe.columns and not current_backend_role() in {"owner", "owner_editor", "admin", "editor"}:
+        safe["gps_coordinates"] = ""
+    return safe
+
+
+def require_backend_permission(action, table=None, row=None):
+    tables = {"compounds", "proton_nmr", "carbon_nmr", "spectra_files", "bioactivity_records",
+              "specimens", "specimen_compounds", "specimen_1h_extracts"}
+    if table is not None and table not in tables:
+        raise PermissionError("This action is not permitted for this account.")
+    role = current_backend_role()
+    owner = role in {"owner", "owner_editor", "admin"}
+    if action == "read" and role in {"viewer", "approved-viewer", "editor", "owner", "owner_editor", "admin"}:
+        return
+    if action in {"delete", "admin", "approve"}:
+        if owner:
+            return
+    elif action == "curate" and (owner or role == "editor"):
+        if not owner and row and str(row.get("curation_status", "")).lower() in {"curated", "reviewed", "approved", "published"}:
+            raise PermissionError("Record approval requires an owner account.")
+        return
+    raise PermissionError("This action is not permitted for this account.")
+
+
 def verify_access_gate():
     # Fail closed: a missing or malformed Streamlit secret must never
     # silently expose the compound database without authentication.
@@ -981,7 +1067,9 @@ def verify_access_gate():
         st.stop()
 
     if st.session_state.get("npdb_authenticated"):
-        return
+        if current_backend_role():
+            return
+        st.session_state["npdb_authenticated"] = False
 
     expected_username = get_secret_setting("NPDB_ACCESS_USERNAME", "access_username")
     expected_password = get_secret_setting("NPDB_ACCESS_PASSWORD", "access_password")
@@ -1463,7 +1551,7 @@ def verify_access_gate():
                     matched_role = user.get("role", "viewer")
                     matched_auth_mode = "approved_users"
                     break
-        elif approved_names and approved_password:
+        elif approved_names and (approved_password_hash or approved_password):
             submitted_username = str(username).strip() if username is not None else ""
             if submitted_username.lower().startswith("npdb_"):
                 submitted_name = submitted_username[5:]
@@ -1493,6 +1581,8 @@ def verify_access_gate():
             st.session_state["npdb_username"] = username.strip()
             st.session_state["npdb_role"] = matched_role
             st.session_state["npdb_auth_mode"] = matched_auth_mode
+            identity = configured_session_identity()
+            st.session_state["npdb_credential_revision"] = identity[1] if identity else ""
             st.session_state["npdb_remember_requested"] = bool(remember_me)
             st.session_state["npdb_login_failures"] = 0
             st.session_state["npdb_login_locked_until"] = 0.0
@@ -1591,21 +1681,7 @@ if st.session_state.pop("npdb_show_workspace_loading", False):
 
 
 def is_owner_editor() -> bool:
-    current_username = normalize_login_slug(st.session_state.get("npdb_username", ""))
-    if current_username != normalize_login_slug(OWNER_EDITOR_USERNAME):
-        return False
-
-    role = str(st.session_state.get("npdb_role", "")).strip().lower()
-    if role in OWNER_EDITOR_ROLES:
-        return True
-
-    auth_mode = str(st.session_state.get("npdb_auth_mode", "")).strip().lower()
-    expected_username = get_secret_setting("NPDB_ACCESS_USERNAME", "access_username")
-    return (
-        auth_mode == "single_user"
-        and bool(expected_username)
-        and normalize_login_slug(expected_username) == normalize_login_slug(OWNER_EDITOR_USERNAME)
-    )
+    return current_backend_role() in {"owner", "owner_editor", "admin", "editor"}
 
 
 def can_edit_database() -> bool:
@@ -4586,8 +4662,8 @@ def validate_spectrum_entry(file_path_value: str, spectrum_type_value: str) -> t
         return errors, warnings
 
     full_path = get_full_file_path(path_text)
-    if full_path is None or not full_path.exists():
-        warnings.append("Local file path was saved, but the file does not currently exist at that location.")
+    if full_path is None:
+        warnings.append("Local asset is unavailable or not permitted. Ask a curator to review its registered location.")
     elif is_raw_spectrum_type(spectrum_text):
         warnings.append("Raw-data file is stored locally. Google Drive is safer for public deployment and laptop storage.")
     return errors, warnings
@@ -5046,31 +5122,25 @@ def molecule_fingerprint(mol):
         return None
 
 
-@st.cache_resource(show_spinner=False)
-def build_structure_candidate_index(db_signature: float):
+@st.cache_resource(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS, max_entries=16)
+def build_structure_candidate_index(structure_records: tuple):
+    """Cache chemistry only, keyed by explicit IDs and unmodified SMILES.
+
+    Never fetch global records here: the caller supplies its current filtered
+    snapshot. Live display metadata is joined by the caller, not cached here.
+    """
     if not is_structure_backend_available():
         return []
-
     candidates = []
-    compounds_df = load_all_compounds()
-    for _, row in compounds_df.iterrows():
-        candidate_smiles = maybe_blank(row.get("smiles"))
+    for compound_id, candidate_smiles in structure_records:
         if not candidate_smiles:
             continue
         candidate_mol = smiles_to_mol(candidate_smiles)
         if candidate_mol is None:
             continue
-        candidate_fp = molecule_fingerprint(candidate_mol)
-        candidates.append(
-            {
-                "id": int(row.get("id")),
-                "row": row.to_dict(),
-                "smiles": candidate_smiles,
-                "mol": candidate_mol,
-                "fp": candidate_fp,
-                "canonical": canonicalize_smiles(candidate_smiles),
-            }
-        )
+        candidates.append({"id": compound_id, "smiles": candidate_smiles,
+                           "mol": candidate_mol, "fp": molecule_fingerprint(candidate_mol),
+                           "canonical": canonicalize_smiles(candidate_smiles)})
     return candidates
 
 
@@ -5080,6 +5150,21 @@ def search_by_structure(
     search_type: str,
     similarity_threshold: float = 0.35,
 ):
+    if search_type not in {"Identity Search", "Substructure Search", "Similarity Search"}:
+        return [], "Choose a supported structure search mode."
+    try:
+        similarity_threshold = float(similarity_threshold)
+        if not math.isfinite(similarity_threshold) or not 0 <= similarity_threshold <= 1:
+            raise ValueError
+    except (ValueError, TypeError, OverflowError):
+        return [], "Similarity threshold must be a finite number between zero and one."
+    if compounds_df.empty or not {"id", "smiles"}.issubset(compounds_df.columns):
+        return [], "No searchable structures are available in the current filtered dataset."
+    numeric_ids = pd.to_numeric(compounds_df["id"], errors="coerce")
+    if numeric_ids.isna().any() or not numeric_ids.map(lambda value: math.isfinite(value) and value > 0 and int(value) == value).all():
+        return [], "The filtered dataset contains invalid compound identifiers; ask a curator to review it."
+    if numeric_ids.duplicated().any():
+        return [], "The filtered dataset contains duplicate compound identifiers; ask a curator to review it."
     query_text = maybe_blank(query_smiles)
     if not query_text:
         return [], "Please draw a structure and click Apply in the editor first, or paste a valid SMILES / Molfile query."
@@ -5093,13 +5178,19 @@ def search_by_structure(
 
     query_canonical = canonicalize_smiles(query_text)
     query_fp = molecule_fingerprint(query_mol)
-    allowed_ids = set(compounds_df["id"].astype(int).tolist()) if "id" in compounds_df.columns else set()
-    indexed_candidates = build_structure_candidate_index(get_db_signature())
+    try:
+        current_rows = {int(row["id"]): row.to_dict() for _, row in compounds_df.iterrows()}
+    except (ValueError, TypeError, OverflowError):
+        return [], "The filtered dataset contains invalid compound identifiers; ask a curator to review it."
+    structure_records = tuple(sorted((compound_id, maybe_blank(row.get("smiles")))
+                                     for compound_id, row in current_rows.items()))
+    allowed_ids = set(current_rows)
+    indexed_candidates = build_structure_candidate_index(structure_records)
     results = []
     searchable_candidates = 0
 
     for candidate in indexed_candidates:
-        if allowed_ids and int(candidate["id"]) not in allowed_ids:
+        if int(candidate["id"]) not in allowed_ids:
             continue
         candidate_smiles = candidate["smiles"]
         candidate_mol = candidate["mol"]
@@ -5133,7 +5224,7 @@ def search_by_structure(
             match_label = "Similarity"
 
         if matched:
-            item = dict(candidate["row"])
+            item = dict(current_rows[int(candidate["id"])])
             item["structure_score"] = score * 100
             item["structure_match_type"] = match_label
             item["query_smiles"] = query_text
@@ -5297,8 +5388,7 @@ def is_external_url(value) -> bool:
 
 
 def is_google_drive_url(value) -> bool:
-    text = maybe_blank(value).lower()
-    return "drive.google.com" in text or "docs.google.com" in text
+    return urlparse(maybe_blank(value)).hostname in {"drive.google.com", "docs.google.com"}
 
 
 def extract_google_drive_file_id(value) -> str:
@@ -5369,8 +5459,20 @@ def is_generated_structure_reference(value) -> bool:
     return bucket == "structures" and object_path.startswith("generated/")
 
 
-@st.cache_data(show_spinner=False, ttl=900)
+def validate_storage_asset_reference(bucket, object_path):
+    if (bucket not in {"structures", "spectra", "specimens", "backups", "exports"}
+            or not object_path or any(part in {"", ".", ".."} for part in object_path.split("/"))
+            or any(c in object_path for c in ("\\", "%", "?", "#", "\x00"))
+            or any(ord(c) < 32 for c in object_path)):
+        raise PermissionError("Asset reference is not permitted.")
+
+
 def signed_supabase_storage_url(bucket: str, object_path: str, expires_in: int = 3600) -> str:
+    require_backend_permission("read")
+    if bucket not in {"structures", "spectra", "specimens"}:
+        require_backend_permission("admin")
+    validate_storage_asset_reference(bucket, object_path)
+    expires_in = min(max(int(expires_in), 1), 300)
     if not use_supabase_write_backend():
         return ""
     response = _supabase_request(
@@ -5384,6 +5486,8 @@ def signed_supabase_storage_url(bucket: str, object_path: str, expires_in: int =
         return ""
     if signed_url.startswith("http"):
         parsed = urlparse(signed_url)
+        if parsed.scheme != "https" or parsed.netloc != urlparse(get_supabase_url()).netloc:
+            return ""
         encoded_path = quote(unquote(parsed.path), safe="/")
         query = f"?{parsed.query}" if parsed.query else ""
         fragment = f"#{parsed.fragment}" if parsed.fragment else ""
@@ -5404,10 +5508,12 @@ def display_asset_url(value) -> str:
     text = maybe_blank(value)
     reference = parse_supabase_storage_reference(text)
     if not reference:
-        return text
+        try:
+            return validate_https_asset_url(text)
+        except AssetAccessError:
+            return ""
     bucket, object_path = reference
-    signed_url = signed_supabase_storage_url(bucket, object_path)
-    return signed_url or text
+    return signed_supabase_storage_url(bucket, object_path)
 
 
 def browser_displayable_asset_url(value) -> str:
@@ -5437,18 +5543,58 @@ def can_preview_external_image(file_path_value, spectrum_type_value="") -> bool:
     return path_text.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif"))
 
 
+# Local attachment roots are server constants, never record-provided directories.
+LOCAL_ASSET_MAX_BYTES = 64 * 1024 * 1024
+LOCAL_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif", ".tif", ".tiff"})
+LOCAL_SPECTRUM_SUFFIXES = LOCAL_IMAGE_SUFFIXES | frozenset({
+    ".pdf", ".jdx", ".dx", ".jcamp", ".csv", ".tsv", ".txt", ".mnova", ".fid", ".zip",
+})
+
+
+def read_scientific_asset(source, kind="attachment"):
+    roots = {"structure": (STRUCTURES_DIR,), "spectrum": (SPECTRA_DIR,),
+             "specimen": (SPECIMENS_DIR,),
+             "attachment": (STRUCTURES_DIR, SPECTRA_DIR, SPECIMENS_DIR)}
+    suffixes = LOCAL_IMAGE_SUFFIXES if kind in {"structure", "specimen"} else LOCAL_SPECTRUM_SUFFIXES
+    data = read_local_asset(source, project=PROJECT_DIR, roots=roots[kind],
+                            max_bytes=LOCAL_ASSET_MAX_BYTES, allowed_suffixes=suffixes)
+    validate_asset_content(data, Path(source).suffix)
+    return data
+
+
+def read_remote_scientific_asset(source, *, image_only=False):
+    url = display_asset_url(source)
+    hosts = {"pubchem.ncbi.nlm.nih.gov", "cactus.nci.nih.gov", "drive.google.com",
+             "docs.google.com", "drive.usercontent.google.com", urlparse(get_supabase_url()).hostname}
+    data = read_https_asset(url, allowed_hosts=hosts, max_bytes=LOCAL_ASSET_MAX_BYTES)
+    suffix = Path(urlparse(source).path).suffix.lower()
+    if image_only or not suffix:
+        if Image is None:
+            raise AssetAccessError("Asset type is not permitted.")
+        with Image.open(io.BytesIO(data)) as image:
+            suffix = {"PNG": ".png", "JPEG": ".jpg", "WEBP": ".webp", "GIF": ".gif",
+                      "TIFF": ".tiff"}.get(image.format, "")
+    suffixes = LOCAL_IMAGE_SUFFIXES if image_only else LOCAL_SPECTRUM_SUFFIXES
+    if suffix not in suffixes:
+        raise AssetAccessError("Asset type is not permitted.")
+    validate_asset_content(data, suffix)
+    return data, suffix
+
+
+def local_asset_available(source, kind="attachment"):
+    try:
+        read_scientific_asset(source, kind)
+        return True
+    except (AssetAccessError, OSError, ValueError, TypeError):
+        return False
+
+
 def get_full_file_path(relative_path):
-    if relative_path is None:
-        return None
-    relative_path = str(relative_path).strip()
-    if not relative_path:
-        return None
-    if is_external_url(relative_path):
+    """Compatibility locator only; readers must use read_scientific_asset bytes."""
+    if not local_asset_available(relative_path):
         return None
     candidate = Path(relative_path)
-    if candidate.is_absolute():
-        return candidate
-    return PROJECT_DIR / candidate
+    return candidate if candidate.is_absolute() else PROJECT_DIR / candidate
 
 def is_image_file(path: Path):
     return path.suffix.lower() in [".png", ".jpg", ".jpeg", ".webp"]
@@ -5749,10 +5895,10 @@ def first_structure_identifier(smiles: str = "", inchi: str = "", inchikey: str 
 
 
 def load_standardized_structure_image(image_path: Path, size=STRUCTURE_DETAIL_IMAGE_SIZE, fallback_smiles: str = ""):
-    if Image is None or image_path is None or not image_path.exists():
+    if Image is None or image_path is None:
         return None
     try:
-        with Image.open(image_path) as image:
+        with Image.open(io.BytesIO(read_scientific_asset(image_path, "structure"))) as image:
             # A curated PNG remains authoritative even when it is small.
             # Replacing it with an unrelated SMILES would silently corrupt
             # the scientific depiction; upscale it on an opaque white canvas.
@@ -5761,17 +5907,12 @@ def load_standardized_structure_image(image_path: Path, size=STRUCTURE_DETAIL_IM
         return None
 
 
-@st.cache_data(show_spinner=False, ttl=EXTERNAL_ASSET_CACHE_TTL_SECONDS)
 def load_external_structure_png_bytes(source_text: str, size=STRUCTURE_DETAIL_IMAGE_SIZE, fallback_smiles: str = "", renderer_version: str = STRUCTURE_RENDERER_VERSION) -> bytes:
     _ = renderer_version
     if Image is None:
         return b""
-    url = display_asset_url(source_text)
-    if not url:
-        return b""
     try:
-        with urllib.request.urlopen(url, timeout=8, context=_supabase_ssl_context()) as response:
-            raw = response.read()
+        raw, _ = read_remote_scientific_asset(source_text, image_only=True)
         with Image.open(io.BytesIO(raw)) as image:
             # Never silently substitute a downloaded/uploaded structure
             # with an RDKit image based on an unverified structure string.
@@ -5803,10 +5944,7 @@ def load_standardized_structure_source(source_value, size=STRUCTURE_DETAIL_IMAGE
         except Exception:
             return None
 
-    full_path = get_full_file_path(source_text)
-    if full_path is None or not full_path.exists():
-        return None
-    return load_standardized_structure_image(full_path, size=size, fallback_smiles=fallback_smiles)
+    return load_standardized_structure_image(source_text, size=size, fallback_smiles=fallback_smiles)
 
 
 def render_structure_preview(smiles_text: str, caption: str | None = None, empty_message: bool = True, size=STRUCTURE_DETAIL_IMAGE_SIZE):
@@ -5843,8 +5981,8 @@ def render_structure_preview(smiles_text: str, caption: str | None = None, empty
             st.info("Structure preview could not be rendered for this record.")
 
 def get_backup_bytes():
-    with open(DB_PATH, "rb") as f:
-        return f.read()
+    require_backend_permission("admin")
+    return verified_sqlite_snapshot_bytes(DB_PATH)
 
 def count_related_records(filtered_ids):
     filtered_ids = [int(item) for item in filtered_ids if str(item).strip()]
@@ -6358,6 +6496,7 @@ def render_sidebar_session_controls():
 
 
 def build_snapshot_manifest() -> dict:
+    require_backend_permission("admin")
     compounds_df = load_all_compounds()
     proton_df = load_all_proton_data()
     carbon_df = load_all_carbon_data()
@@ -6380,6 +6519,7 @@ def build_snapshot_manifest() -> dict:
 
 
 def build_backup_bundle_bytes() -> tuple[bytes, str]:
+    require_backend_permission("admin")
     manifest = build_snapshot_manifest()
     bundle_timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     bundle_name = f"npdb_snapshot_{bundle_timestamp}.zip"
@@ -6402,6 +6542,7 @@ def build_backup_bundle_bytes() -> tuple[bytes, str]:
 
 
 def save_backup_bundle_locally(bundle_bytes: bytes, file_name: str) -> Path:
+    require_backend_permission("admin")
     BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
     bundle_path = BACKUPS_DIR / file_name
     bundle_path.write_bytes(bundle_bytes)
@@ -6409,6 +6550,7 @@ def save_backup_bundle_locally(bundle_bytes: bytes, file_name: str) -> Path:
 
 
 def upload_backup_bundle_to_cloud(bundle_bytes: bytes, file_name: str) -> str:
+    require_backend_permission("admin")
     ensure_write_target_ready()
     if use_local_read_backend():
         save_backup_bundle_locally(bundle_bytes, file_name)
@@ -6692,6 +6834,7 @@ def show_section_banner(image_path: Path, caption: str | None = None):
 
 
 def render_batch_import_workspace():
+    require_backend_permission("admin")
     section_header(
         "Batch Import",
         "Use these ready-to-fill CSV templates to add compounds, 1H peaks, 13C peaks, and spectra records without guessing column names.",
@@ -7332,6 +7475,7 @@ def update_compound_record(
     conn.close()
 
 def delete_compound_record(compound_id):
+    require_backend_permission("delete")
     conn = get_connection()
     cursor = conn.cursor()
     try:
@@ -7435,6 +7579,7 @@ def update_proton_record(
     conn.close()
 
 def delete_proton_record_by_id(proton_id):
+    require_backend_permission("delete")
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM proton_nmr WHERE id = ?", (proton_id,))
@@ -7520,6 +7665,7 @@ def update_carbon_record(
     conn.close()
 
 def delete_carbon_record_by_id(carbon_id):
+    require_backend_permission("delete")
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM carbon_nmr WHERE id = ?", (carbon_id,))
@@ -7587,6 +7733,7 @@ def update_spectrum_file_record(
     conn.close()
 
 def delete_spectrum_file_record_by_id(file_id):
+    require_backend_permission("delete")
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM spectra_files WHERE id = ?", (file_id,))
@@ -7707,6 +7854,7 @@ def update_bioactivity_record(
 
 
 def delete_bioactivity_record_by_id(bioactivity_id):
+    require_backend_permission("delete")
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM bioactivity_records WHERE id = ?", (bioactivity_id,))
@@ -8502,7 +8650,7 @@ def search_similarity_combined(query_protons, proton_tol, query_carbons, carbon_
 # Export helpers
 # =========================
 def export_name_results(result_df: pd.DataFrame) -> pd.DataFrame:
-    export_df = result_df.copy()
+    export_df = redact_private_gps_for_current_user(result_df)
     if "source_material" in export_df.columns:
         export_df["source_material"] = export_df.apply(source_summary_from_record, axis=1)
     return export_df.rename(columns={
@@ -8656,7 +8804,7 @@ Source Organism: {clean_text(row.get('source_organism'))}
 Source Summary: {clean_text(source_summary_from_record(row))}
 Sample Code: {clean_text(row['sample_code'])}
 Collection Location: {clean_text(row['collection_location'])}
-GPS Coordinates: {clean_text(row['gps_coordinates'])}
+GPS Coordinates: {clean_text(display_precise_gps(row['gps_coordinates']))}
 Depth (m): {clean_text(row['depth_m'])}
 
 UV Data: {clean_text(row['uv_data'])}
@@ -8696,28 +8844,25 @@ def _archive_safe_name(value: str, fallback: str = "file") -> str:
     return slugify_value(value, fallback=fallback).replace(" ", "_")
 
 
-def _asset_bytes_from_source(source_value: str) -> tuple[bytes, str]:
+def _asset_bytes_from_source(source_value: str, kind="attachment") -> tuple[bytes, str]:
     source_text = maybe_blank(source_value)
     if not source_text:
         return b"", ""
     try:
         if is_external_url(source_text) or is_supabase_storage_reference(source_text):
-            with urllib.request.urlopen(display_asset_url(source_text), timeout=30, context=_supabase_ssl_context()) as response:
-                data = response.read()
-                suffix = Path(urlparse(source_text).path).suffix or mimetypes.guess_extension(response.headers.get_content_type()) or ".bin"
-                return data, suffix
-        full_path = get_full_file_path(source_text)
-        if full_path is not None and full_path.exists():
-            return full_path.read_bytes(), full_path.suffix or ".bin"
+            return read_remote_scientific_asset(source_text, image_only=(kind == "structure"))
+        return read_scientific_asset(source_text, kind), Path(source_text).suffix.lower()
     except Exception:
         return b"", ""
     return b"", ""
 
 
 def _compound_structure_asset(row_data) -> tuple[bytes, str]:
-    structure_bytes, suffix = _asset_bytes_from_source(row_data.get("structure_image_path"))
+    structure_bytes, suffix = _asset_bytes_from_source(row_data.get("structure_image_path"), kind="structure")
     if structure_bytes:
         return structure_bytes, suffix or ".png"
+    if maybe_blank(row_data.get("structure_image_path")):
+        return b"", ""
     smiles_value = maybe_blank(row_data.get("smiles"))
     if smiles_value:
         generated = structure_smiles_png_bytes(smiles_value, size=STRUCTURE_DOWNLOAD_IMAGE_SIZE)
@@ -8787,7 +8932,7 @@ def _important_metadata_dataframe(row_data) -> pd.DataFrame:
         ("Source Summary", source_summary_from_record(row_data)),
         ("Sample Code", row_data.get("sample_code")),
         ("Collection Location", row_data.get("collection_location")),
-        ("GPS Coordinates", row_data.get("gps_coordinates")),
+        ("GPS Coordinates", display_precise_gps(row_data.get("gps_coordinates"))),
         ("Depth (m)", row_data.get("depth_m")),
         ("UV Data", row_data.get("uv_data")),
         ("FTIR Data", row_data.get("ftir_data")),
@@ -9029,7 +9174,6 @@ def render_spectra_section(compound_id):
                 file_id = row["id"]
                 file_path_value = maybe_blank(row["file_path"])
                 note_value = clean_text(row["note"])
-                full_path = get_full_file_path(file_path_value)
                 _, file_warnings = validate_spectrum_entry(file_path_value, spectrum_type)
                 note_markup = (
                     f'<div class="badge-row"><strong>Note:</strong> {html_text(note_value)}</div>'
@@ -9064,36 +9208,8 @@ def render_spectra_section(compound_id):
                         render_external_link_card("Remote file", display_asset_url(file_path_value), None)
                     continue
 
-                if full_path is None or not full_path.exists():
-                    st.warning("File not found.")
-                    if is_owner_editor() and full_path is not None:
-                        st.code(str(full_path))
-                    continue
-
-                if is_image_file(full_path):
-                    st.image(str(full_path), caption=full_path.name, width="stretch")
-
-                elif is_pdf_file(full_path):
-                    with open(full_path, "rb") as f:
-                        pdf_bytes = f.read()
-                    st.download_button(
-                        label=f"Download {full_path.name}",
-                        data=pdf_bytes,
-                        file_name=full_path.name,
-                        mime="application/pdf",
-                        key=f"pdf_download_{file_id}"
-                    )
-
-                else:
-                    with open(full_path, "rb") as f:
-                        file_bytes = f.read()
-                    st.download_button(
-                        label=f"Download {full_path.name}",
-                        data=file_bytes,
-                        file_name=full_path.name,
-                        mime="application/octet-stream",
-                        key=f"file_download_{file_id}"
-	                    )
+                render_registered_file_preview(file_path_value, spectrum_type=spectrum_type,
+                                               key_prefix=f"spectrum_{file_id}", kind="spectrum")
 
 	# =========================
 	# Gallery and specimen previews
@@ -9115,7 +9231,7 @@ def is_carbon_spectrum_label(value) -> bool:
     return "13c" in compact or "carbon" in compact or "c13" in compact
 
 
-def render_registered_file_preview(file_path_value, caption: str = "", spectrum_type: str = "", missing_label: str = "File not found.", key_prefix: str = "registered"):
+def render_registered_file_preview(file_path_value, caption: str = "", spectrum_type: str = "", missing_label: str = "File not found.", key_prefix: str = "registered", kind: str = "attachment"):
     path_text = maybe_blank(file_path_value)
     if not path_text:
         st.info("No file registered.")
@@ -9138,31 +9254,19 @@ def render_registered_file_preview(file_path_value, caption: str = "", spectrum_
                     st.caption(path_text)
         return
 
-    full_path = get_full_file_path(path_text)
-    if full_path is None or not full_path.exists():
-        st.warning(missing_label)
-        if is_owner_editor() and full_path is not None:
-            st.caption(str(full_path))
-        return
-
-    if is_image_file(full_path):
-        st.image(str(full_path), caption=caption or full_path.name, width="stretch")
-        return
-
     try:
-        file_bytes = full_path.read_bytes()
-    except Exception:
-        st.warning("File is registered, but could not be opened.")
+        file_bytes = read_scientific_asset(path_text, kind)
+    except (AssetAccessError, OSError, ValueError, TypeError):
+        st.warning("Local asset is unavailable or not permitted. Ask a curator to review its registered location.")
         return
-
-    mime = "application/pdf" if is_pdf_file(full_path) else "application/octet-stream"
-    st.download_button(
-        label=f"Download {full_path.name}",
-        data=file_bytes,
-        file_name=full_path.name,
-        mime=mime,
-        key=f"download_{slugify_value(key_prefix)}_{slugify_value(str(full_path))}_{hashlib.sha1(str(full_path).encode('utf-8')).hexdigest()[:10]}",
-    )
+    name = Path(path_text).name
+    suffix = Path(name).suffix.lower()
+    if suffix in LOCAL_IMAGE_SUFFIXES:
+        st.image(file_bytes, caption=caption or name, width="stretch")
+        return
+    mime = "application/pdf" if suffix == ".pdf" else "application/octet-stream"
+    st.download_button(label=f"Download {name}", data=file_bytes, file_name=name, mime=mime,
+                       key=f"download_{slugify_value(key_prefix)}_{hashlib.sha256(path_text.encode()).hexdigest()[:16]}")
 
 
 def render_compound_structure_from_row(row_data, caption: str = "Structure", size=STRUCTURE_THUMBNAIL_IMAGE_SIZE):
@@ -9304,7 +9408,7 @@ def show_compound_detail(compound_id):
         render_kv("Source Summary", source_summary_from_record(row_data))
         render_kv("Sample Code", row_data["sample_code"])
         render_kv("Collection Location", row_data["collection_location"])
-        render_kv("GPS Coordinates", row_data["gps_coordinates"])
+        render_kv("GPS Coordinates", display_precise_gps(row_data["gps_coordinates"]))
         render_kv("Depth (m)", row_data["depth_m"])
         render_kv("Data Source", row_data["data_source"])
         render_kv("Curation Status", clean_text(normalize_curation_status(row_data.get("curation_status"))).title())
@@ -9731,7 +9835,9 @@ def show_search_page(all_compounds_df):
             with save_col:
                 if st.button("Save Structure IDs to Selected Compound", width="stretch", key="save_structure_ids_from_query"):
                     target_compound_id = int(selected_structure_label.split(" - ")[0])
-                    saved, save_message = save_structure_query_to_compound(target_compound_id, query_smiles)
+                    original_structure_row = target_df.loc[target_df["id"].astype(int) == target_compound_id].iloc[0].to_dict()
+                    saved, save_message = save_structure_query_to_compound(
+                        target_compound_id, query_smiles, original_row=original_structure_row)
                     if saved:
                         st.success(save_message)
                         st.rerun()
@@ -10281,6 +10387,8 @@ def show_guide_page():
 # =========================
 def show_compound_pages():
     compound_options = COMPOUND_PAGE_OPTIONS if can_edit_database() else ["Browse Record"]
+    if not is_backend_owner():
+        compound_options = [page for page in compound_options if page != "Delete Record"]
 
     pending_page = st.session_state.pop("_pending_compound_page_radio", None)
     if pending_page in LEGACY_COMPOUND_PAGE_MAP:
@@ -11964,7 +12072,7 @@ def show_spectra_library_overview():
         lambda value: is_external_url(value) or is_supabase_storage_reference(value)
     )
     spectra_df["exists_locally"] = spectra_df["file_path"].fillna("").astype(str).apply(
-        lambda value: True if (is_external_url(value) or is_supabase_storage_reference(value)) else bool(get_full_file_path(value) and get_full_file_path(value).exists())
+        lambda value: True if (is_external_url(value) or is_supabase_storage_reference(value)) else local_asset_available(value, "spectrum")
     )
 
     m1, m2, m3, m4 = st.columns(4)
@@ -12393,6 +12501,7 @@ def _supabase_ssl_context():
 
 
 def ensure_write_target_ready():
+    require_backend_permission("curate")
     if cloud_backend_is_configured():
         cloud_ok, cloud_error = supabase_read_health()
         if not cloud_ok:
@@ -12544,6 +12653,27 @@ def _supabase_headers(write: bool = False, json_body: bool = True, extra: dict |
 
 
 def _supabase_request(method: str, path: str, query: dict | None = None, body=None, write: bool = False, json_body: bool = True, extra_headers: dict | None = None, return_json: bool = True, timeout: int = 60):
+    if method.upper() not in {"GET", "HEAD"}:
+        if path.startswith("/storage/v1/object/sign/"):
+            require_backend_permission("read")
+            bucket, _, object_path = path.removeprefix("/storage/v1/object/sign/").partition("/")
+            validate_storage_asset_reference(bucket, unquote(object_path))
+            if bucket not in {"structures", "spectra", "specimens"}:
+                require_backend_permission("admin")
+        elif path.startswith("/storage/v1/object/") and method.upper() == "POST":
+            bucket, _, object_path = path.removeprefix("/storage/v1/object/").partition("/")
+            validate_storage_asset_reference(bucket, unquote(object_path))
+            require_backend_permission("curate" if bucket in {"structures", "spectra", "specimens"} else "admin")
+        elif path.startswith("/rest/v1/"):
+            table = path.removeprefix("/rest/v1/")
+            if table == AUDIT_EVENTS_TABLE and method.upper() == "POST":
+                require_backend_permission("curate")
+            else:
+                if method.upper() not in {"POST", "PATCH", "DELETE"} or isinstance(body, list):
+                    raise PermissionError("This write request is not permitted.")
+                require_backend_permission("delete" if method.upper() == "DELETE" else "curate", table, body if isinstance(body, dict) else None)
+        else:
+            require_backend_permission("admin")
     if write and not use_supabase_write_backend():
         raise RuntimeError("Supabase write mode is disabled because a valid server-side write key is missing.")
     base = get_supabase_url().rstrip("/")
@@ -12773,6 +12903,7 @@ def search_compound_select_columns() -> str:
 
 
 def supabase_insert_row(table: str, row: dict):
+    require_backend_permission("curate", table, row)
     payload = {k: _json_ready(v) for k, v in row.items() if k and v is not None}
     try:
         response = _supabase_insert_request(table, payload)
@@ -12788,6 +12919,7 @@ def supabase_insert_row(table: str, row: dict):
 
 
 def supabase_update_row(table: str, row_id: int, row: dict, *, expected_updated_at=None):
+    require_backend_permission("curate", table, row)
     payload = {k: _json_ready(v) for k, v in row.items() if k and k != "id"}
     query = {"id": f"eq.{row_id}", "select": "id,updated_at" if table == "compounds" else "id"}
     if expected_updated_at is not None:
@@ -12812,6 +12944,7 @@ def supabase_update_row(table: str, row_id: int, row: dict, *, expected_updated_
 
 
 def supabase_delete_row(table: str, row_id: int):
+    require_backend_permission("delete", table)
     _supabase_request(
         "DELETE",
         f"/rest/v1/{table}",
@@ -12823,14 +12956,18 @@ def supabase_delete_row(table: str, row_id: int):
     record_audit_event("delete", table, row_id, "supabase")
 
 
-def supabase_upload_bytes(bucket: str, object_path: str, data: bytes, content_type: str = "application/octet-stream", public_bucket: bool = True) -> str:
+def supabase_upload_bytes(bucket: str, object_path: str, data: bytes, content_type: str = "application/octet-stream", public_bucket: bool = False) -> str:
+    require_backend_permission("curate" if bucket in {"structures", "spectra", "specimens"} else "admin")
+    validate_storage_asset_reference(bucket, object_path)
+    if public_bucket:
+        raise PermissionError("Scientific assets must remain private.")
     _supabase_request(
         "POST",
         f"/storage/v1/object/{bucket}/{quote(object_path, safe='/')}"
         ,body=data,
         write=True,
         json_body=False,
-        extra_headers={"Content-Type": content_type, "x-upsert": "true"},
+        extra_headers={"Content-Type": content_type, "x-upsert": "false"},
         return_json=False,
     )
     if public_bucket:
@@ -12859,6 +12996,7 @@ def _sqlite_columns(table: str) -> list[str]:
 
 
 def _sqlite_upsert_row(table: str, row: dict) -> int | None:
+    require_backend_permission("curate", table, row)
     columns = [column for column in row.keys() if column in _sqlite_columns(table)]
     if not columns:
         return None
@@ -12893,6 +13031,7 @@ def _sqlite_upsert_row(table: str, row: dict) -> int | None:
 
 
 def _sqlite_delete_row(table: str, row_id: int):
+    require_backend_permission("delete")
     conn = get_connection()
     try:
         cursor = conn.cursor()
@@ -12915,8 +13054,17 @@ def _local_binary_path(target_dir: Path, base_name: str, suffix: str) -> Path:
 
 
 def save_uploaded_asset(uploaded_file, target_dir: Path, base_name: str) -> str:
+    require_backend_permission("curate")
     suffix = Path(uploaded_file.name).suffix.lower() or ".bin"
+    if target_dir not in (STRUCTURES_DIR, SPECTRA_DIR, SPECIMENS_DIR):
+        raise AssetAccessError("Asset upload destination is not permitted.")
+    suffixes = LOCAL_SPECTRUM_SUFFIXES if target_dir == SPECTRA_DIR else LOCAL_IMAGE_SUFFIXES
+    if suffix not in suffixes or uploaded_file.size > LOCAL_ASSET_MAX_BYTES:
+        raise AssetAccessError("Asset type or size is not permitted.")
     data = uploaded_file.getbuffer().tobytes()
+    if len(data) > LOCAL_ASSET_MAX_BYTES:
+        raise AssetAccessError("Asset type or size is not permitted.")
+    validate_asset_content(data, suffix)
     if use_supabase_write_backend():
         bucket = "exports"
         public_bucket = False
@@ -12937,14 +13085,10 @@ def save_uploaded_asset(uploaded_file, target_dir: Path, base_name: str) -> str:
             raise RuntimeError(
                 f"Cloud asset upload failed for '{uploaded_file.name}'. The file was not committed as a cloud-backed record."
             ) from exc
-    candidate = _local_binary_path(target_dir, base_name, suffix)
-    candidate.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with open(candidate, "wb") as output_file:
-            output_file.write(data)
-    except Exception:
-        pass
-    return relative_project_path(candidate) if candidate.exists() else str(candidate)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    candidate = write_local_asset(data, root=target_dir,
+                                 filename=slugify_value(base_name, fallback="asset") + suffix)
+    return relative_project_path(candidate)
 
 
 def _merge_compound_names(df: pd.DataFrame) -> pd.DataFrame:
@@ -12980,16 +13124,19 @@ def get_db_signature():
     backend = get_npdb_read_backend()
     if backend == "supabase":
         return supabase_compounds_signature()
-    if backend == "snapshot":
+    def file_stamp(path):
         try:
-            csv_files = list(CSV_SNAPSHOT_DIR.glob("*.csv"))
-            latest_mtime = max((path.stat().st_mtime for path in csv_files), default=0.0)
-            return f"snapshot:{latest_mtime}"
-        except Exception:
-            return "snapshot:0"
-    if not DB_PATH.exists():
-        return 0.0
-    return DB_PATH.stat().st_mtime
+            value = path.stat()
+            return (path.name, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns)
+        except FileNotFoundError:
+            return (path.name, None)
+    if backend == "snapshot":
+        # Hash the inventory, not only max mtime: removals/replacements matter.
+        stamps = [file_stamp(path) for path in sorted(CSV_SNAPSHOT_DIR.glob("*.csv"))]
+        return "snapshot:" + hashlib.sha256(repr(stamps).encode()).hexdigest()
+    # A WAL commit may leave SQLite's main-file timestamp unchanged.
+    stamps = [file_stamp(DB_PATH), file_stamp(Path(str(DB_PATH) + "-wal"))]
+    return "sqlite:" + hashlib.sha256(repr(stamps).encode()).hexdigest()
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
@@ -13011,7 +13158,7 @@ def _load_all_compounds_cached(source_normalization_version: str, db_signature):
 
 
 def load_all_compounds(source_normalization_version: str = SOURCE_NORMALIZATION_CACHE_VERSION):
-    return _load_all_compounds_cached(source_normalization_version, get_db_signature())
+    return redact_private_gps_for_current_user(_load_all_compounds_cached(source_normalization_version, get_db_signature()))
 
 
 try:
@@ -13038,7 +13185,7 @@ def _load_dashboard_compounds_cached(source_normalization_version: str, db_signa
 
 
 def load_dashboard_compounds(source_normalization_version: str = SOURCE_NORMALIZATION_CACHE_VERSION):
-    return _load_dashboard_compounds_cached(source_normalization_version, get_db_signature())
+    return redact_private_gps_for_current_user(_load_dashboard_compounds_cached(source_normalization_version, get_db_signature()))
 
 
 try:
@@ -13066,7 +13213,7 @@ def _load_search_compounds_cached(source_normalization_version: str, db_signatur
 
 
 def load_search_compounds(source_normalization_version: str = SOURCE_NORMALIZATION_CACHE_VERSION):
-    return _load_search_compounds_cached(source_normalization_version, get_db_signature())
+    return redact_private_gps_for_current_user(_load_search_compounds_cached(source_normalization_version, get_db_signature()))
 
 
 try:
@@ -13111,7 +13258,7 @@ def _load_compound_row_cached(compound_id, source_normalization_version: str, db
 
 
 def load_compound_row(compound_id, source_normalization_version: str = SOURCE_NORMALIZATION_CACHE_VERSION):
-    return _load_compound_row_cached(compound_id, source_normalization_version, get_db_signature())
+    return redact_private_gps_for_current_user(_load_compound_row_cached(compound_id, source_normalization_version, get_db_signature()))
 
 
 try:
@@ -13320,7 +13467,7 @@ def _empty_dataframe_for_columns(columns: str) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
-def load_all_specimens(db_signature=None):
+def _load_all_specimens_cached(db_signature=None):
     backend = get_npdb_read_backend()
     if backend == "supabase":
         try:
@@ -13332,8 +13479,18 @@ def load_all_specimens(db_signature=None):
     return _sqlite_dataframe(f"SELECT {SPECIMEN_COLUMNS} FROM specimens ORDER BY updated_at DESC")
 
 
+def load_all_specimens(db_signature=None):
+    return redact_private_gps_for_current_user(_load_all_specimens_cached(db_signature))
+
+
+try:
+    load_all_specimens.clear = _load_all_specimens_cached.clear
+except Exception:
+    pass
+
+
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
-def load_specimen_row(specimen_id, db_signature=None):
+def _load_specimen_row_cached(specimen_id, db_signature=None):
     backend = get_npdb_read_backend()
     if backend == "supabase":
         try:
@@ -13347,6 +13504,16 @@ def load_specimen_row(specimen_id, db_signature=None):
         ids = pd.to_numeric(df["id"], errors="coerce")
         return df[ids == int(specimen_id)]
     return _sqlite_dataframe(f"SELECT {SPECIMEN_COLUMNS} FROM specimens WHERE id = ?", (specimen_id,))
+
+
+def load_specimen_row(specimen_id, db_signature=None):
+    return redact_private_gps_for_current_user(_load_specimen_row_cached(specimen_id, db_signature))
+
+
+try:
+    load_specimen_row.clear = _load_specimen_row_cached.clear
+except Exception:
+    pass
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
@@ -13690,6 +13857,7 @@ def update_compound_record(compound_id, trivial_name, iupac_name, molecular_form
 
 
 def delete_compound_record(compound_id):
+    require_backend_permission("delete")
     ensure_write_target_ready()
     if use_supabase_write_backend():
         supabase_delete_row("compounds", compound_id)
@@ -13711,6 +13879,7 @@ def delete_compound_record(compound_id):
 
 
 def _write_child_row(table: str, row: dict, row_id: int | None = None):
+    require_backend_permission("curate", table, row)
     ensure_write_target_ready()
     if use_supabase_write_backend():
         if row_id is None:
@@ -13741,6 +13910,7 @@ def update_proton_record(proton_id, compound_id, delta_ppm, multiplicity, j_valu
 
 
 def delete_proton_record_by_id(proton_id):
+    require_backend_permission("delete")
     ensure_write_target_ready()
     if use_supabase_write_backend():
         supabase_delete_row("proton_nmr", proton_id)
@@ -13765,6 +13935,7 @@ def update_carbon_record(carbon_id, compound_id, delta_ppm, carbon_type, assignm
 
 
 def delete_carbon_record_by_id(carbon_id):
+    require_backend_permission("delete")
     ensure_write_target_ready()
     if use_supabase_write_backend():
         supabase_delete_row("carbon_nmr", carbon_id)
@@ -13789,6 +13960,7 @@ def update_spectrum_file_record(file_id, compound_id, spectrum_type, file_path, 
 
 
 def delete_spectrum_file_record_by_id(file_id):
+    require_backend_permission("delete")
     ensure_write_target_ready()
     if use_supabase_write_backend():
         supabase_delete_row("spectra_files", file_id)
@@ -13813,6 +13985,7 @@ def update_bioactivity_record(bioactivity_id, compound_id, activity_label, targe
 
 
 def delete_bioactivity_record_by_id(bioactivity_id):
+    require_backend_permission("delete")
     ensure_write_target_ready()
     if use_supabase_write_backend():
         supabase_delete_row("bioactivity_records", bioactivity_id)
@@ -13869,6 +14042,7 @@ def update_specimen_record(specimen_id, **fields):
 
 
 def replace_specimen_compound_links(specimen_id: int, compound_ids: list[int], evidence_note: str = "", reference_note: str = ""):
+    require_backend_permission("delete")
     ensure_write_target_ready()
     unique_compound_ids = []
     for compound_id in compound_ids:
@@ -13971,6 +14145,7 @@ def derive_structure_identifiers(structure_text: str) -> dict | None:
 
 
 def _save_generated_structure_image(compound_id: int, mol) -> str:
+    require_backend_permission("curate")
     if not ensure_rdkit_loaded() or Image is None or mol is None:
         return ""
     image = render_rdkit_structure_image(mol, size=STRUCTURE_SAVE_IMAGE_SIZE)
@@ -13995,8 +14170,7 @@ def _save_generated_structure_image(compound_id: int, mol) -> str:
                 f"Cloud structure image upload failed for compound ID {compound_id}. The structure metadata was not saved."
             ) from exc
 
-    candidate = _local_binary_path(STRUCTURES_DIR, f"compound_{compound_id}_structure", ".png")
-    candidate.write_bytes(data)
+    candidate = write_local_asset(data, root=STRUCTURES_DIR, filename=f"compound_{compound_id}_structure.png")
     return str(candidate.relative_to(PROJECT_DIR))
 
 
@@ -14010,32 +14184,58 @@ def _auto_structure_image_path(compound_id: int, smiles: str = "", inchi: str = 
     return ""
 
 
-def save_structure_query_to_compound(compound_id: int, query_text: str) -> tuple[bool, str]:
+def save_structure_query_to_compound(compound_id: int, query_text: str, *, original_row=None) -> tuple[bool, str]:
+    require_backend_permission("curate")
     ensure_write_target_ready()
+    conflict_message = "The compound changed or is unavailable. Reload it and review the current structure identifiers before saving."
+    if original_row is None:
+        return False, "Reopen the compound to capture its original revision before saving structure identifiers."
+    try:
+        if isinstance(compound_id, bool) or int(original_row.get("id")) != int(compound_id):
+            return False, conflict_message
+    except (ValueError, TypeError, OverflowError):
+        return False, conflict_message
+    expected = maybe_blank(original_row.get("updated_at"))
+    if not expected:
+        return False, "The compound has no original revision. Reload it before saving structure identifiers."
+    if use_supabase_write_backend():
+        try:
+            verify_compound_editor_revision(compound_id, expected)
+        except RuntimeError:
+            return False, conflict_message
     identifiers = derive_structure_identifiers(query_text)
     if not identifiers:
         return False, "The current query could not be converted into searchable structure identifiers."
-    structure_image_path = _save_generated_structure_image(compound_id, identifiers.get("mol"))
-    payload = {
-        "smiles": identifiers.get("smiles"),
-        "inchi": identifiers.get("inchi"),
-        "inchikey": identifiers.get("inchikey"),
-        "updated_at": datetime.now(UTC).isoformat(),
-    }
-    if structure_image_path:
-        payload["structure_image_path"] = structure_image_path
+    # Identifier curation preserves the registered drawing and its provenance.
+    # Rendering a fallback preview is separate from writing scientific assets.
+    payload = {field: identifiers.get(field) for field in ("smiles", "inchi", "inchikey")
+               if maybe_blank(original_row.get(field)) != maybe_blank(identifiers.get(field))}
+    if not payload:
+        return True, "Structure identifiers already match this compound."
+    payload["updated_at"] = datetime.now(UTC).isoformat()
     if use_supabase_write_backend():
-        supabase_update_row("compounds", compound_id, payload)
-    if use_local_read_backend():
-        conn = get_connection()
         try:
-            cursor = conn.cursor()
-            assignments = ", ".join(f"{key} = ?" for key in payload.keys())
-            values = list(payload.values()) + [compound_id]
-            cursor.execute(f"UPDATE compounds SET {assignments} WHERE id = ?", values)
-            conn.commit()
-        finally:
-            conn.close()
+            supabase_update_row("compounds", compound_id, payload, expected_updated_at=expected)
+        except RuntimeError:
+            return False, conflict_message
+        invalidate_cached_views()
+        return True, f"Structure identifiers were saved to compound ID {compound_id}."
+    if not use_local_read_backend():
+        return False, "No writable local database is available."
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
+        assignments = ", ".join(f"{key} = ?" for key in payload)
+        values = list(payload.values()) + [compound_id, expected]
+        cursor.execute(f"UPDATE compounds SET {assignments} WHERE id = ? AND updated_at = ?", values)
+        if cursor.rowcount != 1:
+            conn.rollback()
+            return False, conflict_message
+        conn.commit()
+    finally:
+        conn.close()
+    record_audit_event("update", "compounds", compound_id, "sqlite", payload)
     invalidate_cached_views()
     return True, f"Structure identifiers were saved to compound ID {compound_id}."
 
@@ -14241,13 +14441,7 @@ def _render_specimen_image(image_path: str, caption: str = "Specimen"):
         if is_owner_editor():
             st.caption(path_text)
         return
-    full_path = get_full_file_path(path_text)
-    if full_path is not None and full_path.exists() and is_image_file(full_path):
-        st.image(str(full_path), caption=caption, width="stretch")
-        return
-    st.warning("Specimen image file not found.")
-    if is_owner_editor() and full_path is not None:
-        st.caption(str(full_path))
+    render_registered_file_preview(path_text, caption=caption, kind="specimen", key_prefix="specimen")
 
 
 def show_specimen_library_pages():
@@ -14340,7 +14534,7 @@ def show_specimen_library_pages():
                             ("Habitat", specimen.get("habitat")),
                             ("Sampling date", specimen.get("sampling_date")),
                             ("Depth", specimen.get("depth_m")),
-                            ("GPS", specimen.get("gps_coordinates")),
+                            ("GPS", display_precise_gps(specimen.get("gps_coordinates"))),
                         ]
                         for label, value in detail_bits:
                             if maybe_blank(value):
