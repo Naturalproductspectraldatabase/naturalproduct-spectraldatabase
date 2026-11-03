@@ -24,11 +24,18 @@ for id in asset index cas wal; do
   if git -c merge.conflictStyle=diff3 merge --no-edit --no-ff "${HEADS[$id]}" > /tmp/npdb-merge-result.txt 2>&1; then
     printf 'CLEAN MERGE %s\n' "$id"
   else
-    failed=1
     printf 'CONFLICT %s\n' "$id"
-    head -n 12 /tmp/npdb-merge-result.txt
     git diff --name-only --diff-filter=U
-    git merge --abort || true
+    if [[ "$id" == "cas" && "$(git diff --name-only --diff-filter=U)" == "NMR_Database_Tyas_GitHub_Upload/scripts/app.py" ]]; then
+      python3 NMR_Database_Tyas_GitHub_Upload/scripts/npdb_resolve_known_cas_conflict.py
+      git add NMR_Database_Tyas_GitHub_Upload/scripts/app.py
+      git commit --no-edit >/dev/null
+      printf 'RESOLVED known CAS permission conflict %s\n' "$id"
+    else
+      failed=1
+      head -n 12 /tmp/npdb-merge-result.txt
+      git merge --abort || true
+    fi
   fi
 done
 git reset --hard "$BASE" >/dev/null
@@ -39,11 +46,18 @@ for id in asset index cas wal; do
   if git merge --no-edit --no-ff "${HEADS[$id]}" >/tmp/npdb-merge-result.txt 2>&1; then
     printf 'CLEAN %s\n' "$id"
   else
-    failed=1
     printf 'COMBINED CONFLICT %s\n' "$id"
-    head -n 12 /tmp/npdb-merge-result.txt
     git diff --name-only --diff-filter=U
-    break
+    if [[ "$id" == "cas" && "$(git diff --name-only --diff-filter=U)" == "NMR_Database_Tyas_GitHub_Upload/scripts/app.py" ]]; then
+      python3 NMR_Database_Tyas_GitHub_Upload/scripts/npdb_resolve_known_cas_conflict.py
+      git add NMR_Database_Tyas_GitHub_Upload/scripts/app.py
+      git commit --no-edit >/dev/null
+      printf 'RESOLVED known combined CAS permission conflict %s\n' "$id"
+    else
+      failed=1
+      head -n 12 /tmp/npdb-merge-result.txt
+      break
+    fi
   fi
 done
 if (( failed != 0 )); then
