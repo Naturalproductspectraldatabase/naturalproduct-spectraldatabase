@@ -31,10 +31,13 @@ class StructureScienceReviewTests(unittest.TestCase):
         matches,_=ns['search_by_structure'](df,df.iloc[0]['smiles'],'Identity Search')
         self.assertEqual([m['id'] for m in matches],[1])
 
-    def test_fingerprint_similarity_is_not_stereochemical_identity(self):
+    def test_fingerprint_similarity_distinguishes_stereo_but_is_not_identity(self):
         ns,df=self.fixture(['C[C@H](O)C(=O)O','C[C@@H](O)C(=O)O'])
         a,b=[ns['smiles_to_mol'](s) for s in df['smiles']]
-        self.assertEqual(ns['molecule_similarity_score'](a,b),1.0)
+        stereo_score=ns['molecule_similarity_score'](a,b)
+        self.assertGreater(stereo_score,0.0)
+        self.assertLess(stereo_score,1.0)
+        self.assertEqual(ns['molecule_similarity_score'](a,a),1.0)
         self.assertNotEqual(ns['canonicalize_smiles'](df.iloc[0]['smiles']),
                             ns['canonicalize_smiles'](df.iloc[1]['smiles']))
 

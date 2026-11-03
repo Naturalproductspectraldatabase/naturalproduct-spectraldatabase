@@ -5151,11 +5151,14 @@ def canonicalize_smiles(smiles_value: str) -> str:
         return ""
 
 
+# Natural-product structures may contain chiral centers and E/Z double bonds.
+# Morgan fingerprints must include stereochemistry; otherwise distinct
+# stereoisomers can score a misleading 1.0. This remains a heuristic metric.
 def molecule_similarity_score(query_mol, candidate_mol) -> float:
     if not is_structure_backend_available() or query_mol is None or candidate_mol is None:
         return 0.0
-    query_fp = AllChem.GetMorganFingerprintAsBitVect(query_mol, radius=2, nBits=2048)
-    candidate_fp = AllChem.GetMorganFingerprintAsBitVect(candidate_mol, radius=2, nBits=2048)
+    query_fp = AllChem.GetMorganFingerprintAsBitVect(query_mol, radius=2, nBits=2048, useChirality=True)
+    candidate_fp = AllChem.GetMorganFingerprintAsBitVect(candidate_mol, radius=2, nBits=2048, useChirality=True)
     return float(DataStructs.TanimotoSimilarity(query_fp, candidate_fp))
 
 
@@ -5163,7 +5166,7 @@ def molecule_fingerprint(mol):
     if not is_structure_backend_available() or mol is None:
         return None
     try:
-        return AllChem.GetMorganFingerprintAsBitVect(mol, radius=2, nBits=2048)
+        return AllChem.GetMorganFingerprintAsBitVect(mol, radius=2, nBits=2048, useChirality=True)
     except Exception:
         return None
 
@@ -5255,7 +5258,7 @@ def search_by_structure(
             match_label = "Identity"
         elif search_type == "Substructure Search":
             try:
-                matched = candidate_mol.HasSubstructMatch(query_mol)
+                matched = candidate_mol.HasSubstructMatch(query_mol, useChirality=True)
             except Exception:
                 matched = False
             score = 1.0 if matched else 0.0
@@ -9914,6 +9917,11 @@ def show_search_page(all_compounds_df):
             )
         with search_col:
             run_structure_search = st.button("Search by Structure", width="stretch", key="run_structure_search")
+        st.caption(
+            "Structure search respects stereochemistry when explicitly encoded in SMILES/Molfile. "
+            "Similarity uses chirality-aware Morgan/Tanimoto fingerprints, not probability or "
+            "proof of chemical identity. Unspecified configuration remains ambiguous."
+        )
 
         if query_smiles:
             if can_edit_database():
