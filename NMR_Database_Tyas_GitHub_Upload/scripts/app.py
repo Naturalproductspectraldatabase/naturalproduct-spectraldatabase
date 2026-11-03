@@ -9033,7 +9033,7 @@ def _important_bioactivity_dataframe(bioactivity_df: pd.DataFrame) -> pd.DataFra
         "note",
     ]
     export_df = _select_existing_columns(bioactivity_df, columns)
-    return export_df.rename(
+    return disclose_potency_unit_status(export_df.rename(
         columns={
             "id": "Bioactivity ID",
             "activity_label": "Activity",
@@ -9048,7 +9048,7 @@ def _important_bioactivity_dataframe(bioactivity_df: pd.DataFrame) -> pd.DataFra
             "assay_source": "Assay Source",
             "note": "Note",
         }
-    )
+    ))
 
 
 def build_compound_record_bundle(compound_row, proton_df, carbon_df, spectra_df, bioactivity_df) -> tuple[bytes, str]:
@@ -9154,6 +9154,27 @@ def build_compound_record_bundle(compound_row, proton_df, carbon_df, spectra_df,
 # =========================
 # Bioactivity helpers
 # =========================
+def disclose_potency_unit_status(frame: pd.DataFrame) -> pd.DataFrame:
+    """Append interpretation warning without inferring or rewriting units.
+
+    A blank unit may be valid for a dimensionless endpoint; only a curator
+    can decide. The raw Unit column is never modified.
+    """
+    output = frame.copy()
+    if "Value" not in output.columns or "Unit" not in output.columns:
+        return output
+    def status(row):
+        value = row.get("Value")
+        if pd.isna(value) or not str(value).strip():
+            return "No potency value"
+        unit = row.get("Unit")
+        if pd.notna(unit) and str(unit).strip():
+            return "Recorded"
+        return "Not recorded (check endpoint; may be dimensionless)"
+    output["Unit Status"] = output.apply(status, axis=1)
+    return output
+
+
 def export_bioactivity_results(bioactivity_df: pd.DataFrame) -> pd.DataFrame:
     if bioactivity_df.empty:
         return pd.DataFrame(
@@ -9169,6 +9190,7 @@ def export_bioactivity_results(bioactivity_df: pd.DataFrame) -> pd.DataFrame:
                 "Relation",
                 "Value",
                 "Unit",
+                "Unit Status",
                 "Outcome",
                 "Assay Medium",
                 "Selectivity",
@@ -9177,7 +9199,7 @@ def export_bioactivity_results(bioactivity_df: pd.DataFrame) -> pd.DataFrame:
             ]
         )
     export_df = bioactivity_df.copy()
-    return export_df.rename(
+    return disclose_potency_unit_status(export_df.rename(
         columns={
             "id": "ID",
             "compound_id": "Compound ID",
@@ -9196,7 +9218,7 @@ def export_bioactivity_results(bioactivity_df: pd.DataFrame) -> pd.DataFrame:
             "assay_source": "Assay Source",
             "note": "Note",
         }
-    )
+    ))
 
 
 def render_bioactivity_table(compound_id: int):
@@ -9227,6 +9249,7 @@ def render_bioactivity_table(compound_id: int):
             "note": "Note",
         }
     )
+    display_df = disclose_potency_unit_status(display_df)
     st.dataframe(display_df, width="stretch", hide_index=True)
 
     export_df = export_bioactivity_results(load_all_bioactivity_data().query("compound_id == @compound_id"))
@@ -11918,7 +11941,8 @@ def show_bioactivity_pages():
                 st.caption(
                     f"{clean_text(row['activity_label'])} | {clean_text(row['target_name'])} | "
                     f"{clean_text(row['potency_type'])} {clean_text(row['potency_relation'])} "
-                    f"{clean_text(row['potency_value'])} {clean_text(row['potency_unit'])}"
+                    f"{clean_text(row['potency_value'])} "
+                    f"{clean_text(row['potency_unit']) or ('[unit not recorded; check endpoint]' if maybe_blank(row['potency_value']) else '')}"
                 )
                 st.write(clean_text(row["note"]))
             with right:
