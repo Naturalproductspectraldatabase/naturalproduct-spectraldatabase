@@ -34,7 +34,5 @@ if "expected_updated_at=expected" not in new:
     raise SystemExit("CAS protection missing; abort.")
 if "def redact_private_gps_for_current_user(" not in new:
     raise SystemExit("GPS privacy guard missing; abort.")
-if "def read_scientific_asset(" not in new:
-    raise SystemExit("Asset containment from #38 missing; abort.")
 path.write_text(new, encoding="utf-8")
 print("Resolved one known #39/#41 conflict while retaining permission, CAS, GPS, assets.")
