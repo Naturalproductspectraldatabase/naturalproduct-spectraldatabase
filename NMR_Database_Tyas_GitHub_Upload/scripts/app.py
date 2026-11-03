@@ -912,7 +912,10 @@ def normalize_login_slug(value: str) -> str:
 
 
 @st.cache_data(show_spinner=False)
-def optimized_image_data_uri(path_value: str, max_px: int = 1200, quality: int = 82) -> str:
+def _cached_optimized_image_data_uri(path_value: str, max_px: int, quality: int, source_mtime_ns: int, source_size: int) -> str:
+    # File revision parameters are part of the Streamlit cache key. This helper
+    # must be called only through optimized_image_data_uri below.
+    _ = (source_mtime_ns, source_size)
     path = Path(path_value)
     if not path.exists():
         return ""
@@ -946,6 +949,25 @@ def optimized_image_data_uri(path_value: str, max_px: int = 1200, quality: int =
             pass
     encoded = base64.b64encode(path.read_bytes()).decode("ascii")
     return f"data:{mime_type};base64,{encoded}"
+
+
+def optimized_image_data_uri(path_value: str, max_px: int = 1200, quality: int = 82) -> str:
+    """Use file revision as cache key so branding replacements appear without restart.
+
+    Images remain encoded at the same quality and requested pixel bounds as
+    before. A file-only metadata stat avoids hashing multi-megabyte originals
+    on every Streamlit rerun; identical path+size+mtime is deliberately reused.
+    """
+    path = Path(path_value)
+    try:
+        stat = path.stat()
+        if not path.is_file():
+            return ""
+    except OSError:
+        return ""
+    return _cached_optimized_image_data_uri(
+        str(path), max_px, quality, stat.st_mtime_ns, stat.st_size
+    )
 
 
 def inline_asset_data_uri(path: Path, max_px: int = 1200) -> str:
@@ -4414,8 +4436,9 @@ def maybe_blank(value):
     return str(value).strip()
 
 
-@st.cache_data(show_spinner=False)
 def image_to_data_uri(path_value: str, max_px: int = 720) -> str:
+    # The inner encoder already caches using file mtime_ns + size; an outer
+    # path-only Streamlit cache would otherwise serve stale image bytes.
     return optimized_image_data_uri(path_value, max_px=max_px)
 
 
