@@ -2,7 +2,7 @@ name: NPDB synthetic local PostgreSQL restore rehearsal
 
 on:
   pull_request:
-    branches: [main, qa/npdb-reviewed-integration-20261103]
+    branches: [main, qa/npdb-reviewed-integration-20261103, qa/npdb-integrated-preflight-20261103]
   push:
     branches: [qa/npdb-reviewed-integration-20261103]
   workflow_dispatch:

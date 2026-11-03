@@ -1034,10 +1034,33 @@ def display_precise_gps(value):
 
 def redact_private_gps_for_current_user(frame):
     """Role-specific COPY after cached reads, to prevent cross-session cache reuse leaks."""
+    import re
     safe = frame.copy()
-    if "gps_coordinates" in safe.columns and not current_backend_role() in {"owner", "owner_editor", "admin", "editor"}:
-        safe["gps_coordinates"] = ""
+    if current_backend_role() not in {"owner", "owner_editor", "admin", "editor"}:
+        def gps_label(value):
+            return re.sub(r"[^a-z0-9]", "", str(value).lower()) == "gpscoordinates"
+        for column in safe.columns:
+            if gps_label(column):
+                safe[column] = ""
+        if {"Field", "Value"}.issubset(safe.columns):
+            safe.loc[safe["Field"].map(gps_label), "Value"] = ""
     return safe
+
+
+def redact_gps_payload(value, aliases=()):
+    """Redact structured JSON results using canonical fields and select aliases."""
+    import re
+    if current_backend_role() in {"owner", "owner_editor", "admin", "editor"}:
+        return value
+    labels = {"gpscoordinates"} | {re.sub(r"[^a-z0-9]", "", key.lower()) for key in aliases}
+    def clean(item):
+        if isinstance(item, dict):
+            return {key: "" if re.sub(r"[^a-z0-9]", "", str(key).lower()) in labels else clean(val)
+                    for key, val in item.items()}
+        if isinstance(item, list):
+            return [clean(val) for val in item]
+        return item
+    return clean(value)
 
 
 def require_backend_permission(action, table=None, row=None):
@@ -5661,7 +5684,7 @@ def filter_similarity_results(results, class_filter="All", source_filter="All", 
     return filtered
 
 def dataframe_to_csv_bytes(df: pd.DataFrame) -> bytes:
-    return df.to_csv(index=False).encode("utf-8")
+    return redact_private_gps_for_current_user(df).to_csv(index=False).encode("utf-8")
 
 
 def dataframe_to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Data") -> bytes:
@@ -5669,7 +5692,7 @@ def dataframe_to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Data") -> byte
         raise ModuleNotFoundError("openpyxl is not available")
 
     output = io.BytesIO()
-    export_df = df.copy()
+    export_df = redact_private_gps_for_current_user(df)
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         export_df.to_excel(writer, sheet_name=sheet_name, index=False)
@@ -8881,7 +8904,7 @@ def _dataframes_to_record_workbook(sheets: dict[str, pd.DataFrame]) -> bytes:
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         for raw_name, df in sheets.items():
             sheet_name = raw_name[:31]
-            export_df = df.copy()
+            export_df = redact_private_gps_for_current_user(df)
             export_df.to_excel(writer, sheet_name=sheet_name, index=False)
             worksheet = writer.book[sheet_name]
             worksheet.freeze_panes = "A2"
@@ -12653,8 +12676,32 @@ def _supabase_headers(write: bool = False, json_body: bool = True, extra: dict |
 
 
 def _supabase_request(method: str, path: str, query: dict | None = None, body=None, write: bool = False, json_body: bool = True, extra_headers: dict | None = None, return_json: bool = True, timeout: int = 60):
+    # Validate reads as well as writes before attaching privileged headers.
+    if method.upper() in {"GET", "HEAD"}:
+        require_backend_permission("read")
+        if path.startswith("/storage/v1/object/"):
+            remainder = path.removeprefix("/storage/v1/object/")
+            for prefix in ("authenticated/", "public/", "sign/"):
+                if remainder.startswith(prefix):
+                    remainder = remainder.removeprefix(prefix)
+                    break
+            bucket, _, object_path = remainder.partition("/")
+            validate_storage_asset_reference(bucket, unquote(object_path))
+            if bucket not in {"structures", "spectra", "specimens"}:
+                require_backend_permission("admin")
+        elif path.startswith("/rest/v1/"):
+            table = path.removeprefix("/rest/v1/")
+            if not return_json:
+                require_backend_permission("admin")
+            if table not in {"compounds", "proton_nmr", "carbon_nmr", "spectra_files", "bioactivity_records",
+                             "specimens", "specimen_compounds", "specimen_1h_extracts"}:
+                require_backend_permission("admin")
+        else:
+            require_backend_permission("admin")
     if method.upper() not in {"GET", "HEAD"}:
         if path.startswith("/storage/v1/object/sign/"):
+            if method.upper() != "POST":
+                raise PermissionError("Storage signing requires a POST request.")
             require_backend_permission("read")
             bucket, _, object_path = path.removeprefix("/storage/v1/object/sign/").partition("/")
             validate_storage_asset_reference(bucket, unquote(object_path))
@@ -12699,7 +12746,11 @@ def _supabase_request(method: str, path: str, query: dict | None = None, body=No
                 return raw
             if not raw:
                 return None
-            return json.loads(raw.decode("utf-8"))
+            parsed_response = json.loads(raw.decode("utf-8"))
+            if method.upper() in {"GET", "HEAD"} and path.startswith("/rest/v1/"):
+                aliases = re.findall(r'([A-Za-z_][A-Za-z0-9_]*):gps_coordinates', str((query or {}).get("select", "")))
+                return redact_gps_payload(parsed_response, aliases)
+            return parsed_response
     except urllib.error.HTTPError as exc:
         details = exc.read().decode("utf-8", errors="ignore")
         raise RuntimeError(f"Supabase request failed ({exc.code} {exc.reason}): {details}") from exc
