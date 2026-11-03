@@ -26,6 +26,7 @@ for id in asset index cas wal; do
   else
     failed=1
     printf 'CONFLICT %s\n' "$id"
+    head -n 12 /tmp/npdb-merge-result.txt
     git diff --name-only --diff-filter=U
     git merge --abort || true
   fi
@@ -40,6 +41,7 @@ for id in asset index cas wal; do
   else
     failed=1
     printf 'COMBINED CONFLICT %s\n' "$id"
+    head -n 12 /tmp/npdb-merge-result.txt
     git diff --name-only --diff-filter=U
     break
   fi
