@@ -1,0 +1,48 @@
+name: NPDB viewer GPS redaction (synthetic only)
+
+on:
+  pull_request:
+    branches: [fix/npdb-backend-capabilities-20261103]
+  push:
+    branches: [fix/npdb-viewer-gps-redaction-20261103]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gps-privacy:
+    name: Synthetic viewer privacy / Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - name: Checkout exact branch revision without submodules
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          AUTH="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w 0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${AUTH}" fetch --no-tags --depth=1 origin "${GITHUB_REF}"
+          git -c advice.detachedHead=false checkout --detach FETCH_HEAD
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install isolated synthetic-test dependency
+        run: python -m pip install --disable-pip-version-check "pandas==2.2.3" "pillow==12.3.0" "streamlit==1.66.1" "plotly==7.1.0"
+      - name: Compile source and privacy tests
+        run: |
+          python -m py_compile NMR_Database_Tyas_GitHub_Upload/scripts/app.py
+          python -m py_compile NMR_Database_Tyas_GitHub_Upload/tests/test_viewer_gps_redaction.py
+      - name: Run synthetic viewer/export privacy tests
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python -m unittest discover -s NMR_Database_Tyas_GitHub_Upload/tests -p 'test_viewer_gps_redaction.py' -v
+      - name: Execute complete synthetic/offline application test suite
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python -m unittest discover -s NMR_Database_Tyas_GitHub_Upload/tests -p 'test_*.py' -v
