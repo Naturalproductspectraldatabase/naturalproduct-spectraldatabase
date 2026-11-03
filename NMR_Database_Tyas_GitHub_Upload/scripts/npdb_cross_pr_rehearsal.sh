@@ -15,6 +15,7 @@ declare -A HEADS=(
 git fetch --no-tags --depth=80 origin "${HEADS[asset]}" "${HEADS[index]}" "${HEADS[cas]}" "${HEADS[wal]}"
 git config advice.detachedHead false
 BASE="$(git rev-parse HEAD)"
+printf '%s\n' "$BASE" > /tmp/npdb-rehearsal-base-sha
 printf 'Rehearsal base: %s\n' "$BASE"
 failed=0
 for id in asset index cas wal; do
