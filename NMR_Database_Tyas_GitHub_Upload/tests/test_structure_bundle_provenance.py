@@ -90,6 +90,7 @@ class StructureBundleProvenanceTests(unittest.TestCase):
             "UTC": datetime.timezone.utc,
             "_archive_safe_name": lambda *args, **kwargs: "synthetic_compound",
             "clean_text": lambda value: str(value) if value is not None else "",
+            "maybe_blank": lambda value: str(value or "").strip(),
             "_important_metadata_dataframe": safe_metadata,
             "_important_bioactivity_dataframe": lambda frame: frame.copy(),
             "_select_existing_columns": columns,
