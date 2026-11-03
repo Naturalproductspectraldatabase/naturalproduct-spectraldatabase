@@ -4577,14 +4577,14 @@ def source_summary_from_record(record) -> str:
     return summary
 
 
-def normalize_curation_status(value: str, default: str = "curated") -> str:
+def normalize_curation_status(value: str, default: str = "imported") -> str:
     text = maybe_blank(value).lower()
     if text in CURATION_STATUS_OPTIONS:
         return text
     return default
 
 
-def infer_curation_status(record, default: str = "curated") -> str:
+def infer_curation_status(record, default: str = "imported") -> str:
     explicit = maybe_blank(record.get("curation_status"))
     if explicit:
         return normalize_curation_status(explicit, default=default)
@@ -6609,6 +6609,19 @@ def upload_backup_bundle_to_cloud(bundle_bytes: bytes, file_name: str) -> str:
     )
 
 
+def is_explicit_positive_outcome(value) -> bool:
+    """Conservative count of explicitly positive outcome labels.
+
+    This is a text-category count, not potency, efficacy or biological
+    significance. Ambiguous free-text results are not classified automatically.
+    """
+    normalized = re.sub(r"\\s+", " ", str(value or "").strip().casefold())
+    return normalized in {
+        "active", "potent", "strong", "strongly active",
+        "highly active", "highly potent", "very active",
+    }
+
+
 def render_sidebar_workspace_summary(active_section: str, all_compounds_df: pd.DataFrame):
     all_compounds_df = enrich_compounds_dataframe(all_compounds_df)
     totals_snapshot = count_database_totals(get_db_signature())
@@ -6681,8 +6694,8 @@ def render_sidebar_workspace_summary(active_section: str, all_compounds_df: pd.D
                 <span class="sidebar-status-dot"></span>
             </div>
             <div class="sidebar-meta-divider"></div>
-            <div class="sidebar-meta-title">Dataset Quality</div>
-            <div class="sidebar-quality-value">{quality_pct}% Verified</div>
+            <div class="sidebar-meta-title">Core Metadata Coverage</div>
+            <div class="sidebar-quality-value">{quality_pct}% with name, class &amp; source</div>
             <div class="sidebar-quality-track">
                 <div class="sidebar-quality-fill" style="width:{quality_pct}%"></div>
             </div>
@@ -8096,7 +8109,7 @@ def build_batch_import_template_map() -> dict[str, pd.DataFrame]:
     compound_row["source_category"] = compound_row["source_category"] or "Sponge"
     compound_row["source_organism"] = compound_row["source_organism"] or "Stylissa sp."
     compound_row["sample_code"] = compound_row["sample_code"] or "NP-001"
-    compound_row["data_source"] = compound_row["data_source"] or "Experimental"
+    compound_row["data_source"] = compound_row["data_source"] or ""
     compound_row["curation_status"] = compound_row["curation_status"] or "imported"
     compound_row["note"] = "Delete or replace this template row before import."
 
@@ -9070,8 +9083,19 @@ def build_compound_record_bundle(compound_row, proton_df, carbon_df, spectra_df,
     bioactivity_export_df = _important_bioactivity_dataframe(bioactivity_df)
     structure_bytes, structure_suffix = _compound_structure_asset(row_data)
     has_registered_structure = bool(maybe_blank(row_data.get("structure_image_path")))
+    source_reference = maybe_blank(row_data.get("structure_image_path"))
+    generated_ref = bool(source_reference and is_generated_structure_reference(source_reference))
+    structure_asset_origin_class = (
+        "generated_storage_unverified" if generated_ref else
+        "registered_external_https_unverified" if source_reference.lower().startswith("https://") else
+        "registered_storage_unverified" if source_reference.startswith("storage://") else
+        "registered_local_unverified" if source_reference else
+        "not_registered"
+    )
     structure_asset_status = (
+        "embedded_generated_unverified" if structure_bytes and generated_ref else
         "embedded_registered" if structure_bytes else
+        "generated_unavailable" if generated_ref else
         "registered_unavailable" if has_registered_structure else
         "not_registered"
     )
@@ -9098,11 +9122,13 @@ def build_compound_record_bundle(compound_row, proton_df, carbon_df, spectra_df,
         },
         "spectra_policy": "Spectra image/raw files are listed as cloud links only and are not embedded in this download package.",
         "structure_asset_status": structure_asset_status,
+        "structure_asset_origin_class": structure_asset_origin_class,
         "structure_asset_sha256": hashlib.sha256(structure_bytes).hexdigest() if structure_bytes else None,
         "structure_policy": (
-            "Only bytes of the registered structure image are embedded. "
-            "An unavailable registered depiction is not substituted with a generated SMILES drawing. "
-            "An embedded registered file is not by itself proof of curator-verified chemical identity."
+            "Only original bytes from an explicitly registered structure reference may be embedded. "
+            "A registered reference in structures/generated/ indicates an app-generated, unverified depiction. "
+            "If no structure image is registered, or a registered object is unavailable, a generated drawing is not substituted. "
+            "A registered or embedded image is not proof of curator-verified chemical identity."
         ),
     }
 
@@ -10583,7 +10609,7 @@ def show_compound_pages():
                     help_text="Choose an existing class or use Custom... to add a new compound class.",
                 )
                 select_or_custom("Compound Subclass", subclass_options, "wizard_compound_subclass")
-                select_or_custom("Data Source", data_source_options, "wizard_data_source", value="Experimental")
+                select_or_custom("Data Source", data_source_options, "wizard_data_source", value="")
 
         elif wizard_step == 2:
             c1, c2 = st.columns(2)
@@ -10664,7 +10690,7 @@ def show_compound_pages():
                 st.text_input("Pages", key="wizard_pages")
                 st.text_input("DOI", key="wizard_doi")
                 current_wizard_status = normalize_curation_status(
-                    get_wizard_value("wizard_curation_status", "curated")
+                    get_wizard_value("wizard_curation_status", "imported")
                 )
                 st.selectbox(
                     "Curation Status",
@@ -10691,7 +10717,7 @@ def show_compound_pages():
                         }
                     ),
                     "data_source": selected_or_custom_state_value("wizard_data_source"),
-                    "curation_status": normalize_curation_status(get_wizard_value("wizard_curation_status", "curated")),
+                    "curation_status": normalize_curation_status(get_wizard_value("wizard_curation_status", "imported")),
                     "hrms_data": get_wizard_value("wizard_hrms_data", ""),
                     "doi": get_wizard_value("wizard_doi", ""),
                     "journal_name": get_wizard_value("wizard_journal_name", ""),
@@ -10803,7 +10829,7 @@ def show_compound_pages():
                     molecular_weight_text = maybe_blank(get_wizard_value("wizard_molecular_weight"))
                     hrms_data = maybe_blank(get_wizard_value("wizard_hrms_data"))
                     data_source = selected_or_custom_state_value("wizard_data_source")
-                    curation_status = normalize_curation_status(get_wizard_value("wizard_curation_status", "curated"))
+                    curation_status = normalize_curation_status(get_wizard_value("wizard_curation_status", "imported"))
                     note = maybe_blank(get_wizard_value("wizard_note"))
                     uploaded_spectra = get_wizard_value("wizard_submission_spectra_uploads") or []
                     uploaded_spectrum_type = selected_or_custom_state_value("wizard_submission_spectrum_type", "Supporting Data")
@@ -11047,7 +11073,7 @@ def show_compound_pages():
                         f"edit_data_source_{edit_compound_id}",
                         value=maybe_blank(row["data_source"]),
                     )
-                    current_curation_status = normalize_curation_status(row.get("curation_status"), default="curated")
+                    current_curation_status = normalize_curation_status(row.get("curation_status"), default="imported")
                     curation_status = st.selectbox(
                         "Curation Status",
                         CURATION_STATUS_OPTIONS,
@@ -11132,7 +11158,7 @@ def show_compound_pages():
                                 molecular_weight=molecular_weight_value,
                                 hrms_data=hrms_data.strip(),
                                 data_source=data_source.strip(),
-                                curation_status=normalize_curation_status(curation_status, default="curated"),
+                                curation_status=normalize_curation_status(curation_status, default="imported"),
                                 note=note.strip(),
                                 original_row=edit_baseline,
                             )
@@ -11171,7 +11197,7 @@ def show_compound_pages():
                                     "molecular_weight": molecular_weight_value,
                                     "hrms_data": hrms_data.strip(),
                                     "data_source": data_source.strip(),
-                                    "curation_status": normalize_curation_status(curation_status, default="curated"),
+                                    "curation_status": normalize_curation_status(curation_status, default="imported"),
                                     "note": note.strip(),
                                 },
                                 "Perubahan record",
@@ -11315,8 +11341,8 @@ def show_proton_pages():
                     assignment = st.text_input("Assignment")
 
                 with c2:
-                    solvent = st.text_input("Solvent", value="CDCl3")
-                    instrument_mhz_text = st.text_input("Instrument (MHz)", value="500")
+                    solvent = st.text_input("Solvent", value="", placeholder="Enter reported solvent (e.g. CDCl3)")
+                    instrument_mhz_text = st.text_input("Instrument (MHz)", value="", placeholder="Enter reported 1H frequency (MHz)")
                     note = st.text_area("Note")
 
                 submitted_1h = st.form_submit_button("Save 1H Peak")
@@ -11590,8 +11616,8 @@ def show_carbon_pages():
                     assignment = st.text_input("Assignment")
 
                 with c2:
-                    solvent = st.text_input("Solvent", value="CDCl3", key="add13c_solvent")
-                    instrument_mhz_text = st.text_input("Instrument (MHz)", value="125")
+                    solvent = st.text_input("Solvent", value="", placeholder="Enter reported solvent (e.g. CDCl3)", key="add13c_solvent")
+                    instrument_mhz_text = st.text_input("Instrument (MHz)", value="", placeholder="Enter reported 13C frequency (MHz)")
                     note = st.text_area("Note", key="add13c_note")
 
                 submitted_13c = st.form_submit_button("Save 13C Peak")
@@ -11856,8 +11882,10 @@ def show_bioactivity_pages():
         top1, top2, top3 = st.columns(3)
         render_metric_card("Assay Records", len(filtered_df), top1)
         render_metric_card("Linked Compounds", filtered_df["compound_id"].nunique(), top2)
-        active_hits = filtered_df[filtered_df["outcome"].fillna("").astype(str).str.lower().str.contains("active|potent|strong")]
-        render_metric_card("Marked Active/Potent", len(active_hits), top3)
+        # Only controlled, explicitly positive outcome labels count. Free text
+        # is not evidence of a positive result, and "inactive" is not active.
+        active_hits = filtered_df[filtered_df["outcome"].fillna("").map(is_explicit_positive_outcome)]
+        render_metric_card("Explicit Positive Outcomes", len(active_hits), top3)
 
         export_df = export_bioactivity_results(filtered_df)
         download_dataframe_button(
@@ -13839,7 +13867,7 @@ def insert_compound_record(trivial_name, iupac_name, molecular_formula, compound
         "molecular_weight": molecular_weight,
         "hrms_data": hrms_data,
         "data_source": data_source,
-        "curation_status": normalize_curation_status(curation_status, default="curated"),
+        "curation_status": normalize_curation_status(curation_status, default="imported"),
         "note": note,
         "updated_at": datetime.now(UTC).isoformat(),
     }
@@ -13911,7 +13939,7 @@ def update_compound_record(compound_id, trivial_name, iupac_name, molecular_form
         "molecular_weight": molecular_weight,
         "hrms_data": hrms_data,
         "data_source": data_source,
-        "curation_status": normalize_curation_status(curation_status, default="curated"),
+        "curation_status": normalize_curation_status(curation_status, default="imported"),
         "note": note,
         "updated_at": datetime.now(UTC).isoformat(),
     }
