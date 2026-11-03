@@ -5,6 +5,7 @@ No NPDB images, private files, production database, network or credentials.
 import ast
 import base64
 import io
+import os
 from pathlib import Path
 import mimetypes
 import re
@@ -20,16 +21,22 @@ TREE = ast.parse(CODE)
 
 
 def app_function(name):
-    matches = [node for node in TREE.body if isinstance(node, ast.FunctionDef) and node.name == name]
-    if len(matches) != 1:
-        raise AssertionError(f"Expected exactly one {name} function")
-    fn = matches[0]
-    fn.decorator_list = []
+    # Rehydrate the cached encoder and public revision-aware wrapper together.
+    names = (["_cached_optimized_image_data_uri", name]
+             if name == "optimized_image_data_uri" else [name])
+    functions = []
+    for function_name in names:
+        matches = [node for node in TREE.body
+                   if isinstance(node, ast.FunctionDef) and node.name == function_name]
+        if len(matches) != 1:
+            raise AssertionError(f"Expected exactly one {function_name} function")
+        matches[0].decorator_list = []
+        functions.append(matches[0])
     namespace = {
         "Path": Path, "Image": Image, "ImageOps": ImageOps, "io": io,
         "base64": base64, "mimetypes": mimetypes,
     }
-    exec(compile(ast.Module(body=[fn], type_ignores=[]), str(APP), "exec"), namespace)
+    exec(compile(ast.Module(body=functions, type_ignores=[]), str(APP), "exec"), namespace)
     return namespace[name]
 
 
@@ -68,6 +75,44 @@ class RetinaBrandingTests(unittest.TestCase):
             uri = optimized(str(src), max_px=256)
             with Image.open(io.BytesIO(base64.b64decode(uri.split(",", 1)[1]))) as im:
                 self.assertEqual(im.size, (256, 256))
+
+
+    def test_same_path_new_pixels_invalidate_cached_data_uri(self):
+        """A live Streamlit worker must not serve stale branding after replacement."""
+        optimized = app_function("optimized_image_data_uri")
+        cache = {}
+        original_helper = optimized.__globals__["_cached_optimized_image_data_uri"]
+
+        def fake_cache(path, max_px, quality, mtime_ns, byte_size):
+            key = (path, max_px, quality, mtime_ns, byte_size)
+            if key not in cache:
+                cache[key] = original_helper(path, max_px, quality, mtime_ns, byte_size)
+            return cache[key]
+        optimized.__globals__["_cached_optimized_image_data_uri"] = fake_cache
+
+        with tempfile.TemporaryDirectory() as d:
+            src = Path(d) / "synthetic-live.png"
+            Image.new("RGBA", (128, 128), (255, 0, 0, 255)).save(src)
+            first = optimized(str(src), max_px=256)
+            cached = optimized(str(src), max_px=256)
+            self.assertEqual(first, cached)
+            self.assertEqual(len(cache), 1)
+
+            Image.new("RGBA", (128, 128), (0, 0, 255, 255)).save(src)
+            st = src.stat()
+            os.utime(src, ns=(st.st_atime_ns, st.st_mtime_ns + 2_000_000_000))
+            second = optimized(str(src), max_px=256)
+            self.assertNotEqual(first, second)
+            self.assertEqual(len(cache), 2)
+
+    def test_removed_image_returns_empty_instead_of_stale_cache(self):
+        optimized = app_function("optimized_image_data_uri")
+        with tempfile.TemporaryDirectory() as d:
+            src = Path(d) / "synthetic-removed.png"
+            Image.new("RGBA", (64, 64), (17, 23, 129, 255)).save(src)
+            self.assertTrue(optimized(str(src)))
+            src.unlink()
+            self.assertEqual(optimized(str(src)), "")
 
 
 if __name__ == "__main__":
