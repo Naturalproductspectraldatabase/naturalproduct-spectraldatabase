@@ -9127,7 +9127,7 @@ def build_compound_record_bundle(compound_row, proton_df, carbon_df, spectra_df,
         "structure_policy": (
             "Only original bytes from an explicitly registered structure reference may be embedded. "
             "A registered reference in structures/generated/ indicates an app-generated, unverified depiction. "
-            "If no structure image is registered, or a registered object is unavailable, no drawing is silently substituted. "
+            "If no structure image is registered, or a registered object is unavailable, a generated drawing is not substituted. "
             "A registered or embedded image is not proof of curator-verified chemical identity."
         ),
     }
