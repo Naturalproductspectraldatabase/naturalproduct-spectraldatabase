@@ -33,6 +33,7 @@ def reader_namespace(project):
               maybe_blank=lambda v: str(v or '').strip(),
               is_external_url=lambda v: str(v).startswith('https://'),
               is_supabase_storage_reference=lambda v: str(v).startswith('storage://'),
+              is_generated_structure_reference=lambda v: str(v).startswith('storage://structures/generated/'),
               io=io, Image=Image, hashlib=hashlib, slugify_value=lambda v: v)
     load(ns, 'read_scientific_asset', 'local_asset_available', 'get_full_file_path',
          '_asset_bytes_from_source', '_compound_structure_asset', 'render_registered_file_preview',
