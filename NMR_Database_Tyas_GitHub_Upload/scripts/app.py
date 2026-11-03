@@ -8905,18 +8905,18 @@ def _asset_bytes_from_source(source_value: str, kind="attachment") -> tuple[byte
 
 
 def _compound_structure_asset(row_data) -> tuple[bytes, str]:
-    structure_bytes, suffix = _asset_bytes_from_source(row_data.get("structure_image_path"), kind="structure")
+    """Return only the bytes of a registered structure image, never a silent drawing.
+
+    A registered curated or legacy depiction may intentionally differ from the
+    structure represented by an incomplete/unverified SMILES. The ZIP export
+    must follow the same fail-closed provenance policy as the detail preview.
+    """
+    source = maybe_blank(row_data.get("structure_image_path"))
+    if not source:
+        return b"", ""
+    structure_bytes, suffix = _asset_bytes_from_source(source, kind="structure")
     if structure_bytes:
         return structure_bytes, suffix or ".png"
-    if maybe_blank(row_data.get("structure_image_path")):
-        return b"", ""
-    smiles_value = maybe_blank(row_data.get("smiles"))
-    if smiles_value:
-        generated = structure_smiles_png_bytes(smiles_value, size=STRUCTURE_DOWNLOAD_IMAGE_SIZE)
-        if generated:
-            return generated, ".png"
-        fallback_url = structure_smiles_image_url(smiles_value)
-        return _asset_bytes_from_source(fallback_url)
     return b"", ""
 
 
@@ -9068,6 +9068,13 @@ def build_compound_record_bundle(compound_row, proton_df, carbon_df, spectra_df,
         }
     )
     bioactivity_export_df = _important_bioactivity_dataframe(bioactivity_df)
+    structure_bytes, structure_suffix = _compound_structure_asset(row_data)
+    has_registered_structure = bool(maybe_blank(row_data.get("structure_image_path")))
+    structure_asset_status = (
+        "embedded_registered" if structure_bytes else
+        "registered_unavailable" if has_registered_structure else
+        "not_registered"
+    )
 
     workbook_sheets = {
         "Metadata": metadata_df,
@@ -9090,6 +9097,13 @@ def build_compound_record_bundle(compound_row, proton_df, carbon_df, spectra_df,
             "bioactivity_rows": int(len(bioactivity_df)),
         },
         "spectra_policy": "Spectra image/raw files are listed as cloud links only and are not embedded in this download package.",
+        "structure_asset_status": structure_asset_status,
+        "structure_asset_sha256": hashlib.sha256(structure_bytes).hexdigest() if structure_bytes else None,
+        "structure_policy": (
+            "Only bytes of the registered structure image are embedded. "
+            "An unavailable registered depiction is not substituted with a generated SMILES drawing. "
+            "An embedded registered file is not by itself proof of curator-verified chemical identity."
+        ),
     }
 
     output = io.BytesIO()
@@ -9106,7 +9120,6 @@ def build_compound_record_bundle(compound_row, proton_df, carbon_df, spectra_df,
         except Exception:
             pass
 
-        structure_bytes, structure_suffix = _compound_structure_asset(row_data)
         if structure_bytes:
             archive.writestr(f"structure/compound_{compound_id}_structure{structure_suffix or '.png'}", structure_bytes)
     output.seek(0)
