@@ -9917,6 +9917,11 @@ def show_search_page(all_compounds_df):
             )
         with search_col:
             run_structure_search = st.button("Search by Structure", width="stretch", key="run_structure_search")
+        st.caption(
+            "Structure search respects stereochemistry when explicitly encoded in SMILES/Molfile. "
+            "Similarity uses chirality-aware Morgan/Tanimoto fingerprints, not probability or "
+            "proof of chemical identity. Unspecified configuration remains ambiguous."
+        )
 
         if query_smiles:
             if can_edit_database():
