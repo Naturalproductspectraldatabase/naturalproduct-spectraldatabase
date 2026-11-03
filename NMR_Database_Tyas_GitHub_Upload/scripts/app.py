@@ -8787,7 +8787,7 @@ def export_similarity_results_13c(results: list) -> pd.DataFrame:
             "Query Coverage (%)": round(item["query_coverage"] * 100, 2),
             "DB Coverage (%)": round(item["db_coverage"] * 100, 2),
             "Average Difference": round(item["avg_difference"], 4) if item["avg_difference"] is not None else "-",
-            "Score (%)": round(item["score"], 2),
+            "Heuristic NMR Rank (0–100)": round(item["score"], 2),
         })
     return pd.DataFrame(rows)
 
@@ -8811,7 +8811,7 @@ def export_similarity_results_1h(results: list) -> pd.DataFrame:
             "Query Coverage (%)": round(item["query_coverage"] * 100, 2),
             "DB Coverage (%)": round(item["db_coverage"] * 100, 2),
             "Average Difference": round(item["avg_difference"], 4) if item["avg_difference"] is not None else "-",
-            "Score (%)": round(item["score"], 2),
+            "Heuristic NMR Rank (0–100)": round(item["score"], 2),
         })
     return pd.DataFrame(rows)
 
@@ -8832,13 +8832,13 @@ def export_similarity_results_combined(results: list) -> pd.DataFrame:
             "1H Matched Peaks": item["proton_match_count"],
             "1H Query Peaks": item["proton_total_query"],
             "1H Query Coverage (%)": round(item["proton_query_coverage"] * 100, 2),
-            "1H Score (%)": round(item["proton_score"], 2),
+            "1H Heuristic Rank (0–100)": round(item["proton_score"], 2),
             "13C Matched Peaks": item["carbon_match_count"],
             "13C Query Peaks": item["carbon_total_query"],
             "13C Query Coverage (%)": round(item["carbon_query_coverage"] * 100, 2),
-            "13C Score (%)": round(item["carbon_score"], 2),
+            "13C Heuristic Rank (0–100)": round(item["carbon_score"], 2),
             "Average Difference": round(item["avg_difference"], 4) if item["avg_difference"] is not None else "-",
-            "Total Score (%)": round(item["total_score"], 2),
+            "Combined Heuristic Rank (0–100)": round(item["total_score"], 2),
         })
     return pd.DataFrame(rows)
 
@@ -9642,21 +9642,21 @@ def render_candidate_cards(results, mode="13C", limit=10):
 
         if mode == "13C":
             subtitle = (
-                f"Score: {item['score']:.1f}% | Matched: {item['match_count']}/{item['total_query']} | "
+                f"Heuristic rank: {item['score']:.1f}/100 | Matched: {item['match_count']}/{item['total_query']} | "
                 f"Query Coverage: {item['query_coverage'] * 100:.1f}% | DB Coverage: {item['db_coverage'] * 100:.1f}%"
             )
             progress_value = item["score"] / 100
         elif mode == "1H":
             subtitle = (
-                f"Score: {item['score']:.1f}% | Matched: {item['match_count']}/{item['total_query']} | "
+                f"Heuristic rank: {item['score']:.1f}/100 | Matched: {item['match_count']}/{item['total_query']} | "
                 f"Query Coverage: {item['query_coverage'] * 100:.1f}% | DB Coverage: {item['db_coverage'] * 100:.1f}%"
             )
             progress_value = item["score"] / 100
         else:
             subtitle = (
-                f"Total Score: {item['total_score']:.1f}% | "
-                f"1H: {item['proton_match_count']}/{item['proton_total_query']} ({item['proton_score']:.1f}%) | "
-                f"13C: {item['carbon_match_count']}/{item['carbon_total_query']} ({item['carbon_score']:.1f}%)"
+                f"Combined heuristic rank: {item['total_score']:.1f}/100 | "
+                f"1H: {item['proton_match_count']}/{item['proton_total_query']} (rank {item['proton_score']:.1f}/100) | "
+                f"13C: {item['carbon_match_count']}/{item['carbon_total_query']} (rank {item['carbon_score']:.1f}/100)"
             )
             progress_value = item["total_score"] / 100
 
@@ -9757,6 +9757,18 @@ def show_search_page(all_compounds_df):
         horizontal=True,
         label_visibility="collapsed",
     )
+    if search_mode in {"13C Match", "1H Match", "Combined Match"}:
+        n_total = int(all_compounds_df["id"].nunique()) if "id" in all_compounds_df.columns else 0
+        h_peak_rows = load_all_proton_data()
+        c_peak_rows = load_all_carbon_data()
+        n_h = int(h_peak_rows["compound_id"].nunique()) if "compound_id" in h_peak_rows.columns else 0
+        n_c = int(c_peak_rows["compound_id"].nunique()) if "compound_id" in c_peak_rows.columns else 0
+        st.caption(
+            f"Registered NMR peak-list coverage: 1H {n_h:,}/{n_total:,} compounds; "
+            f"13C {n_c:,}/{n_total:,}. Only registered peaks are searchable. "
+            "Results use an uncalibrated heuristic ranking, not a probability or confirmation "
+            "of chemical identity; available peak rows may pool different solvents or instruments."
+        )
 
     with st.sidebar.expander("Search Filters", expanded=True):
         search_class_filter = st.selectbox(
@@ -9775,7 +9787,7 @@ def show_search_page(all_compounds_df):
             key="search_data_source_filter"
         )
         min_similarity_score = st.slider(
-            "Minimum similarity score (%)",
+            "Minimum similarity / NMR heuristic threshold (0–100)",
             min_value=0,
             max_value=100,
             value=35,
@@ -10090,7 +10102,7 @@ def show_search_page(all_compounds_df):
                 ]
 
                 st.caption(
-                    "Similarity score uses query coverage, database coverage, and average peak closeness."
+                    "Heuristic ranking (0–100) uses peak coverage and closeness; it is not calibrated confidence or proof of compound identity."
                 )
                 st.write(f"Found {len(filtered_results)} candidate(s) above the current score threshold.")
 
@@ -10146,7 +10158,7 @@ def show_search_page(all_compounds_df):
                 ]
 
                 st.caption(
-                    "Similarity score uses query coverage, database coverage, and average peak closeness."
+                    "Heuristic ranking (0–100) uses peak coverage and closeness; it is not calibrated confidence or proof of compound identity."
                 )
                 st.write(f"Found {len(filtered_results)} candidate(s) above the current score threshold.")
 
@@ -10214,7 +10226,7 @@ def show_search_page(all_compounds_df):
                 ]
 
                 st.caption(
-                    "Combined ranking averages the improved 1H and 13C similarity scores."
+                    "Combined uncalibrated ranking (0–100) averages 1H and 13C heuristic scores; it is not identity confirmation."
                 )
                 st.write(f"Found {len(filtered_results)} candidate(s) above the current score threshold.")
 
