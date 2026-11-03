@@ -6608,7 +6608,8 @@ def render_sidebar_workspace_summary(active_section: str, all_compounds_df: pd.D
     bioactivity_count = int(totals_snapshot["bioactivity"])
     health = calculate_workspace_health(all_compounds_df)
     latest_update = format_latest_update_label(all_compounds_df)
-    logo_uri = image_to_data_uri(str(SIDEBAR_LOGO_PATH), max_px=144) if SIDEBAR_LOGO_PATH.exists() else ""
+    # Sidebar CSS renders at up to 118px; retain >=2x pixels for Retina screens.
+    logo_uri = image_to_data_uri(str(SIDEBAR_LOGO_PATH), max_px=256) if SIDEBAR_LOGO_PATH.exists() else ""
     quality_pct = 0
     if total_compounds:
         quality_pct = int(round((health["submission_ready"] / total_compounds) * 100))
