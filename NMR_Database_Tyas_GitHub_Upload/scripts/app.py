@@ -4436,8 +4436,9 @@ def maybe_blank(value):
     return str(value).strip()
 
 
-@st.cache_data(show_spinner=False)
 def image_to_data_uri(path_value: str, max_px: int = 720) -> str:
+    # The inner encoder already caches using file mtime_ns + size; an outer
+    # path-only Streamlit cache would otherwise serve stale image bytes.
     return optimized_image_data_uri(path_value, max_px=max_px)
 
 
