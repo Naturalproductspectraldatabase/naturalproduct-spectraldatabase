@@ -12,9 +12,7 @@ declare -A HEADS=(
   [cas]="df5f5666c9720e23cb09d57f5e8f780d870778e2"
   [wal]="76dfc5fcfe59ecde39b1ecea2755dc936586e010"
 )
-for id in asset index cas wal; do
-  git fetch --no-tags --depth=80 origin "${HEADS[$id]}"
-done
+git fetch --no-tags --depth=80 origin "${HEADS[asset]}" "${HEADS[index]}" "${HEADS[cas]}" "${HEADS[wal]}"
 git config advice.detachedHead false
 BASE="$(git rev-parse HEAD)"
 printf 'Rehearsal base: %s\n' "$BASE"
