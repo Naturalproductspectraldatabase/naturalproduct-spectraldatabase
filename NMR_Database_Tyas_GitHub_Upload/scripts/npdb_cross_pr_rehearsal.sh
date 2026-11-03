@@ -53,12 +53,14 @@ for id in asset index cas wal; do
       git add NMR_Database_Tyas_GitHub_Upload/scripts/app.py
       git commit --no-edit >/dev/null
       printf 'RESOLVED known combined CAS permission conflict %s\n' "$id"
+    elif [[ "$id" == "wal" && "$(git diff --name-only --diff-filter=U)" == "NMR_Database_Tyas_GitHub_Upload/scripts/app.py" ]]; then
+      python3 NMR_Database_Tyas_GitHub_Upload/scripts/npdb_resolve_known_wal_import_conflict.py
+      git add NMR_Database_Tyas_GitHub_Upload/scripts/app.py
+      git commit --no-edit >/dev/null
+      printf 'RESOLVED known #38/#42 import overlap %s\n' "$id"
     else
       failed=1
       head -n 12 /tmp/npdb-merge-result.txt
-      if [[ "$id" == "wal" ]]; then
-        grep -n -A 18 -B 5 '^<<<<<<< ' NMR_Database_Tyas_GitHub_Upload/scripts/app.py || true
-      fi
       break
     fi
   fi
