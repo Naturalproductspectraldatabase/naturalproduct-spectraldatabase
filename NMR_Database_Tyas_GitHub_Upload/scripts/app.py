@@ -1024,6 +1024,19 @@ def is_backend_owner():
     return current_backend_role() in {"owner", "owner_editor", "admin"}
 
 
+def display_precise_gps(value):
+    """Fail closed for viewer/unauthenticated roles; never mutate stored coordinates."""
+    return value if current_backend_role() in {"owner", "owner_editor", "admin", "editor"} else ""
+
+
+def redact_private_gps_for_current_user(frame):
+    """Role-specific COPY after cached reads, to prevent cross-session cache reuse leaks."""
+    safe = frame.copy()
+    if "gps_coordinates" in safe.columns and not current_backend_role() in {"owner", "owner_editor", "admin", "editor"}:
+        safe["gps_coordinates"] = ""
+    return safe
+
+
 def require_backend_permission(action, table=None, row=None):
     tables = {"compounds", "proton_nmr", "carbon_nmr", "spectra_files", "bioactivity_records",
               "specimens", "specimen_compounds", "specimen_1h_extracts"}
@@ -8586,7 +8599,7 @@ def search_similarity_combined(query_protons, proton_tol, query_carbons, carbon_
 # Export helpers
 # =========================
 def export_name_results(result_df: pd.DataFrame) -> pd.DataFrame:
-    export_df = result_df.copy()
+    export_df = redact_private_gps_for_current_user(result_df)
     if "source_material" in export_df.columns:
         export_df["source_material"] = export_df.apply(source_summary_from_record, axis=1)
     return export_df.rename(columns={
@@ -8740,7 +8753,7 @@ Source Organism: {clean_text(row.get('source_organism'))}
 Source Summary: {clean_text(source_summary_from_record(row))}
 Sample Code: {clean_text(row['sample_code'])}
 Collection Location: {clean_text(row['collection_location'])}
-GPS Coordinates: {clean_text(row['gps_coordinates'])}
+GPS Coordinates: {clean_text(display_precise_gps(row['gps_coordinates']))}
 Depth (m): {clean_text(row['depth_m'])}
 
 UV Data: {clean_text(row['uv_data'])}
@@ -8871,7 +8884,7 @@ def _important_metadata_dataframe(row_data) -> pd.DataFrame:
         ("Source Summary", source_summary_from_record(row_data)),
         ("Sample Code", row_data.get("sample_code")),
         ("Collection Location", row_data.get("collection_location")),
-        ("GPS Coordinates", row_data.get("gps_coordinates")),
+        ("GPS Coordinates", display_precise_gps(row_data.get("gps_coordinates"))),
         ("Depth (m)", row_data.get("depth_m")),
         ("UV Data", row_data.get("uv_data")),
         ("FTIR Data", row_data.get("ftir_data")),
@@ -9388,7 +9401,7 @@ def show_compound_detail(compound_id):
         render_kv("Source Summary", source_summary_from_record(row_data))
         render_kv("Sample Code", row_data["sample_code"])
         render_kv("Collection Location", row_data["collection_location"])
-        render_kv("GPS Coordinates", row_data["gps_coordinates"])
+        render_kv("GPS Coordinates", display_precise_gps(row_data["gps_coordinates"]))
         render_kv("Depth (m)", row_data["depth_m"])
         render_kv("Data Source", row_data["data_source"])
         render_kv("Curation Status", clean_text(normalize_curation_status(row_data.get("curation_status"))).title())
@@ -13129,7 +13142,7 @@ def _load_all_compounds_cached(source_normalization_version: str, db_signature):
 
 
 def load_all_compounds(source_normalization_version: str = SOURCE_NORMALIZATION_CACHE_VERSION):
-    return _load_all_compounds_cached(source_normalization_version, get_db_signature())
+    return redact_private_gps_for_current_user(_load_all_compounds_cached(source_normalization_version, get_db_signature()))
 
 
 try:
@@ -13156,7 +13169,7 @@ def _load_dashboard_compounds_cached(source_normalization_version: str, db_signa
 
 
 def load_dashboard_compounds(source_normalization_version: str = SOURCE_NORMALIZATION_CACHE_VERSION):
-    return _load_dashboard_compounds_cached(source_normalization_version, get_db_signature())
+    return redact_private_gps_for_current_user(_load_dashboard_compounds_cached(source_normalization_version, get_db_signature()))
 
 
 try:
@@ -13184,7 +13197,7 @@ def _load_search_compounds_cached(source_normalization_version: str, db_signatur
 
 
 def load_search_compounds(source_normalization_version: str = SOURCE_NORMALIZATION_CACHE_VERSION):
-    return _load_search_compounds_cached(source_normalization_version, get_db_signature())
+    return redact_private_gps_for_current_user(_load_search_compounds_cached(source_normalization_version, get_db_signature()))
 
 
 try:
@@ -13229,7 +13242,7 @@ def _load_compound_row_cached(compound_id, source_normalization_version: str, db
 
 
 def load_compound_row(compound_id, source_normalization_version: str = SOURCE_NORMALIZATION_CACHE_VERSION):
-    return _load_compound_row_cached(compound_id, source_normalization_version, get_db_signature())
+    return redact_private_gps_for_current_user(_load_compound_row_cached(compound_id, source_normalization_version, get_db_signature()))
 
 
 try:
@@ -13438,7 +13451,7 @@ def _empty_dataframe_for_columns(columns: str) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
-def load_all_specimens(db_signature=None):
+def _load_all_specimens_cached(db_signature=None):
     backend = get_npdb_read_backend()
     if backend == "supabase":
         try:
@@ -13450,8 +13463,18 @@ def load_all_specimens(db_signature=None):
     return _sqlite_dataframe(f"SELECT {SPECIMEN_COLUMNS} FROM specimens ORDER BY updated_at DESC")
 
 
+def load_all_specimens(db_signature=None):
+    return redact_private_gps_for_current_user(_load_all_specimens_cached(db_signature))
+
+
+try:
+    load_all_specimens.clear = _load_all_specimens_cached.clear
+except Exception:
+    pass
+
+
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
-def load_specimen_row(specimen_id, db_signature=None):
+def _load_specimen_row_cached(specimen_id, db_signature=None):
     backend = get_npdb_read_backend()
     if backend == "supabase":
         try:
@@ -13465,6 +13488,16 @@ def load_specimen_row(specimen_id, db_signature=None):
         ids = pd.to_numeric(df["id"], errors="coerce")
         return df[ids == int(specimen_id)]
     return _sqlite_dataframe(f"SELECT {SPECIMEN_COLUMNS} FROM specimens WHERE id = ?", (specimen_id,))
+
+
+def load_specimen_row(specimen_id, db_signature=None):
+    return redact_private_gps_for_current_user(_load_specimen_row_cached(specimen_id, db_signature))
+
+
+try:
+    load_specimen_row.clear = _load_specimen_row_cached.clear
+except Exception:
+    pass
 
 
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
@@ -14467,7 +14500,7 @@ def show_specimen_library_pages():
                             ("Habitat", specimen.get("habitat")),
                             ("Sampling date", specimen.get("sampling_date")),
                             ("Depth", specimen.get("depth_m")),
-                            ("GPS", specimen.get("gps_coordinates")),
+                            ("GPS", display_precise_gps(specimen.get("gps_coordinates"))),
                         ]
                         for label, value in detail_bits:
                             if maybe_blank(value):
