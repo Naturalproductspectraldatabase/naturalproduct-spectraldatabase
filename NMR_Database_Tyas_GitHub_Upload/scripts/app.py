@@ -12777,6 +12777,18 @@ def _supabase_headers(write: bool = False, json_body: bool = True, extra: dict |
 
 
 def _supabase_request(method: str, path: str, query: dict | None = None, body=None, write: bool = False, json_body: bool = True, extra_headers: dict | None = None, return_json: bool = True, timeout: int = 60):
+    forbidden_headers = {"authorization", "apikey", "host", "x-http-method-override", "x-method-override"}
+    if any(str(key).lower() in forbidden_headers for key in (extra_headers or {})):
+        raise PermissionError("Request header override is not permitted.")
+    if path.startswith("/storage/v1/object/sign/") and method.upper() == "POST":
+        expiry = body.get("expiresIn") if isinstance(body, dict) else None
+        if type(expiry) is not int or not 1 <= expiry <= 300:
+            raise PermissionError("Storage URL lifetime is not permitted.")
+    if path.startswith("/storage/v1/object/") and any(
+        str(key).lower() == "x-upsert" and str(value).lower() != "false"
+        for key, value in (extra_headers or {}).items()
+    ):
+        raise PermissionError("Storage overwrite is not permitted.")
     # Validate reads as well as writes before attaching privileged headers.
     if method.upper() in {"GET", "HEAD"}:
         require_backend_permission("read")
@@ -12849,12 +12861,12 @@ def _supabase_request(method: str, path: str, query: dict | None = None, body=No
                 return None
             parsed_response = json.loads(raw.decode("utf-8"))
             if method.upper() in {"GET", "HEAD"} and path.startswith("/rest/v1/"):
-                aliases = re.findall(r'([A-Za-z_][A-Za-z0-9_]*):gps_coordinates', str((query or {}).get("select", "")))
+                alias_pairs = re.findall(r'(?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))\s*:\s*gps_coordinates\b', str((query or {}).get("select", "")))
+                aliases = [quoted or plain for quoted, plain in alias_pairs]
                 return redact_gps_payload(parsed_response, aliases)
             return parsed_response
     except urllib.error.HTTPError as exc:
-        details = exc.read().decode("utf-8", errors="ignore")
-        raise RuntimeError(f"Supabase request failed ({exc.code} {exc.reason}): {details}") from exc
+        raise RuntimeError(f"Supabase request failed (HTTP {exc.code}).") from None
     except urllib.error.URLError as exc:
         raise RuntimeError(f"Supabase connection failed: {exc.reason}") from exc
     except TimeoutError as exc:
