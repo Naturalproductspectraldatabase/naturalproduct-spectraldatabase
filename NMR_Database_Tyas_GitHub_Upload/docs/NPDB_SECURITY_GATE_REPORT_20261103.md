@@ -10,6 +10,11 @@ this renewed adversarial validation is not an independent third-party signoff.
 Actual final backend functions are executed with synthetic accounts, fake HTTP,
 empty AppTest databases, synthetic files and isolated SQLite. Full local suite:
 238 tests passed, zero skips, Python3.11 with pinned Streamlit/RDKit/openpyxl.
+Initial expanded offline CI with pandas3 failed a pre-existing #53 None-vs-NaN
+scientific test; other jobs passed. Offline CI is now pinned to the established
+full-suite pandas2.2.3 dependency. No scientific assertions or algorithms weakened;
+pandas3 compatibility remains unverified and is handed back to the science lane.
+
 Existing tests cover owner/editor/viewer/unauthenticated GET/HEAD/POST/PATCH/DELETE,
 revocation, direct REST/SQLite, private Storage signatures, uploads, GPS CSV/XLSX/
 ZIP/JSON, cached dataframe copies, paths/HTTPS, original image bytes/provenance,
