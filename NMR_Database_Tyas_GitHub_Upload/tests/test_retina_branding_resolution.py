@@ -115,5 +115,18 @@ class RetinaBrandingTests(unittest.TestCase):
             self.assertEqual(optimized(str(src)), "")
 
 
+    def test_image_data_uri_wrapper_does_not_hide_asset_revisions(self):
+        """Outer path-only cache must not bypass the signature-aware encoder."""
+        matches = [node for node in TREE.body if isinstance(node, ast.FunctionDef)
+                   and node.name == "image_to_data_uri"]
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0].decorator_list, [],
+                         "image_to_data_uri must not cache solely by path")
+        wrapper = app_function("image_to_data_uri")
+        versions = iter(["data:image/png;base64,VERSION1", "data:image/png;base64,VERSION2"])
+        wrapper.__globals__["optimized_image_data_uri"] = lambda path, max_px: next(versions)
+        self.assertNotEqual(wrapper("synthetic/path.png"), wrapper("synthetic/path.png"))
+
+
 if __name__ == "__main__":
     unittest.main()
