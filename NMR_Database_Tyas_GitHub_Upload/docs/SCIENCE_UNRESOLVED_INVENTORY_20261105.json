@@ -1,0 +1,82 @@
+[
+  {
+    "test": "StereoSearchLimitations.test_desired_every_single_centre_epimer_is_distinguishable_by_the_fingerprint",
+    "status": "UNRESOLVED_EXPECTED_ASSERTION_FAILURE",
+    "finding": "Confirmed fingerprint limitation; exact identity must be separately determined, not guaranteed by a fingerprint."
+  },
+  {
+    "test": "StereoSearchLimitations.test_desired_search_offers_connectivity_level_similarity_for_stereo_free_queries",
+    "status": "UNRESOLVED_EXPECTED_ASSERTION_FAILURE",
+    "finding": "Confirmed recall limitation; connectivity retrieval policy requires scientific review."
+  },
+  {
+    "test": "StereoSearchLimitations.test_desired_hits_state_their_stereo_relationship_to_the_query",
+    "status": "UNRESOLVED_EXPECTED_ASSERTION_FAILURE",
+    "finding": "Missing relationship disclosure; labeling policy requires curator review (source assertion)."
+  },
+  {
+    "test": "StereoSearchLimitations.test_desired_search_results_flag_constitutional_isomers_of_the_query",
+    "status": "UNRESOLVED_EXPECTED_ASSERTION_FAILURE",
+    "finding": "Missing relationship disclosure; proposal, not proof of constitution from formula (source assertion)."
+  },
+  {
+    "test": "NmrInputAndQuality.test_desired_processed_spectra_are_rejected_not_converted_into_peaks",
+    "status": "UNRESOLVED_EXPECTED_ASSERTION_FAILURE",
+    "finding": "Confirmed JCAMP XYDATA misinterpretation; safe supported-format handling needed."
+  },
+  {
+    "test": "NmrInputAndQuality.test_desired_hertz_peak_tables_are_converted_with_the_observe_frequency_or_rejected",
+    "status": "UNRESOLVED_EXPECTED_ASSERTION_FAILURE",
+    "finding": "Confirmed Hz-as-ppm defect; validated nucleus/units/referencing needed."
+  },
+  {
+    "test": "NmrInputAndQuality.test_desired_peak_widths_are_never_returned_as_peaks",
+    "status": "UNRESOLVED_EXPECTED_ASSERTION_FAILURE",
+    "finding": "Confirmed JCAMP XYW width-as-peak defect."
+  },
+  {
+    "test": "NmrInputAndQuality.test_desired_peaks_can_be_stored_as_explicitly_unassigned",
+    "status": "UNRESOLVED_EXPECTED_ASSERTION_FAILURE",
+    "finding": "Confirmed enforced assignment; nullable/unassigned policy and schema review required, no migration here."
+  },
+  {
+    "test": "NmrInputAndQuality.test_desired_nmr_entries_are_checked_against_the_molecular_formula",
+    "status": "UNRESOLVED_EXPECTED_ASSERTION_FAILURE",
+    "finding": "Missing plausibility check; scientific review proposal, not automatic rejection/rewriting (source assertion)."
+  },
+  {
+    "test": "NmrInputAndQuality.test_desired_zero_tolerance_means_equality_at_reporting_precision",
+    "status": "UNRESOLVED_EXPECTED_ASSERTION_FAILURE",
+    "finding": "Confirmed floating slack at zero; explicit reporting-precision policy required."
+  },
+  {
+    "test": "BioactivityAndLabels.test_desired_unit_status_does_not_call_an_incompatible_unit_recorded_without_qualification",
+    "status": "UNRESOLVED_EXPECTED_ASSERTION_FAILURE",
+    "finding": "Confirmed endpoint/unit disclosure gap; no unit invented."
+  },
+  {
+    "test": "BioactivityAndLabels.test_desired_unit_vocabulary_contains_millimolar",
+    "status": "UNRESOLVED_EXPECTED_ASSERTION_FAILURE",
+    "finding": "Missing mM vocabulary; must remain distinct from millimetre mm."
+  },
+  {
+    "test": "BioactivityAndLabels.test_desired_outcome_vocabulary_distinguishes_inactive_from_not_tested",
+    "status": "UNRESOLVED_EXPECTED_ASSERTION_FAILURE",
+    "finding": "Missing explicit untested state (source assertion); relation/outcome vocabulary needs review."
+  },
+  {
+    "test": "BioactivityAndLabels.test_desired_completeness_never_reaches_100_for_unvalidated_content",
+    "status": "UNRESOLVED_EXPECTED_ASSERTION_FAILURE",
+    "finding": "Policy/terminology proposal: presence completeness is not validation; do not silently redefine."
+  },
+  {
+    "test": "BioactivityAndLabels.test_desired_viewer_text_does_not_claim_curation_for_all_records",
+    "status": "UNRESOLVED_EXPECTED_ASSERTION_FAILURE",
+    "finding": "Confirmed broad curation wording (source assertion); no stored labels changed."
+  },
+  {
+    "test": "BioactivityAndLabels.test_desired_manifest_states_licence_citation_and_export_version",
+    "status": "UNRESOLVED_EXPECTED_ASSERTION_FAILURE",
+    "finding": "Confirmed manifest metadata gap; actual licensing/citation statements require approved provenance."
+  }
+]

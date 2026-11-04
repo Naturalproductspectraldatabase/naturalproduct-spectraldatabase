@@ -1,0 +1,57 @@
+[
+  {
+    "path": "NMR_Database_Tyas_GitHub_Upload/docs/NPDB_UIUX_AUDIT_20261104.md",
+    "source": "2c7d82192a4b6ebd3b6295d8031e57aad13273bf",
+    "sha256": "46375c159d0979489231bd1f9268567ad3cfed75400f0656e63599fc384a43b1"
+  },
+  {
+    "path": "NMR_Database_Tyas_GitHub_Upload/docs/UIUX_HANDOFF_IMPORT_REVIEW_20261105.md",
+    "source": "2c7d82192a4b6ebd3b6295d8031e57aad13273bf",
+    "sha256": "4a0de877a9e1a53741ec5a8a730710c0a557bff6353343275bc997e1f165afdd"
+  },
+  {
+    "path": "NMR_Database_Tyas_GitHub_Upload/docs/uiux-audit-20261104/measurements.json",
+    "source": "2c7d82192a4b6ebd3b6295d8031e57aad13273bf",
+    "sha256": "72ad4c51765177d8120724cc9b91f2381e0f5c187068037d0189e27235a86b04"
+  },
+  {
+    "path": "NMR_Database_Tyas_GitHub_Upload/tests/ui/npdb_uiux_acceptance.js",
+    "source": "2c7d82192a4b6ebd3b6295d8031e57aad13273bf",
+    "sha256": "47646f9e503c30163c31eed732b43d259bfe9a5f893cf78ec1a4cfcf4ee27821"
+  },
+  {
+    "path": "NMR_Database_Tyas_GitHub_Upload/docs/science/ROUND2_IMPORT_REVIEW_20261105.md",
+    "source": "ea4d5ec5b6dfe6b85761f378464585eccdd01149",
+    "sha256": "c97b39265e0784985e3bdbb37c9b577576e6985802b54caf6b7bb6da9b38b4b1"
+  },
+  {
+    "path": "NMR_Database_Tyas_GitHub_Upload/docs/science/SCIENTIFIC_QA_ROUND2_20261105.md",
+    "source": "ea4d5ec5b6dfe6b85761f378464585eccdd01149",
+    "sha256": "d15027616cd1abf217c8b2ec31b9a5003bbe72a307fced0f75255d429e6aeb09"
+  },
+  {
+    "path": "NMR_Database_Tyas_GitHub_Upload/scripts/verify_science_round2_failures.py",
+    "source": "ea4d5ec5b6dfe6b85761f378464585eccdd01149",
+    "sha256": "769acc36bceb5e3910e58478e96bd84f013f8ac8ddd7751883b820af6c353176"
+  },
+  {
+    "path": "NMR_Database_Tyas_GitHub_Upload/tests/test_science_qa_round2.py",
+    "source": "ea4d5ec5b6dfe6b85761f378464585eccdd01149",
+    "sha256": "cea5627287ef1f3abaf3d0ab8fc7a6c7d4e0caf163715e0afdac6bbcbdc1cbf7"
+  },
+  {
+    "path": "NMR_Database_Tyas_GitHub_Upload/scripts/app.py",
+    "source": "ca526e1902b23f4aa3cbfa98657d81688324bdca",
+    "sha256": "7ab220ecbd8588e6ad08691003a59892a8eb0416cd108d50ea6b766d0c83aa33"
+  },
+  {
+    "path": "NMR_Database_Tyas_GitHub_Upload/tests/test_streamlit_nmr_navigation_integration.py",
+    "source": "ca526e1902b23f4aa3cbfa98657d81688324bdca",
+    "sha256": "52c7758dce6629c48d5960bfa94866160c89ba33f835ea8574c6a93fbbde057f"
+  },
+  {
+    "path": "NMR_Database_Tyas_GitHub_Upload/docs/NMR_RESULT_NAVIGATION_REVIEW_20261105.md",
+    "source": "ca526e1902b23f4aa3cbfa98657d81688324bdca",
+    "sha256": "76bed77c14a92b69f43a3544ce92a4f0cde8b1e5826eb403665b0d7e801c4adb"
+  }
+]
