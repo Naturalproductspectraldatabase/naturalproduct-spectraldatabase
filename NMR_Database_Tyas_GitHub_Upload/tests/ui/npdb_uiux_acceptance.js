@@ -95,7 +95,14 @@ async function pageChecks(p, key, { axe = true } = {}) {
         u.hostname === '127.0.0.1' && u.port === String(Number(PORT)); }
       catch { return false; }
     };
-    await context.route('**/*', route => allowed(route.request().url()) ? route.continue() : route.abort());
+    await context.route('**/*', async route => {
+      if (!allowed(route.request().url())) return route.abort();
+      // Playwright routes only the first request of a redirect chain. Never let
+      // a loopback response redirect the browser to an unreviewed destination.
+      const response = await route.fetch({ maxRedirects: 0 });
+      if (response.status() >= 300 && response.status() < 400) return route.abort();
+      return route.fulfill({ response });
+    });
     await context.routeWebSocket('**/*', socket => {
       if (allowed(socket.url())) socket.connectToServer(); else socket.close();
     });
