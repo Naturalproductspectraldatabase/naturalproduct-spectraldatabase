@@ -14,6 +14,7 @@ import unittest
 from pathlib import Path
 
 from PIL import Image, ImageOps
+from test_asset_reader_integration import reader_namespace
 
 
 APP = Path(__file__).resolve().parents[1] / "scripts" / "app.py"
@@ -77,6 +78,7 @@ class StructureImageIntegrityTests(unittest.TestCase):
     def ns_images(self):
         ns = {
             "Image": Image,
+            "LOCAL_ASSET_MAX_BYTES": 1024*1024,
             "Path": Path,
             "ImageOps": ImageOps,
             "STRUCTURE_DETAIL_IMAGE_SIZE": (300, 240),
@@ -96,7 +98,9 @@ class StructureImageIntegrityTests(unittest.TestCase):
         ns = self.ns_images()
         loader = isolated("load_standardized_structure_image", ns)
         with tempfile.TemporaryDirectory() as directory:
-            p = Path(directory) / "curated.png"
+            p = Path(directory).resolve() / "data/structures/curated.png"
+            p.parent.mkdir(parents=True)
+            ns.update(reader_namespace(Path(directory).resolve()))
             # Solid colors survive resampling deterministically.
             im = Image.new("RGB", (120, 60), (20, 50, 80))
             im.save(p)
@@ -112,6 +116,7 @@ class StructureImageIntegrityTests(unittest.TestCase):
         ns["urllib"] = types.SimpleNamespace(request=opener)
         ns["display_asset_url"] = lambda text: "https://test.invalid/test.png"
         ns["_supabase_ssl_context"] = lambda: None
+        ns["read_remote_scientific_asset"] = lambda *a, **k: (opener.png, ".png")
         loader = isolated("load_external_structure_png_bytes", ns)
         data = loader(
             "storage://structures/curated_structures/compound_1/test.png",
@@ -121,7 +126,7 @@ class StructureImageIntegrityTests(unittest.TestCase):
         with Image.open(io.BytesIO(data)) as result:
             self.assertEqual(result.size, (200, 200))
             self.assertEqual(result.getpixel((100, 100)), (65, 140, 10))
-        self.assertEqual(opener.requested_urls, ["https://test.invalid/test.png"])
+        self.assertEqual(opener.requested_urls, [])  # Transport is exercised by remote security tests.
 
     def test_transparent_png_is_composited_on_opaque_white(self):
         ns = self.ns_images()

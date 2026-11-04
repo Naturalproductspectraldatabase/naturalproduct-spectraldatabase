@@ -2,7 +2,7 @@ name: NPDB offline regression checks
 
 on:
   pull_request:
-    branches: [main, qa/npdb-reviewed-integration-20261103]
+    branches: [main, qa/npdb-reviewed-integration-20261103, qa/npdb-integrated-preflight-20261103, fix/npdb-nmr-bioactivity-disclosure-20261103, fix/npdb-stereo-aware-structure-search-20261103]
   push:
     branches: [main]
   workflow_dispatch:
@@ -39,7 +39,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies for offline AST/data tests
-        run: python -m pip install --disable-pip-version-check "pandas>=2.2,<3.1" "pillow>=10,<13"
+        run: python -m pip install --disable-pip-version-check "pandas==2.2.3" "pillow>=10,<13" "openpyxl==3.1.5" "rdkit==2026.9.1"
       - name: Compile application and helper modules
         run: |
           python -m py_compile NMR_Database_Tyas_GitHub_Upload/scripts/app.py
@@ -69,3 +69,25 @@ jobs:
         run: python -m pip install "streamlit==1.66.1" "plotly==7.1.0" "pandas==2.2.3" "pillow==12.3.0"
       - name: Run synthetic login integration checks
         run: python -m unittest discover -s NMR_Database_Tyas_GitHub_Upload/tests -p 'test_streamlit_login_integration.py' -v
+
+  structure-science:
+    name: RDKit / synthetic structure index and identity review
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Fetch exact revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          AUTH="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w 0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${AUTH}" fetch --no-tags --depth=1 origin "${GITHUB_REF}"
+          git -c advice.detachedHead=false checkout --detach FETCH_HEAD
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned chemistry test dependencies
+        run: python -m pip install "rdkit==2026.9.1" "pandas==2.2.3"
+      - name: Run synthetic chemistry and index regression checks
+        run: python -m unittest discover -s NMR_Database_Tyas_GitHub_Upload/tests -p 'test_structure_*review.py' -v

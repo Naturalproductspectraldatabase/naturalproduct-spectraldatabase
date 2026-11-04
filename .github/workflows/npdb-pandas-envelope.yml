@@ -1,0 +1,49 @@
+name: NPDB deployment pandas compatibility envelope
+
+on:
+  pull_request:
+    branches: [fix/npdb-security-integrity-gates-20261103, fix/npdb-stereo-aware-structure-search-20261103]
+  push:
+    branches: [fix/npdb-pandas-deployment-envelope-20261103]
+
+permissions:
+  contents: read
+
+jobs:
+  pandas-contract:
+    name: Requirements consistent on Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install supported pandas major and requirement parser
+        run: python -m pip install --disable-pip-version-check "pandas>=2.2,<3.0" "packaging>=24,<27"
+      - name: Verify identical manifests, safe specifier, and installed version
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import pandas
+          from packaging.requirements import Requirement
+          from packaging.version import Version
+          paths = [Path("requirements.txt"), Path("NMR_Database_Tyas_GitHub_Upload/requirements.txt")]
+          manifests = [p.read_text(encoding="utf-8") for p in paths]
+          assert manifests[0] == manifests[1], "requirements manifests have diverged"
+          matching = [line.strip() for line in manifests[0].splitlines() if line.lower().startswith("pandas")]
+          assert len(matching) == 1, "expected exactly one pandas dependency"
+          requirement = Requirement(matching[0])
+          assert requirement.name.lower() == "pandas"
+          assert Version("2.2.3") in requirement.specifier
+          assert Version("3.0.0") not in requirement.specifier
+          assert Version(pandas.__version__) in requirement.specifier
+          print("pandas dependency envelope verified on Python major runtime", pandas.__version__)
+          PY
+      - name: Probe scientific truthfulness synthetic tests
+        run: |
+          python -m unittest discover -s NMR_Database_Tyas_GitHub_Upload/tests -p 'test_scientific_truthfulness.py' -v

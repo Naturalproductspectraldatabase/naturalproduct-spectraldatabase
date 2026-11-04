@@ -1,0 +1,43 @@
+name: NPDB WAL-aware SQLite snapshot (synthetic only)
+
+on:
+  pull_request:
+    branches: [fix/npdb-backend-capabilities-20261103, qa/npdb-integrated-preflight-20261103, fix/npdb-nmr-bioactivity-disclosure-20261103, fix/npdb-stereo-aware-structure-search-20261103]
+  push:
+    branches: [fix/npdb-wal-safe-local-snapshot-20261103]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wal-snapshot:
+    name: Synthetic WAL and app authorization / Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - name: Checkout exact branch revision without submodule expansion
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          AUTH="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w 0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${AUTH}" fetch --no-tags --depth=1 origin "${GITHUB_REF}"
+          git -c advice.detachedHead=false checkout --detach FETCH_HEAD
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Compile helper, tests and app without network or scientific records
+        run: |
+          python -m py_compile NMR_Database_Tyas_GitHub_Upload/scripts/npdb_sqlite_snapshot.py
+          python -m py_compile NMR_Database_Tyas_GitHub_Upload/scripts/app.py
+          python -m py_compile NMR_Database_Tyas_GitHub_Upload/tests/test_sqlite_wal_snapshot.py
+      - name: Run synthetic backup WAL and actual-function authorization checks
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python -m unittest discover -s NMR_Database_Tyas_GitHub_Upload/tests -p 'test_sqlite_wal_snapshot.py' -v
