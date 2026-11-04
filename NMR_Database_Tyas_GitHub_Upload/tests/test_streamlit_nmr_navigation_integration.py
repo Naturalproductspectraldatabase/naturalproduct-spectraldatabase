@@ -31,6 +31,7 @@ class NmrResultNavigationIntegration(unittest.TestCase):
         self.assertEqual(len(app.exception), 0)
         database = Path(fixture.temp.name) / 'database/nmr.db'
         with closing(sqlite3.connect(database)) as conn:
+            conn.execute("INSERT INTO compounds (id,trivial_name,curation_status) VALUES (99000,'SYNTHETIC-DISTRACTOR','imported')")
             conn.execute("INSERT INTO compounds (id,trivial_name,curation_status,compound_class,source_category) VALUES (99001,'SYNTHETIC-NMR-NAV','imported','Synthetic','Synthetic')")
             conn.execute("INSERT INTO carbon_nmr (compound_id,delta_ppm,assignment) VALUES (99001,10,'C-test')")
             conn.execute("INSERT INTO proton_nmr (compound_id,delta_ppm,assignment) VALUES (99001,1,'H-test')")
@@ -77,6 +78,8 @@ class NmrResultNavigationIntegration(unittest.TestCase):
         self.assertFalse(any(b.label == 'Update Metadata #1' for b in app.button))
         self.assertTrue(next(b for b in app.button if b.label == 'View Only #1').disabled)
         next(b for b in app.button if b.label == 'Open Record #1').click().run()
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual(app.session_state['selected_compound_id'], 99001)
         other = self.create_app()
         self.assertIsNone(other.session_state['selected_compound_id'])
         self.assertEqual(other.session_state['nav_section'], 'Search & Match')

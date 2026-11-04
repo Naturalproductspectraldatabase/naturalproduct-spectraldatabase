@@ -10588,7 +10588,7 @@ def show_compound_pages():
             default_index = 0
             selected_id = st.session_state.get("selected_compound_id")
             if selected_id is not None and selected_id in options["id"].tolist():
-                default_index = options.index[options["id"] == selected_id][0]
+                default_index = options["id"].tolist().index(selected_id)
 
             selected = st.selectbox("Choose compound record", label_list, index=default_index)
             current_selected_id = int(selected.split(" - ")[0])
@@ -11048,7 +11048,7 @@ def show_compound_pages():
             default_index = 0
             selected_id = st.session_state.get("selected_compound_id")
             if selected_id is not None and selected_id in options["id"].tolist():
-                default_index = options.index[options["id"] == selected_id][0]
+                default_index = options["id"].tolist().index(selected_id)
 
             selected_label = st.selectbox(
                 "Select record to edit",
