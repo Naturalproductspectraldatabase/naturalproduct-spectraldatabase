@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [fix/npdb-backend-capabilities-20261103, qa/npdb-integrated-preflight-20261103, fix/npdb-nmr-bioactivity-disclosure-20261103, fix/npdb-stereo-aware-structure-search-20261103, qa/npdb-security-candidate-20261105]
   push:
-    branches: [fix/npdb-wal-safe-local-snapshot-20261103]
+    branches: [fix/npdb-wal-safe-local-snapshot-20261103, docs/npdb-uiux-handoff-integration-20261105]
   workflow_dispatch:
 
 permissions:
