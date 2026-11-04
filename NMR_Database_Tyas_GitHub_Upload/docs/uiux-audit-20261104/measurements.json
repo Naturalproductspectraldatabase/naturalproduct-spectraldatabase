@@ -1,0 +1,1212 @@
+{
+ "candidate": "draft PR #56 head 02484b64 (stack #47-#56), run locally",
+ "environment": "Python 3.11, Streamlit 1.66.1, pandas 2.3.3, RDKit 2026.09.1, Chromium (Playwright), axe-core 4.10.2; repository 5-compound CSV snapshot; dummy viewer/owner accounts; NOT production",
+ "acceptance_gate_baseline": {
+  "passed": 16,
+  "total": 46,
+  "results": [
+   {
+    "id": "home-1280: exactly one h1",
+    "pass": true,
+    "detail": "1 h1"
+   },
+   {
+    "id": "home-1280: no horizontal overflow",
+    "pass": true,
+    "detail": "0px"
+   },
+   {
+    "id": "home-1280: labels and captions >= 4.5:1",
+    "pass": false,
+    "detail": [
+     {
+      "text": "Compound Class",
+      "ratio": 1.49
+     },
+     {
+      "text": "Compound Subclass",
+      "ratio": 1.49
+     },
+     {
+      "text": "Source Category",
+      "ratio": 1.49
+     },
+     {
+      "text": "Data Source",
+      "ratio": 1.49
+     }
+    ]
+   },
+   {
+    "id": "home-1280: typed text >= 4.5:1",
+    "pass": true,
+    "detail": []
+   },
+   {
+    "id": "home-1280: no unsupported curation claims",
+    "pass": false,
+    "detail": [
+     "curated compound",
+     "curated records"
+    ]
+   },
+   {
+    "id": "home-1280: axe serious/critical = 0",
+    "pass": false,
+    "detail": [
+     "image-alt:3"
+    ]
+   },
+   {
+    "id": "keyboard: every tab stop has a visible focus indicator",
+    "pass": false,
+    "detail": "25 of 39 without"
+   },
+   {
+    "id": "IA: \"About\" reachable from the sidebar or footer",
+    "pass": false,
+    "detail": ""
+   },
+   {
+    "id": "IA: \"How to cite\" reachable from the sidebar or footer",
+    "pass": false,
+    "detail": ""
+   },
+   {
+    "id": "IA: \"License\" reachable from the sidebar or footer",
+    "pass": false,
+    "detail": ""
+   },
+   {
+    "id": "IA: \"Privacy\" reachable from the sidebar or footer",
+    "pass": false,
+    "detail": ""
+   },
+   {
+    "id": "IA: \"Contact\" reachable from the sidebar or footer",
+    "pass": false,
+    "detail": ""
+   },
+   {
+    "id": "search-13c-1280: exactly one h1",
+    "pass": false,
+    "detail": "0 h1"
+   },
+   {
+    "id": "search-13c-1280: no horizontal overflow",
+    "pass": true,
+    "detail": "0px"
+   },
+   {
+    "id": "search-13c-1280: labels and captions >= 4.5:1",
+    "pass": false,
+    "detail": [
+     {
+      "text": "Compound Class",
+      "ratio": 1.49
+     },
+     {
+      "text": "Source Category",
+      "ratio": 1.49
+     },
+     {
+      "text": "Data Source",
+      "ratio": 1.49
+     },
+     {
+      "text": "Minimum similarity / NMR heuristic thres",
+      "ratio": 1.49
+     }
+    ]
+   },
+   {
+    "id": "search-13c-1280: typed text >= 4.5:1",
+    "pass": false,
+    "detail": [
+     {
+      "field": "Enter 13C peaks (comma, space,",
+      "ratio": 1.05
+     },
+     {
+      "field": "13C tolerance",
+      "ratio": 1.05
+     }
+    ]
+   },
+   {
+    "id": "search-13c-1280: no unsupported curation claims",
+    "pass": true,
+    "detail": []
+   },
+   {
+    "id": "search-13c-1280: axe serious/critical = 0",
+    "pass": false,
+    "detail": [
+     "color-contrast:1"
+    ]
+   },
+   {
+    "id": "search: Open Record opens the compound record",
+    "pass": false,
+    "detail": ""
+   },
+   {
+    "id": "record-1280: exactly one h1",
+    "pass": false,
+    "detail": "0 h1"
+   },
+   {
+    "id": "record-1280: no horizontal overflow",
+    "pass": true,
+    "detail": "0px"
+   },
+   {
+    "id": "record-1280: labels and captions >= 4.5:1",
+    "pass": false,
+    "detail": [
+     {
+      "text": "Compound Workflow",
+      "ratio": 1.49
+     },
+     {
+      "text": "Browse Record",
+      "ratio": 1.49
+     },
+     {
+      "text": "Choose compound record",
+      "ratio": 1.49
+     },
+     {
+      "text": "RU207-C1_1H.png",
+      "ratio": 1.24
+     }
+    ]
+   },
+   {
+    "id": "record-1280: typed text >= 4.5:1",
+    "pass": true,
+    "detail": []
+   },
+   {
+    "id": "record-1280: no unsupported curation claims",
+    "pass": true,
+    "detail": []
+   },
+   {
+    "id": "record-1280: axe serious/critical = 0",
+    "pass": false,
+    "detail": [
+     "image-alt:7"
+    ]
+   },
+   {
+    "id": "gallery-13c-1280: exactly one h1",
+    "pass": false,
+    "detail": "0 h1"
+   },
+   {
+    "id": "gallery-13c-1280: no horizontal overflow",
+    "pass": true,
+    "detail": "0px"
+   },
+   {
+    "id": "gallery-13c-1280: labels and captions >= 4.5:1",
+    "pass": false,
+    "detail": [
+     {
+      "text": "Search gallery",
+      "ratio": 1.49
+     },
+     {
+      "text": "Spectra per page",
+      "ratio": 1.49
+     },
+     {
+      "text": "Page 1 of 1",
+      "ratio": 1.24
+     },
+     {
+      "text": "Jump to page (top)",
+      "ratio": 1.49
+     }
+    ]
+   },
+   {
+    "id": "gallery-13c-1280: typed text >= 4.5:1",
+    "pass": false,
+    "detail": [
+     {
+      "field": "Jump to page (top)",
+      "ratio": 1.05
+     },
+     {
+      "field": "Jump to page (bottom)",
+      "ratio": 1.05
+     }
+    ]
+   },
+   {
+    "id": "gallery-13c-1280: no unsupported curation claims",
+    "pass": true,
+    "detail": []
+   },
+   {
+    "id": "gallery-13c-1280: axe serious/critical = 0",
+    "pass": false,
+    "detail": [
+     "color-contrast:2",
+     "image-alt:6"
+    ]
+   },
+   {
+    "id": "home-320: no horizontal overflow",
+    "pass": false,
+    "detail": "29px"
+   },
+   {
+    "id": "home-768: no horizontal overflow",
+    "pass": true,
+    "detail": "0px"
+   },
+   {
+    "id": "navigation: exactly one active item",
+    "pass": false,
+    "detail": [
+     "note_add\n\nStart Submission",
+     "note_add\n\nNew Submission"
+    ]
+   },
+   {
+    "id": "owner-new-submission-1280: exactly one h1",
+    "pass": false,
+    "detail": "0 h1"
+   },
+   {
+    "id": "owner-new-submission-1280: no horizontal overflow",
+    "pass": true,
+    "detail": "0px"
+   },
+   {
+    "id": "owner-new-submission-1280: labels and captions >= 4.5:1",
+    "pass": false,
+    "detail": [
+     {
+      "text": "Compound Workflow",
+      "ratio": 1.49
+     },
+     {
+      "text": "Browse Record",
+      "ratio": 1.49
+     },
+     {
+      "text": "New Submission",
+      "ratio": 1.49
+     },
+     {
+      "text": "Batch Import",
+      "ratio": 1.49
+     }
+    ]
+   },
+   {
+    "id": "owner-new-submission-1280: typed text >= 4.5:1",
+    "pass": true,
+    "detail": []
+   },
+   {
+    "id": "owner-new-submission-1280: no unsupported curation claims",
+    "pass": true,
+    "detail": []
+   },
+   {
+    "id": "owner-new-submission-1280: axe serious/critical = 0",
+    "pass": false,
+    "detail": [
+     "color-contrast:4"
+    ]
+   },
+   {
+    "id": "owner-update-metadata-1280: exactly one h1",
+    "pass": false,
+    "detail": "0 h1"
+   },
+   {
+    "id": "owner-update-metadata-1280: no horizontal overflow",
+    "pass": true,
+    "detail": "0px"
+   },
+   {
+    "id": "owner-update-metadata-1280: labels and captions >= 4.5:1",
+    "pass": false,
+    "detail": [
+     {
+      "text": "Compound Workflow",
+      "ratio": 1.49
+     },
+     {
+      "text": "Browse Record",
+      "ratio": 1.49
+     },
+     {
+      "text": "New Submission",
+      "ratio": 1.49
+     },
+     {
+      "text": "Batch Import",
+      "ratio": 1.49
+     }
+    ]
+   },
+   {
+    "id": "owner-update-metadata-1280: typed text >= 4.5:1",
+    "pass": false,
+    "detail": [
+     {
+      "field": "Trivial Name",
+      "ratio": 1.05
+     },
+     {
+      "field": "IUPAC Name",
+      "ratio": 1.05
+     },
+     {
+      "field": "Molecular Formula",
+      "ratio": 1.05
+     },
+     {
+      "field": "Source Organism / Species (opt",
+      "ratio": 1.05
+     }
+    ]
+   },
+   {
+    "id": "owner-update-metadata-1280: no unsupported curation claims",
+    "pass": true,
+    "detail": []
+   },
+   {
+    "id": "owner-update-metadata-1280: axe serious/critical = 0",
+    "pass": false,
+    "detail": [
+     "color-contrast:7"
+    ]
+   }
+  ]
+ },
+ "page_metrics": {
+  "login-320": {
+   "secondsToLoginForm": 4.4,
+   "h1": [],
+   "overflowPx": 0,
+   "fieldContrast": [],
+   "imagesWithoutAlt": 0,
+   "images": 4,
+   "domNodes": 240,
+   "axe": []
+  },
+  "login-1280": {
+   "secondsToLoginForm": 2.5,
+   "h1": [],
+   "overflowPx": 0,
+   "fieldContrast": [],
+   "imagesWithoutAlt": 0,
+   "images": 4,
+   "domNodes": 240,
+   "axe": []
+  },
+  "home-1280": {
+   "h1": [
+    "Natural Products\nSpectral Database"
+   ],
+   "overflowPx": 0,
+   "fieldContrast": [
+    {
+     "field": "Compound Class",
+     "ratio": 12.53
+    },
+    {
+     "field": "Compound Subclass",
+     "ratio": 12.53
+    },
+    {
+     "field": "Source Category",
+     "ratio": 12.53
+    },
+    {
+     "field": "Data Source",
+     "ratio": 12.53
+    }
+   ],
+   "imagesWithoutAlt": 3,
+   "images": 15,
+   "domNodes": 1073,
+   "axe": [
+    {
+     "id": "image-alt",
+     "impact": "critical",
+     "nodes": 3,
+     "sample": ".st-emotion-cache-18kf3ut.e1a2occc5[data-testid=\"stLayoutWrapper\"]:nth-child(11)"
+    }
+   ],
+   "rerunSeconds": 1.3,
+   "wsBytesLoginToHome": 969718,
+   "wsBytesOneRerun": 48162
+  },
+  "keyboard-home-1280": {
+   "stops": [
+    {
+     "tag": "button",
+     "label": "Collapse sidebar",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "rgba(38, 39, 48, 0.2) 0px 0px 0px 3.2px"
+    },
+    {
+     "tag": "button",
+     "label": "home\n\nHome",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "rgba(0, 0, 0, 0.16) 0px 12px 24px 0px"
+    },
+    {
+     "tag": "button",
+     "label": "search\n\nSearch Spectra",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "none"
+    },
+    {
+     "tag": "button",
+     "label": "dashboard\n\nBrowse Dashboard",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "none"
+    },
+    {
+     "tag": "summary",
+     "label": "keyboard_arrow_right\n\nAddition",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "rgba(255, 75, 75, 0.5) 0px 0px 0px 3.2px"
+    },
+    {
+     "tag": "summary",
+     "label": "keyboard_arrow_down\n\nDashboard",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "rgba(255, 75, 75, 0.5) 0px 0px 0px 3.2px"
+    },
+    {
+     "tag": "input",
+     "label": "Compound Class",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "none"
+    },
+    {
+     "tag": "input",
+     "label": "Compound Subclass",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "none"
+    },
+    {
+     "tag": "input",
+     "label": "Source Category",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "none"
+    },
+    {
+     "tag": "input",
+     "label": "Data Source",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "none"
+    },
+    {
+     "tag": "button",
+     "label": "logout\n\nLog out",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "none"
+    },
+    {
+     "tag": "button",
+     "label": "Deploy",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "rgba(38, 39, 48, 0.2) 0px 0px 0px 3.2px"
+    },
+    {
+     "tag": "button",
+     "label": "Main menu",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "rgba(38, 39, 48, 0.2) 0px 0px 0px 3.2px"
+    },
+    {
+     "tag": "main",
+     "label": "Local-only mode is active. Cha",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "none"
+    },
+    {
+     "tag": "button",
+     "label": "search\n\nStart Searching →",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "rgba(92, 85, 255, 0.24) 0px 18px 34px 0px, rgba(255, 255, 255, 0.18) 0px 1px 0px 0px inset"
+    },
+    {
+     "tag": "button",
+     "label": "Open Search Spectra",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "rgba(255, 75, 75, 0.5) 0px 0px 0px 3.2px"
+    },
+    {
+     "tag": "button",
+     "label": "Open Browse Record",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "rgba(255, 75, 75, 0.5) 0px 0px 0px 3.2px"
+    },
+    {
+     "tag": "button",
+     "label": "Open Download Data",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "rgba(255, 75, 75, 0.5) 0px 0px 0px 3.2px"
+    },
+    {
+     "tag": "button",
+     "label": "folder_open\n\nBrowse Records",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "rgba(255, 75, 75, 0.5) 0px 0px 0px 3.2px"
+    },
+    {
+     "tag": "input",
+     "label": "Quick Browse cards",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "none"
+    },
+    {
+     "tag": "button",
+     "label": "Open",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "rgba(255, 75, 75, 0.5) 0px 0px 0px 3.2px"
+    },
+    {
+     "tag": "button",
+     "label": "Fullscreen",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "none"
+    },
+    {
+     "tag": "button",
+     "label": "Open",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "rgba(255, 75, 75, 0.5) 0px 0px 0px 3.2px"
+    },
+    {
+     "tag": "button",
+     "label": "Fullscreen",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "none"
+    },
+    {
+     "tag": "button",
+     "label": "Open",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "rgba(255, 75, 75, 0.5) 0px 0px 0px 3.2px"
+    },
+    {
+     "tag": "button",
+     "label": "Fullscreen",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "none"
+    },
+    {
+     "tag": "button",
+     "label": "Open",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "rgba(255, 75, 75, 0.5) 0px 0px 0px 3.2px"
+    },
+    {
+     "tag": "button",
+     "label": "Open",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "rgba(255, 75, 75, 0.5) 0px 0px 0px 3.2px"
+    },
+    {
+     "tag": "a",
+     "label": "Skip to main content",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "rgba(255, 75, 75, 0.5) 0px 0px 0px 3.2px"
+    },
+    {
+     "tag": "button",
+     "label": "Collapse sidebar",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "rgba(38, 39, 48, 0.2) 0px 0px 0px 3.2px"
+    },
+    {
+     "tag": "button",
+     "label": "home\n\nHome",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "rgba(0, 0, 0, 0.16) 0px 12px 24px 0px"
+    },
+    {
+     "tag": "button",
+     "label": "search\n\nSearch Spectra",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "none"
+    },
+    {
+     "tag": "button",
+     "label": "dashboard\n\nBrowse Dashboard",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "none"
+    },
+    {
+     "tag": "summary",
+     "label": "keyboard_arrow_right\n\nAddition",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "rgba(255, 75, 75, 0.5) 0px 0px 0px 3.2px"
+    },
+    {
+     "tag": "summary",
+     "label": "keyboard_arrow_down\n\nDashboard",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "rgba(255, 75, 75, 0.5) 0px 0px 0px 3.2px"
+    },
+    {
+     "tag": "input",
+     "label": "Compound Class",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "none"
+    },
+    {
+     "tag": "input",
+     "label": "Compound Subclass",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "none"
+    },
+    {
+     "tag": "input",
+     "label": "Source Category",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "none"
+    },
+    {
+     "tag": "input",
+     "label": "Data Source",
+     "outline": false,
+     "ringW": 3,
+     "shadow": "none"
+    }
+   ]
+  },
+  "home-1920": {
+   "h1": [
+    "Natural Products\nSpectral Database"
+   ],
+   "overflowPx": 0,
+   "fieldContrast": [
+    {
+     "field": "Compound Class",
+     "ratio": 12.53
+    },
+    {
+     "field": "Compound Subclass",
+     "ratio": 12.53
+    },
+    {
+     "field": "Source Category",
+     "ratio": 12.53
+    },
+    {
+     "field": "Data Source",
+     "ratio": 12.53
+    }
+   ],
+   "imagesWithoutAlt": 3,
+   "images": 15,
+   "domNodes": 1073
+  },
+  "home-768": {
+   "h1": [
+    "Natural Products\nSpectral Database"
+   ],
+   "overflowPx": 0,
+   "fieldContrast": [
+    {
+     "field": "Compound Class",
+     "ratio": 12.53
+    },
+    {
+     "field": "Compound Subclass",
+     "ratio": 12.53
+    },
+    {
+     "field": "Source Category",
+     "ratio": 12.53
+    },
+    {
+     "field": "Data Source",
+     "ratio": 12.53
+    }
+   ],
+   "imagesWithoutAlt": 3,
+   "images": 15,
+   "domNodes": 1073
+  },
+  "home-320": {
+   "h1": [
+    "Natural Products\nSpectral Database"
+   ],
+   "overflowPx": 29,
+   "fieldContrast": [
+    {
+     "field": "Compound Class",
+     "ratio": 12.53
+    },
+    {
+     "field": "Compound Subclass",
+     "ratio": 12.53
+    },
+    {
+     "field": "Source Category",
+     "ratio": 12.53
+    },
+    {
+     "field": "Data Source",
+     "ratio": 12.53
+    }
+   ],
+   "imagesWithoutAlt": 3,
+   "images": 15,
+   "domNodes": 1073,
+   "axe": [
+    {
+     "id": "image-alt",
+     "impact": "critical",
+     "nodes": 3,
+     "sample": ".st-emotion-cache-18kf3ut.e1a2occc5[data-testid=\"stLayoutWrapper\"]:nth-child(11)"
+    }
+   ]
+  },
+  "search-landing-1280": {
+   "h1": [],
+   "overflowPx": 0,
+   "fieldContrast": [
+    {
+     "field": "Compound Class",
+     "ratio": 12.53
+    },
+    {
+     "field": "Source Category",
+     "ratio": 12.53
+    },
+    {
+     "field": "Data Source",
+     "ratio": 12.53
+    },
+    {
+     "field": "Search Field",
+     "ratio": 11.18
+    },
+    {
+     "field": "Match Mode",
+     "ratio": 11.18
+    }
+   ],
+   "imagesWithoutAlt": 0,
+   "images": 7,
+   "domNodes": 705,
+   "axe": [
+    {
+     "id": "color-contrast",
+     "impact": "serious",
+     "nodes": 1,
+     "sample": "#\\:r4a\\:"
+    }
+   ]
+  },
+  "search-13c-results-1280": {
+   "h1": [],
+   "overflowPx": 0,
+   "fieldContrast": [
+    {
+     "field": "Compound Class",
+     "ratio": 12.53
+    },
+    {
+     "field": "Source Category",
+     "ratio": 12.53
+    },
+    {
+     "field": "Data Source",
+     "ratio": 12.53
+    },
+    {
+     "field": "Enter 13C peaks (comma, space,",
+     "ratio": 1.05
+    },
+    {
+     "field": "13C tolerance",
+     "ratio": 1.05
+    }
+   ],
+   "imagesWithoutAlt": 0,
+   "images": 7,
+   "domNodes": 1010,
+   "axe": [
+    {
+     "id": "color-contrast",
+     "impact": "serious",
+     "nodes": 1,
+     "sample": "#\\:r61\\:"
+    }
+   ],
+   "resultText": [
+    "Found 2 candidate(s) above the current score threshold."
+   ]
+  },
+  "record-1280": {
+   "h1": [],
+   "overflowPx": 0,
+   "fieldContrast": [
+    {
+     "field": "Compound Class",
+     "ratio": 12.53
+    },
+    {
+     "field": "Source Category",
+     "ratio": 12.53
+    },
+    {
+     "field": "Data Source",
+     "ratio": 12.53
+    },
+    {
+     "field": "Enter 13C peaks (comma, space,",
+     "ratio": 1.05
+    },
+    {
+     "field": "13C tolerance",
+     "ratio": 1.05
+    }
+   ],
+   "imagesWithoutAlt": 0,
+   "images": 7,
+   "domNodes": 680,
+   "axe": [
+    {
+     "id": "color-contrast",
+     "impact": "serious",
+     "nodes": 1,
+     "sample": "#\\:r61\\:"
+    }
+   ]
+  },
+  "browse-1280": {
+   "h1": [],
+   "overflowPx": 0,
+   "fieldContrast": [
+    {
+     "field": "Choose compound record",
+     "ratio": 11.18
+    }
+   ],
+   "imagesWithoutAlt": 7,
+   "images": 14,
+   "domNodes": 1451,
+   "axe": [
+    {
+     "id": "image-alt",
+     "impact": "critical",
+     "nodes": 7,
+     "sample": "div[width=\"229.328125\"] > .stImage.st-emotion-cache-qyyadu.ehg91i90 > .st-emotio"
+    }
+   ]
+  },
+  "sidebar-viewer": {
+   "items": [
+    "keyboard_double_arrow_left",
+    "home\n\nHome",
+    "search\n\nSearch Spectra",
+    "dashboard\n\nBrowse Dashboard",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "logout\n\nLog out"
+   ]
+  },
+  "mobile-320": {
+   "sidebarToggleVisible": true
+  },
+  "sidebar-owner": {
+   "items": [
+    "",
+    "home\n\nHome",
+    "search\n\nSearch Spectra",
+    "dashboard\n\nBrowse Dashboard",
+    "note_add\n\nStart Submission",
+    "note_add\n\nNew Submission",
+    "upload_file\n\nBatch Import",
+    "edit_note\n\nUpdate Metadata",
+    "delete\n\nDelete Record",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "logout\n\nLog out"
+   ]
+  },
+  "owner-new-submission-1280": {
+   "h1": [],
+   "overflowPx": 0,
+   "fieldContrast": [],
+   "imagesWithoutAlt": 0,
+   "images": 7,
+   "domNodes": 655,
+   "axe": [
+    {
+     "id": "color-contrast",
+     "impact": "serious",
+     "nodes": 4,
+     "sample": "#\\:r2k\\:"
+    }
+   ]
+  },
+  "owner-update-metadata-1280": {
+   "h1": [],
+   "overflowPx": 0,
+   "fieldContrast": [
+    {
+     "field": "Select record to edit",
+     "ratio": 11.18
+    },
+    {
+     "field": "Trivial Name",
+     "ratio": 1.05
+    },
+    {
+     "field": "IUPAC Name",
+     "ratio": 1.05
+    },
+    {
+     "field": "Molecular Formula",
+     "ratio": 1.05
+    },
+    {
+     "field": "Compound Class",
+     "ratio": 11.18
+    },
+    {
+     "field": "Compound Subclass",
+     "ratio": 11.18
+    },
+    {
+     "field": "Source Category",
+     "ratio": 11.18
+    },
+    {
+     "field": "Source Organism / Species (opt",
+     "ratio": 1.05
+    },
+    {
+     "field": "Sample Code",
+     "ratio": 1.05
+    },
+    {
+     "field": "Collection Location",
+     "ratio": 1.05
+    },
+    {
+     "field": "GPS Coordinates",
+     "ratio": 1.05
+    },
+    {
+     "field": "Depth (m)",
+     "ratio": 1.05
+    },
+    {
+     "field": "UV Data",
+     "ratio": 1.05
+    },
+    {
+     "field": "FTIR Data",
+     "ratio": 1.05
+    },
+    {
+     "field": "Melting Point",
+     "ratio": 1.05
+    },
+    {
+     "field": "Crystallization Method",
+     "ratio": 1.05
+    },
+    {
+     "field": "Structure Image Path",
+     "ratio": 1.05
+    },
+    {
+     "field": "Data Source",
+     "ratio": 11.18
+    },
+    {
+     "field": "Curation Status",
+     "ratio": 11.18
+    }
+   ],
+   "imagesWithoutAlt": 0,
+   "images": 7,
+   "domNodes": 939,
+   "axe": [
+    {
+     "id": "color-contrast",
+     "impact": "serious",
+     "nodes": 7,
+     "sample": "#\\:r5n\\:"
+    }
+   ]
+  },
+  "owner-batch-import-1280": {
+   "h1": [],
+   "overflowPx": 0,
+   "fieldContrast": [],
+   "imagesWithoutAlt": 0,
+   "images": 7,
+   "domNodes": 908,
+   "axe": []
+  },
+  "owner-delete-record-1280": {
+   "h1": [],
+   "overflowPx": 0,
+   "fieldContrast": [
+    {
+     "field": "Select record to delete",
+     "ratio": 11.18
+    }
+   ],
+   "imagesWithoutAlt": 0,
+   "images": 7,
+   "domNodes": 650,
+   "axe": []
+  }
+ },
+ "nmr_result_actions": {
+  "resultButtons": [
+   "upload\n\nUpload",
+   "Run 13C Match",
+   "Download 13C Similarity Results as Excel",
+   "Open Record #1",
+   "View Only #1"
+  ],
+  "openLabel": "Open Record #1",
+  "afterOpenHasDownload": 0
+ },
+ "viewer_data_library_items": [
+  "keyboard_double_arrow_left",
+  "Home",
+  "Search Spectra",
+  "Browse Dashboard",
+  "Bioactivity",
+  "1H Peaks",
+  "1H Spectra Gallery",
+  "13C Spectra Gallery",
+  "13C Peaks",
+  "Spectra Library",
+  "Specimen Library",
+  "Guide",
+  "Log out"
+ ],
+ "record_page": {
+  "scroll_height_px": {
+   "1280": 8067,
+   "320": 7822
+  },
+  "section_titles_1280": [
+   "DIV: Compound Browser",
+   "DIV: Isocyanatoneoamphilectene",
+   "DIV: Structure & Identity",
+   "DIV: Origin & Reference",
+   "DIV: Structure",
+   "DIV: Physical, Spectral & Supporting Data",
+   "DIV: 1H NMR Table",
+   "DIV: 13C NMR Table",
+   "DIV: Spectra Files",
+   "DIV: Bioactivity",
+   "DIV: Notes"
+  ],
+  "images_1280": [
+   {
+    "alt": "",
+    "w": 229,
+    "h": 165
+   },
+   {
+    "alt": "",
+    "w": 764,
+    "h": 540
+   },
+   {
+    "alt": "",
+    "w": 764,
+    "h": 540
+   },
+   {
+    "alt": "",
+    "w": 764,
+    "h": 540
+   },
+   {
+    "alt": "",
+    "w": 764,
+    "h": 540
+   },
+   {
+    "alt": "",
+    "w": 764,
+    "h": 540
+   }
+  ]
+ }
+}

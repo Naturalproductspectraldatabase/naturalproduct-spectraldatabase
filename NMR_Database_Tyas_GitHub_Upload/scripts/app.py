@@ -9758,21 +9758,22 @@ def render_candidate_cards(results, mode="13C", limit=10):
 
             action_left, action_right = st.columns([1, 1])
             with action_left:
-                if st.button(
+                # Callbacks run before the submit-only result UI disappears on rerun.
+                st.button(
                     f"Open Record #{i}",
-                    key=f"open_detail_{mode}_{item['compound_id']}_{i}"
-                ):
-                    open_compound_detail(item["compound_id"])
-                    st.rerun()
+                    key=f"open_detail_{mode}_{item['compound_id']}_{i}",
+                    on_click=open_compound_detail,
+                    args=(item["compound_id"],),
+                )
 
             with action_right:
                 if can_edit_database():
-                    if st.button(
+                    st.button(
                         f"Update Metadata #{i}",
-                        key=f"edit_compound_{mode}_{item['compound_id']}_{i}"
-                    ):
-                        open_compound_editor(item["compound_id"])
-                        st.rerun()
+                        key=f"edit_compound_{mode}_{item['compound_id']}_{i}",
+                        on_click=open_compound_editor,
+                        args=(item["compound_id"],),
+                    )
                 else:
                     st.button(
                         f"View Only #{i}",
@@ -10587,7 +10588,7 @@ def show_compound_pages():
             default_index = 0
             selected_id = st.session_state.get("selected_compound_id")
             if selected_id is not None and selected_id in options["id"].tolist():
-                default_index = options.index[options["id"] == selected_id][0]
+                default_index = options["id"].tolist().index(selected_id)
 
             selected = st.selectbox("Choose compound record", label_list, index=default_index)
             current_selected_id = int(selected.split(" - ")[0])
@@ -11047,7 +11048,7 @@ def show_compound_pages():
             default_index = 0
             selected_id = st.session_state.get("selected_compound_id")
             if selected_id is not None and selected_id in options["id"].tolist():
-                default_index = options.index[options["id"] == selected_id][0]
+                default_index = options["id"].tolist().index(selected_id)
 
             selected_label = st.selectbox(
                 "Select record to edit",
