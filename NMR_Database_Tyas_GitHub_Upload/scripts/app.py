@@ -31,6 +31,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from npdb_browser_qa import display_class_term, display_source_term, category_counts, compound_open_label, approved_recovery_route
 from npdb_asset_paths import AssetAccessError, read_local_asset, validate_asset_content, write_local_asset, validate_https_asset_url, read_https_asset
 from npdb_sqlite_snapshot import verified_sqlite_snapshot_bytes
 
@@ -1104,6 +1105,22 @@ def require_backend_permission(action, table=None, row=None):
     raise PermissionError("This action is not permitted for this account.")
 
 
+def render_account_recovery_instructions():
+    st.write("Account recovery is managed by the NPDB administrator through a previously established communication channel.")
+    route = approved_recovery_route(get_secret_setting("NPDB_ACCOUNT_RECOVERY_URL"))
+    if route:
+        st.link_button("Contact account recovery", route)
+    else:
+        st.info("No official account-recovery contact is configured. Use your previously established communication channel with the NPDB administrator.")
+
+
+@st.dialog("Account Recovery")
+def render_account_recovery_dialog():
+    # Native modal supplies focus management/keyboard containment. Browser
+    # focus and assistive-technology behavior still require Work acceptance.
+    render_account_recovery_instructions()
+
+
 def verify_access_gate():
     # Fail closed: a missing or malformed Streamlit secret must never
     # silently expose the compound database without authentication.
@@ -1554,10 +1571,6 @@ def verify_access_gate():
         username = st.text_input("Username", value="", placeholder="Enter your username", icon=":material/person:")
         password = st.text_input("Password", value="", type="password", placeholder="Enter your password", icon=":material/lock:")
         remember_me = False
-        st.markdown(
-            '<div style="text-align:right; padding-top: 0.2rem;"><a class="auth-forgot-link" href="#login-access-help">Forgot password?</a></div>',
-            unsafe_allow_html=True,
-        )
         st.markdown('<div class="auth-meta"><div class="auth-meta-note">Approved users only. Contact the database owner if you need access.</div></div>', unsafe_allow_html=True)
         submitted = st.form_submit_button("Open Database  →", width="stretch", disabled=login_locked)
         st.markdown(
@@ -1566,17 +1579,21 @@ def verify_access_gate():
         )
 
     st.markdown('<div id="login-access-help"></div>', unsafe_allow_html=True)
-    with st.expander("Access Guide", expanded=False):
+    if st.button("Forgot password?", key="npdb_open_recovery"):
+        st.session_state["npdb_show_recovery"] = True
+        render_account_recovery_dialog()
+    with st.expander("Access Guide", expanded=bool(st.session_state.get("npdb_show_recovery", False))):
         st.markdown(
             """
             <div class="auth-help-copy">
                 Sign in with an approved NPDB account. If your workspace uses the approved-name pattern, enter the username as
-                <strong>npdb_yourname</strong>. Only the owner account can edit or submit records; other approved users can browse,
+                <strong>npdb_yourname</strong>. Approved editors can curate records; owner-only approvals and administration remain restricted. Approved viewers can browse,
                 search, and download curated data.
             </div>
             """,
             unsafe_allow_html=True,
         )
+        render_account_recovery_instructions()
 
     if submitted:
         authenticated = False
@@ -4574,6 +4591,11 @@ def source_summary_from_record(record) -> str:
         record.get("source_organism"),
         record.get("source_material"),
     )
+    label = presentation_taxonomy_label(category, "source_category")
+    if category and summary == category:
+        return label
+    if category and summary.startswith(category + " | "):
+        return label + summary[len(category):]
     return summary
 
 
@@ -5345,7 +5367,7 @@ def render_structure_search_results(results: list[dict], search_type: str, limit
         title_text = clean_text(item.get("trivial_name"))
         title = html_text(title_text)
         formula = html_text(item.get("molecular_formula"))
-        compound_class = html_text(item.get("compound_class"))
+        compound_class = html_text(presentation_taxonomy_label(item.get("compound_class"), "compound_class"))
         source_summary = html_text(source_summary_from_record(item))
         score = float(item.get("structure_score", 0.0))
         subtitle = html_text(f"{item.get('structure_match_type', search_type)} match | Score: {score:.1f}%")
@@ -5653,6 +5675,14 @@ def is_image_file(path: Path):
 def is_pdf_file(path: Path):
     return path.suffix.lower() == ".pdf"
 
+def presentation_taxonomy_label(value, column):
+    if column == "compound_class":
+        return display_class_term(value, get_secret_object("NPDB_COMPOUND_CLASS_DISPLAY_ALIASES"))
+    if column == "source_category":
+        return display_source_term(value, get_secret_object("NPDB_SOURCE_CATEGORY_DISPLAY_ALIASES"))
+    return value
+
+
 def normalize_filter_value(value):
     text = clean_text(value)
     return text if text != "-" else None
@@ -5660,10 +5690,10 @@ def normalize_filter_value(value):
 def build_filter_options(df, column_name):
     values = []
     for value in df[column_name].tolist():
-        normalized = normalize_filter_value(value)
+        normalized = normalize_filter_value(presentation_taxonomy_label(value, column_name))
         if normalized is not None:
             values.append(normalized)
-    return ["All"] + sorted(set(values))
+    return ["All"] + sorted(row["Category"] for row in category_counts(values))
 
 def apply_dataframe_filters(
     df,
@@ -5675,13 +5705,13 @@ def apply_dataframe_filters(
     result = df.copy()
 
     if class_filter != "All":
-        result = result[result["compound_class"].fillna("").astype(str).str.strip() == class_filter]
+        result = result[result["compound_class"].fillna("").map(lambda value: presentation_taxonomy_label(value, "compound_class").casefold()) == presentation_taxonomy_label(class_filter, "compound_class").casefold()]
 
     if subclass_filter != "All":
         result = result[result["compound_subclass"].fillna("").astype(str).str.strip() == subclass_filter]
 
     if source_filter != "All":
-        result = result[result["source_category"].fillna("").astype(str).str.strip() == source_filter]
+        result = result[result["source_category"].fillna("").map(lambda value: presentation_taxonomy_label(value, "source_category").casefold()) == presentation_taxonomy_label(source_filter, "source_category").casefold()]
 
     if data_source_filter != "All":
         result = result[result["data_source"].fillna("").astype(str).str.strip() == data_source_filter]
@@ -5694,13 +5724,13 @@ def filter_similarity_results(results, class_filter="All", source_filter="All", 
     for item in results:
         ok = True
 
-        if class_filter != "All" and clean_text(item.get("compound_class")) != class_filter:
+        if class_filter != "All" and presentation_taxonomy_label(item.get("compound_class"), "compound_class").casefold() != presentation_taxonomy_label(class_filter, "compound_class").casefold():
             ok = False
 
         item_source_category = normalize_source_category(item.get("source_category"))
         if not item_source_category:
             item_source_category = normalize_source_category(item.get("source_material"))
-        if source_filter != "All" and clean_text(item_source_category) != source_filter:
+        if source_filter != "All" and presentation_taxonomy_label(item_source_category, "source_category").casefold() != presentation_taxonomy_label(source_filter, "source_category").casefold():
             ok = False
 
         if data_source_filter != "All" and clean_text(item.get("data_source")) != data_source_filter:
@@ -7015,7 +7045,7 @@ def render_kv(title, value):
 def render_compound_card(row, show_preview: bool = True, prefer_fast_asset: bool = False):
     title = html_text(row["trivial_name"])
     formula = html_text(row["molecular_formula"])
-    compound_class = html_text(row["compound_class"])
+    compound_class = html_text(display_class_term(row["compound_class"], get_secret_object("NPDB_COMPOUND_CLASS_DISPLAY_ALIASES")))
     subclass = html_text(row["compound_subclass"])
     source_summary = html_text(source_summary_from_record(row))
     sample_code = html_text(row["sample_code"])
@@ -9513,12 +9543,12 @@ def show_compound_detail(compound_id):
         render_kv("SMILES", row_data.get("smiles"))
         render_kv("InChI", row_data.get("inchi"))
         render_kv("InChIKey", row_data.get("inchikey"))
-        render_kv("Compound Class", row_data["compound_class"])
+        render_kv("Compound Class", presentation_taxonomy_label(row_data["compound_class"], "compound_class"))
         render_kv("Compound Subclass", row_data["compound_subclass"])
 
     with info_mid:
         section_header("Origin & Reference")
-        render_kv("Source Category", row_data.get("source_category"))
+        render_kv("Source Category", presentation_taxonomy_label(row_data.get("source_category"), "source_category"))
         render_kv("Source Organism / Species", row_data.get("source_organism"))
         render_kv("Source Summary", source_summary_from_record(row_data))
         render_kv("Sample Code", row_data["sample_code"])
@@ -9629,7 +9659,7 @@ def render_best_match_summary(item, mode_label):
             <div class="result-subtitle">Compound ID: {html_text(item['compound_id'])}</div>
             <div class="badge-row"><strong>Mode:</strong> {html_text(mode_label)}</div>
             <div class="badge-row"><strong>Molecular Formula:</strong> {html_text(item.get('molecular_formula'))}</div>
-            <div class="badge-row"><strong>Compound Class:</strong> {html_text(item.get('compound_class'))}</div>
+            <div class="badge-row"><strong>Compound Class:</strong> {html_text(presentation_taxonomy_label(item.get('compound_class'), 'compound_class'))}</div>
             <div class="badge-row"><strong>Compound Subclass:</strong> {html_text(item.get('compound_subclass'))}</div>
             <div class="badge-row"><strong>Source:</strong> {source_summary}</div>
             <div class="badge-row"><strong>Sample Code:</strong> {html_text(item.get('sample_code'))}</div>
@@ -9663,7 +9693,7 @@ def render_candidate_cards(results, mode="13C", limit=10):
         title_text = clean_text(item["trivial_name"])
         title = html_text(title_text)
         formula = html_text(item.get("molecular_formula"))
-        compound_class = html_text(item.get("compound_class"))
+        compound_class = html_text(presentation_taxonomy_label(item.get("compound_class"), "compound_class"))
         subclass = html_text(item.get("compound_subclass"))
         source_summary = html_text(source_summary_from_record(item))
         sample_code = html_text(item.get("sample_code"))
@@ -10082,7 +10112,7 @@ def show_search_page(all_compounds_df):
                         render_compound_card(row, show_preview=True, prefer_fast_asset=True)
                     with c2:
                         st.write("")
-                        if st.button("Open", key=f"name_open_{row['id']}"):
+                        if st.button(compound_open_label(row["id"], row.get("trivial_name")), key=f"name_open_{row['id']}"):
                             open_compound_detail(int(row["id"]))
                             st.rerun()
             else:
@@ -10342,7 +10372,7 @@ def show_overview_page(all_compounds_df):
                 render_compound_card(row, show_preview=True, prefer_fast_asset=True)
             with c2:
                 st.write("")
-                if st.button("Open", key=f"overview_open_{row['id']}"):
+                if st.button(compound_open_label(row["id"], row.get("trivial_name")), key=f"overview_open_{row['id']}"):
                     open_compound_detail(int(row["id"]))
                     st.rerun()
 
@@ -10355,14 +10385,11 @@ def show_overview_page(all_compounds_df):
         if filtered_df.empty:
             st.info("No compounds available for the selected filters.")
         else:
-            class_counts = (
-                filtered_df["compound_class"]
-                .fillna("Uncategorized")
-                .replace("", "Uncategorized")
-                .value_counts()
-                .reset_index()
-            )
-            class_counts.columns = ["Compound Class", "Count"]
+            approved_aliases = get_secret_object("NPDB_COMPOUND_CLASS_DISPLAY_ALIASES")
+            class_counts = pd.DataFrame(category_counts(
+                display_class_term(value, approved_aliases) for value in filtered_df["compound_class"].fillna("")
+            )).rename(columns={"Category": "Compound Class"})
+            st.caption("Display groups apply only the explicit owner-approved vocabulary mappings; submitted record values are preserved.")
             render_dashboard_pie_chart(
                 class_counts,
                 names_col="Compound Class",
@@ -10376,14 +10403,9 @@ def show_overview_page(all_compounds_df):
         if filtered_df.empty:
             st.info("No compounds available for the selected filters.")
         else:
-            source_counts = (
-                filtered_df["source_category"]
-                .fillna("Uncategorized")
-                .replace("", "Uncategorized")
-                .value_counts()
-                .reset_index()
-            )
-            source_counts.columns = ["Source Category", "Count"]
+            source_counts = pd.DataFrame(category_counts(
+                filtered_df["source_category"].fillna("").map(lambda value: presentation_taxonomy_label(value, "source_category"))
+            )).rename(columns={"Category": "Source Category"})
             render_dashboard_pie_chart(
                 source_counts,
                 names_col="Source Category",
