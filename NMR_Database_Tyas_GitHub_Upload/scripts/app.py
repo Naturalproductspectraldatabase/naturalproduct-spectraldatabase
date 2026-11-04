@@ -5601,6 +5601,7 @@ LOCAL_SPECTRUM_SUFFIXES = LOCAL_IMAGE_SUFFIXES | frozenset({
 
 
 def read_scientific_asset(source, kind="attachment"):
+    require_backend_permission("read")
     roots = {"structure": (STRUCTURES_DIR,), "spectrum": (SPECTRA_DIR,),
              "specimen": (SPECIMENS_DIR,),
              "attachment": (STRUCTURES_DIR, SPECTRA_DIR, SPECIMENS_DIR)}
@@ -5612,6 +5613,7 @@ def read_scientific_asset(source, kind="attachment"):
 
 
 def read_remote_scientific_asset(source, *, image_only=False):
+    require_backend_permission("read")
     url = display_asset_url(source)
     hosts = {"pubchem.ncbi.nlm.nih.gov", "cactus.nci.nih.gov", "drive.google.com",
              "docs.google.com", "drive.usercontent.google.com", urlparse(get_supabase_url()).hostname}
@@ -8908,6 +8910,7 @@ def _archive_safe_name(value: str, fallback: str = "file") -> str:
 
 
 def _asset_bytes_from_source(source_value: str, kind="attachment") -> tuple[bytes, str]:
+    require_backend_permission("read")
     source_text = maybe_blank(source_value)
     if not source_text:
         return b"", ""

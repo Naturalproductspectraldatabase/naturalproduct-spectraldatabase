@@ -2,7 +2,7 @@ name: NPDB viewer GPS redaction (synthetic only)
 
 on:
   pull_request:
-    branches: [fix/npdb-backend-capabilities-20261103, qa/npdb-integrated-preflight-20261103, fix/npdb-nmr-bioactivity-disclosure-20261103]
+    branches: [fix/npdb-backend-capabilities-20261103, qa/npdb-integrated-preflight-20261103, fix/npdb-nmr-bioactivity-disclosure-20261103, fix/npdb-stereo-aware-structure-search-20261103]
   push:
     branches: [fix/npdb-viewer-gps-redaction-20261103]
   workflow_dispatch:

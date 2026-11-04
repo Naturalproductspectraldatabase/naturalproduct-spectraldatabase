@@ -10,6 +10,7 @@ import unittest
 import zipfile
 
 from PIL import Image
+from authorization_fixture import bind_authorization
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 from npdb_asset_paths import AssetAccessError, read_local_asset, validate_asset_content
@@ -17,6 +18,9 @@ APP = Path(__file__).resolve().parents[1] / 'scripts/app.py'
 
 
 def load(ns, *names):
+    # Existing media tests exercise an authorized synthetic owner; negative
+    # account tests explicitly bind their own real permission context.
+    ns.setdefault("require_backend_permission", bind_authorization()["require_backend_permission"])
     tree = ast.parse(APP.read_text())
     for name in names:
         node = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name][-1]
