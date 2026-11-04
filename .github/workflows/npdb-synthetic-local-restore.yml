@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main, qa/npdb-reviewed-integration-20261103, qa/npdb-integrated-preflight-20261103, fix/npdb-nmr-bioactivity-disclosure-20261103, fix/npdb-stereo-aware-structure-search-20261103, qa/npdb-security-candidate-20261105]
   push:
-    branches: [qa/npdb-reviewed-integration-20261103]
+    branches: [qa/npdb-reviewed-integration-20261103, fix/npdb-nmr-result-navigation-20261105]
   workflow_dispatch:
 
 permissions:
