@@ -9758,21 +9758,22 @@ def render_candidate_cards(results, mode="13C", limit=10):
 
             action_left, action_right = st.columns([1, 1])
             with action_left:
-                if st.button(
+                # Callbacks run before the submit-only result UI disappears on rerun.
+                st.button(
                     f"Open Record #{i}",
-                    key=f"open_detail_{mode}_{item['compound_id']}_{i}"
-                ):
-                    open_compound_detail(item["compound_id"])
-                    st.rerun()
+                    key=f"open_detail_{mode}_{item['compound_id']}_{i}",
+                    on_click=open_compound_detail,
+                    args=(item["compound_id"],),
+                )
 
             with action_right:
                 if can_edit_database():
-                    if st.button(
+                    st.button(
                         f"Update Metadata #{i}",
-                        key=f"edit_compound_{mode}_{item['compound_id']}_{i}"
-                    ):
-                        open_compound_editor(item["compound_id"])
-                        st.rerun()
+                        key=f"edit_compound_{mode}_{item['compound_id']}_{i}",
+                        on_click=open_compound_editor,
+                        args=(item["compound_id"],),
+                    )
                 else:
                     st.button(
                         f"View Only #{i}",

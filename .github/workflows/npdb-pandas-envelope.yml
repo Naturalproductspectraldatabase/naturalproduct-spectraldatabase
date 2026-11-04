@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [fix/npdb-security-integrity-gates-20261103, fix/npdb-stereo-aware-structure-search-20261103, qa/npdb-security-candidate-20261105]
   push:
-    branches: [fix/npdb-pandas-deployment-envelope-20261103]
+    branches: [fix/npdb-pandas-deployment-envelope-20261103, fix/npdb-nmr-result-navigation-20261105]
 
 permissions:
   contents: read
