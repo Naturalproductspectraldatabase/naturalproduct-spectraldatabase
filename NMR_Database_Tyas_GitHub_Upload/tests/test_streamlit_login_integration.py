@@ -150,7 +150,8 @@ class StreamlitLoginIntegrationTests(unittest.TestCase):
         self.app.button(key="npdb_open_recovery").click().run()
         self.assertEqual(len(self.app.exception),0)
         self.assertTrue(self.app.expander[0].proto.expanded)
-        self.assertTrue(any("not configured" in message.value for message in self.app.info))
+        self.assertTrue(any("No official account-recovery contact" in message.value for message in self.app.info))
+        self.assertTrue(self.app.get("dialog"))
 
     def test_owner_configured_recovery_route_is_rendered(self):
         self.configure_login()

@@ -4,22 +4,24 @@ Base is the cumulative candidate branch from #57 plus indirect-reader tests.
 This patch addresses owner-reported deployed-main observations, not a claim that
 the candidate has passed actual browser acceptance.
 
-Source category counts collapse whitespace/case using existing vocabulary, group
-case-equivalent values and preserve original dataframe/record values. Compound
-class cards/charts can use NPDB_COMPOUND_CLASS_DISPLAY_ALIASES, an explicit owner-
-reviewed dictionary; there is no inferred singular/plural taxonomy conversion.
-Without approval, Alkaloid and Alkaloids remain submitted terms, with a disclosure
-explaining that mappings require owner review. That terminology decision remains
-BLOCKED until approved; no scientific data is rewritten.
+Owner approved only these mappings in chat on5 Nov: compound class Alkaloids ->
+Alkaloid; source category Marine Alga -> Marine alga. Explicit defaults live in
+npdb_browser_qa.py, with separate configurable NPDB_COMPOUND_CLASS_DISPLAY_ALIASES
+and NPDB_SOURCE_CATEGORY_DISPLAY_ALIASES dictionaries. Empty dictionaries disable
+mappings; conflicting case-equivalent mappings preserve the submitted term.
+Capitalization and whitespace matching applies to display/filter/group/statistic
+views only. No extra chemical/taxonomic synonyms are inferred. Dataframe tests
+verify grouped counts, combined filters, unique options, no omissions/duplicates,
+separate vocabularies and unchanged input records.
 
-Forgot password is a native Streamlit button opening Access Guide through session
-state, supporting keyboard activation rather than a link to a collapsed expander.
-Guide wording reflects editor curation and owner-only administration. A validated
-NPDB_ACCOUNT_RECOVERY_URL may be an owner-approved HTTPS page or mailto address.
-No email/route is invented. If absent/invalid, the UI explicitly states that recovery
-contact is not configured. Owner route approval remains BLOCKED, not silently treated
-as fixed. Do not put credentials or private tokens into this URL. No live configuration
-or secrets are changed by this patch.
+Forgot password opens both Access Guide and a native Account Recovery modal;
+Streamlit supplies modal focus/keyboard containment, to be verified by Work in a
+real browser. Instructions state: account recovery is managed by the NPDB
+administrator through a previously established communication channel. The owner
+explicitly approved NO public contact address/URL. NPDB_ACCOUNT_RECOVERY_URL stays
+unset by default; no dead link, personal address, reset flow or account-existence
+lookup is introduced. A future owner-approved HTTPS/mailto route can be configured.
+No production configuration or secrets are changed.
 
 Quick Browse actions in both search and Home include compound name plus unique ID
 in the visible/accessibility label, preserving stable keys and navigation.
@@ -32,8 +34,9 @@ synthetic SQLite/PostgreSQL integration regressions run at exact PR HEAD in CI.
 No claim of measured contrast, browser focus, email delivery or recovery-account
 workflow completion. Work must validate those on the exact reviewed candidate.
 
-Owner was asked for approved recovery route/class aliases; until supplied, both
-configuration-dependent outcomes remain explicit blockers. No source data, schema,
+Owner supplied the limited mappings and explicitly requested no public recovery
+route for now. Those choices are implemented; actual browser focus/assistive
+technology and account-recovery operations remain unverified. No source data, schema,
 credentials, real backup/Drive files, production/main or deployment changed. Genuine
 independent restore #24 stays BLOCKED. Independent review of both this patch and
 the cumulative candidate is still required.

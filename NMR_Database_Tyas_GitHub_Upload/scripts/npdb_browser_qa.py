@@ -3,15 +3,28 @@ import re
 from urllib.parse import urlsplit
 
 
-def display_class_term(value, approved_aliases=None):
+# Explicit owner approval recorded in this chat on 5 Nov 2026 JST.
+DEFAULT_CLASS_ALIASES = {"Alkaloids": "Alkaloid"}
+DEFAULT_SOURCE_ALIASES = {"Marine Alga": "Marine alga"}
+
+
+def _display_term(value, approved_aliases):
     text = ' '.join(str(value or '').split())
     if isinstance(approved_aliases, dict):
         targets = {v.strip() for k, v in approved_aliases.items()
                    if isinstance(k, str) and isinstance(v, str) and v.strip()
-                   and k.strip().casefold() == text.casefold()}
+                   and (k.strip().casefold() == text.casefold() or v.strip().casefold() == text.casefold())}
         if len(targets) == 1:
             return targets.pop()
     return text
+
+
+def display_class_term(value, approved_aliases=None):
+    return _display_term(value, DEFAULT_CLASS_ALIASES if approved_aliases is None else approved_aliases)
+
+
+def display_source_term(value, approved_aliases=None):
+    return _display_term(value, DEFAULT_SOURCE_ALIASES if approved_aliases is None else approved_aliases)
 
 
 def category_counts(values):
