@@ -31,6 +31,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from npdb_browser_qa import display_class_term, category_counts, compound_open_label, approved_recovery_route
 from npdb_asset_paths import AssetAccessError, read_local_asset, validate_asset_content, write_local_asset, validate_https_asset_url, read_https_asset
 from npdb_sqlite_snapshot import verified_sqlite_snapshot_bytes
 
@@ -1554,10 +1555,6 @@ def verify_access_gate():
         username = st.text_input("Username", value="", placeholder="Enter your username", icon=":material/person:")
         password = st.text_input("Password", value="", type="password", placeholder="Enter your password", icon=":material/lock:")
         remember_me = False
-        st.markdown(
-            '<div style="text-align:right; padding-top: 0.2rem;"><a class="auth-forgot-link" href="#login-access-help">Forgot password?</a></div>',
-            unsafe_allow_html=True,
-        )
         st.markdown('<div class="auth-meta"><div class="auth-meta-note">Approved users only. Contact the database owner if you need access.</div></div>', unsafe_allow_html=True)
         submitted = st.form_submit_button("Open Database  →", width="stretch", disabled=login_locked)
         st.markdown(
@@ -1566,17 +1563,24 @@ def verify_access_gate():
         )
 
     st.markdown('<div id="login-access-help"></div>', unsafe_allow_html=True)
-    with st.expander("Access Guide", expanded=False):
+    if st.button("Forgot password?", key="npdb_open_recovery"):
+        st.session_state["npdb_show_recovery"] = True
+    with st.expander("Access Guide", expanded=bool(st.session_state.get("npdb_show_recovery", False))):
         st.markdown(
             """
             <div class="auth-help-copy">
                 Sign in with an approved NPDB account. If your workspace uses the approved-name pattern, enter the username as
-                <strong>npdb_yourname</strong>. Only the owner account can edit or submit records; other approved users can browse,
+                <strong>npdb_yourname</strong>. Approved editors can curate records; owner-only approvals and administration remain restricted. Approved viewers can browse,
                 search, and download curated data.
             </div>
             """,
             unsafe_allow_html=True,
         )
+        recovery_url = approved_recovery_route(get_secret_setting("NPDB_ACCOUNT_RECOVERY_URL"))
+        if recovery_url:
+            st.link_button("Contact account recovery", recovery_url)
+        else:
+            st.info("Account recovery contact is not configured. Use the existing channel through which your account was approved.")
 
     if submitted:
         authenticated = False
@@ -7015,7 +7019,7 @@ def render_kv(title, value):
 def render_compound_card(row, show_preview: bool = True, prefer_fast_asset: bool = False):
     title = html_text(row["trivial_name"])
     formula = html_text(row["molecular_formula"])
-    compound_class = html_text(row["compound_class"])
+    compound_class = html_text(display_class_term(row["compound_class"], get_secret_object("NPDB_COMPOUND_CLASS_DISPLAY_ALIASES")))
     subclass = html_text(row["compound_subclass"])
     source_summary = html_text(source_summary_from_record(row))
     sample_code = html_text(row["sample_code"])
@@ -10082,7 +10086,7 @@ def show_search_page(all_compounds_df):
                         render_compound_card(row, show_preview=True, prefer_fast_asset=True)
                     with c2:
                         st.write("")
-                        if st.button("Open", key=f"name_open_{row['id']}"):
+                        if st.button(compound_open_label(row["id"], row.get("trivial_name")), key=f"name_open_{row['id']}"):
                             open_compound_detail(int(row["id"]))
                             st.rerun()
             else:
@@ -10342,7 +10346,7 @@ def show_overview_page(all_compounds_df):
                 render_compound_card(row, show_preview=True, prefer_fast_asset=True)
             with c2:
                 st.write("")
-                if st.button("Open", key=f"overview_open_{row['id']}"):
+                if st.button(compound_open_label(row["id"], row.get("trivial_name")), key=f"overview_open_{row['id']}"):
                     open_compound_detail(int(row["id"]))
                     st.rerun()
 
@@ -10355,14 +10359,11 @@ def show_overview_page(all_compounds_df):
         if filtered_df.empty:
             st.info("No compounds available for the selected filters.")
         else:
-            class_counts = (
-                filtered_df["compound_class"]
-                .fillna("Uncategorized")
-                .replace("", "Uncategorized")
-                .value_counts()
-                .reset_index()
-            )
-            class_counts.columns = ["Compound Class", "Count"]
+            approved_aliases = get_secret_object("NPDB_COMPOUND_CLASS_DISPLAY_ALIASES")
+            class_counts = pd.DataFrame(category_counts(
+                display_class_term(value, approved_aliases) for value in filtered_df["compound_class"].fillna("")
+            )).rename(columns={"Category": "Compound Class"})
+            st.caption("Class terms preserve submitted terminology unless an owner-approved display mapping is configured.")
             render_dashboard_pie_chart(
                 class_counts,
                 names_col="Compound Class",
@@ -10376,14 +10377,9 @@ def show_overview_page(all_compounds_df):
         if filtered_df.empty:
             st.info("No compounds available for the selected filters.")
         else:
-            source_counts = (
-                filtered_df["source_category"]
-                .fillna("Uncategorized")
-                .replace("", "Uncategorized")
-                .value_counts()
-                .reset_index()
-            )
-            source_counts.columns = ["Source Category", "Count"]
+            source_counts = pd.DataFrame(category_counts(
+                filtered_df["source_category"].fillna("").map(normalize_source_category)
+            )).rename(columns={"Category": "Source Category"})
             render_dashboard_pie_chart(
                 source_counts,
                 names_col="Source Category",

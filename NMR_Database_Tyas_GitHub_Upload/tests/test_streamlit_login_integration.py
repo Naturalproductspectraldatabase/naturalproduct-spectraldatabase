@@ -143,6 +143,22 @@ class StreamlitLoginIntegrationTests(unittest.TestCase):
         self.assertFalse(self.app.session_state["npdb_authenticated"])
         self.assertEqual([field.label for field in self.app.text_input], ["Username", "Password"])
 
+    def test_forgot_password_opens_recovery_instructions(self):
+        self.configure_login()
+        self.app.run()
+        self.assertFalse(self.app.expander[0].proto.expanded)
+        self.app.button(key="npdb_open_recovery").click().run()
+        self.assertEqual(len(self.app.exception),0)
+        self.assertTrue(self.app.expander[0].proto.expanded)
+        self.assertTrue(any("not configured" in message.value for message in self.app.info))
+
+    def test_owner_configured_recovery_route_is_rendered(self):
+        self.configure_login()
+        self.app.secrets["NPDB_ACCOUNT_RECOVERY_URL"]="https://example.invalid/recovery"
+        self.app.run()
+        self.assertEqual(len(self.app.exception),0)
+        self.assertEqual(self.app.get("link_button")[0].proto.url,"https://example.invalid/recovery")
+
 
 if __name__ == "__main__":
     unittest.main()
