@@ -29,7 +29,11 @@ main; reconcile the final cumulative diff and preserve capabilities/tests.
 
 Only workflow attached to exact #56 head was Retina run41573817377 (success,
 reported247 synthetic tests). Do not infer exact-head PostgreSQL/WAL/GPS/matrix
-coverage from an ancestor's checks. This PR enables the existing workflows for
+coverage from an ancestor's checks. The first expanded CI run exposed #56's
+unconditional RDKit test import in previously untriggered offline/GPS matrices;
+those matrices now install pinned RDKit2026.9.1, preserving all stereo assertions.
+The initial pinned full-suite job passed; no scientific test is skipped to obtain
+green CI. This PR enables the existing workflows for
 PRs targeting #56; exact new-head outcomes are recorded in PR/#17 comments.
 
 ## Confirmed read-boundary defect and scoped fix
