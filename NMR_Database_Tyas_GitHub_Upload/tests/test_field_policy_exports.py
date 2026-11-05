@@ -428,6 +428,9 @@ class SuccessfulFieldExports(unittest.TestCase):
             config['entries'].append(asdict(Evidence(table='compounds',record_id='501',field='trivial_name',record_revision=record['updated_at'],value_sha256=value_digest(record['trivial_name']),classification='SENSITIVE_RESTRICTED')))
             output=ns['policy_frame'](pd.DataFrame([record]))
             self.assertEqual(output.iloc[0]['trivial_name'],record['trivial_name'] if role=='owner' else None)
+            if role=='owner':
+                facts=json.loads(ns['field_provenance_export'](output,'compounds'))['entries']
+                self.assertTrue(any(f['field']=='trivial_name' and f['classification']=='SENSITIVE_RESTRICTED' for f in facts))
             if role!='owner':
                 record['updated_at']='changed-revision'
                 self.assertIsNone(ns['policy_frame'](pd.DataFrame([record])).iloc[0]['trivial_name'])

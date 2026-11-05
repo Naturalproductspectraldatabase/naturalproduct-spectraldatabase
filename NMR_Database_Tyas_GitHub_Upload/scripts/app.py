@@ -9406,7 +9406,7 @@ def field_provenance_export(frame, table):
     for record, ctx in zip(frame.to_dict("records"), disclosure.contexts(frame,table)):
         for label,value in record.items():
             field = canonical(label)
-            if not is_protected(field,value):
+            if not is_protected(field,value) and (table,ctx.get("id",""),field) not in disclosure.policy._evidence:
                 continue
             original = ctx.get("values",{}).get(field,value)
             fact = disclosure.fact(field,original,ctx)
