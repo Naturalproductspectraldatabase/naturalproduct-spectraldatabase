@@ -12,6 +12,7 @@ import json
 import math
 import re
 import secrets
+from urllib.parse import urlparse
 
 from npdb_location_policy import Evidence, FieldPolicy, UNKNOWN_UNVERIFIED, value_digest
 
@@ -160,15 +161,45 @@ def _signature(records, contexts):
     return hmac.new(_RECEIPT_KEY, json.dumps(plain([records, contexts]), sort_keys=True, allow_nan=False, separators=(',',':')).encode(), hashlib.sha256).hexdigest()
 
 
+ASSET_FIELDS = frozenset({'file_path','image_path','structure_image_path'})
+
+
+def parse_asset_token(value):
+    if not isinstance(value,str) or not value.startswith('npdbasset://'):
+        return None
+    parsed=urlparse(value)
+    parts=parsed.path.strip('/').split('/')
+    if (parsed.netloc not in {'compounds','specimens','spectra_files','specimen_1h_extracts'} or
+            parsed.query or parsed.fragment or len(parts)!=3 or not parts[0].isdigit() or
+            parts[1] not in ASSET_FIELDS or not re.fullmatch('[0-9a-f]{64}',parts[2])):
+        return None
+    return parsed.netloc,*parts
+
+
 class Disclosure:
     def __init__(self, policy):
         self.policy = policy
 
+    def fact(self, field, value, ctx):
+        token=parse_asset_token(value)
+        if token:
+            table,record_id,token_field,digest=token
+            items=self.policy._evidence.get((table,record_id,field),())
+            if (table!=ctx.get('table') or record_id!=ctx.get('id') or token_field!=field or len(items)!=1):
+                return None
+            fact=items[0]
+            return fact if fact.record_revision==ctx.get('revision') and fact.asset_sha256==digest else None
+        return self.policy.evidence_for(ctx.get('table',''),ctx.get('id',''),field,value,ctx.get('revision',''))
+
     def visible(self, field, value, ctx):
-        fact = self.policy.evidence_for(ctx.get('table',''), ctx.get('id',''), field, value, ctx.get('revision',''))
-        if field in {"file_path","structure_image_path","image_path"} and (not fact or not re.fullmatch(r"[0-9a-f]{64}",fact.asset_sha256)):
+        fact = self.fact(field,value,ctx)
+        if field in ASSET_FIELDS and (not fact or not re.fullmatch(r"[0-9a-f]{64}",fact.asset_sha256)):
             return False
         return self.policy._published(fact)
+
+    def asset_reference(self, field, value, ctx):
+        fact=self.fact(field,value,ctx)
+        return f"npdbasset://{fact.table}/{fact.record_id}/{field}/{fact.asset_sha256}"
 
     def record(self, record, ctx=None, aliases=None):
         identity = self.policy.identity()
@@ -201,7 +232,10 @@ class Disclosure:
             elif is_protected(field, value, aliases):
                 original = ctx.get('values',{}).get(field, value)
                 same = plain(original) == plain(value) or str(original).strip() == str(value).strip()
-                result[label] = deepcopy(original) if same and self.visible(field, original, ctx) else ('withheld://provenance-review' if field == 'structure_image_path' and value else None)
+                if same and self.visible(field,original,ctx):
+                    result[label] = self.asset_reference(field,original,ctx) if field in ASSET_FIELDS else deepcopy(original)
+                else:
+                    result[label] = 'withheld://provenance-review' if field == 'structure_image_path' and value else None
             else:
                 result[label] = deepcopy(value)
         self.policy._unchanged_identity(identity)
@@ -241,7 +275,7 @@ class Disclosure:
                 if plain(records[index].get(column)) != plain(value):
                     output[column] = output[column].astype(object)
                     output.iat[index, output.columns.get_loc(column)] = value
-        contexts = [{**c, 'values': {f:v for f,v in c.get('values',{}).items() if self.visible(f,v,c)}} for c in contexts]
+        contexts = [{**c, 'values': {f:v for f,v in c.get('values',{}).items() if f not in ASSET_FIELDS and self.visible(f,v,c)}} for c in contexts]
         if self.policy.identity().role!='owner':
             # Keep only named schema/approved policy/container columns. Arbitrary
             # unreviewed column labels must not become filenames or CSV headers.

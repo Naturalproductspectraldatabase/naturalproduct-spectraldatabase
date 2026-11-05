@@ -288,6 +288,12 @@ class SuccessfulFieldExports(unittest.TestCase):
                 value_sha256=value_digest(record['structure_image_path']),classification=PUBLISHED_VERIFIED,verification_status='VERIFIED',
                 source_reference='Synthetic source',source_locator='Synthetic figure',verified_by='Synthetic owner',verifier_role='owner',asset_sha256=hashlib.sha256(path.read_bytes()).hexdigest())))
             self.assertEqual(ns['read_scientific_asset'](record['structure_image_path'],'structure'),path.read_bytes())
+            projected=ns['policy_frame'](pd.DataFrame([record]))
+            token=projected.iloc[0]['structure_image_path']
+            self.assertTrue(token.startswith('npdbasset://'))
+            self.assertNotIn('data/structures',str(projected.to_dict())+str(projected.attrs))
+            self.assertEqual(ns['read_scientific_asset'](token,'structure'),path.read_bytes())
+            with self.assertRaises(PermissionError):ns['resolve_reviewed_asset_source'](token)
             metadata=PngInfo();metadata.add_text('Description',PRIVATE)
             Image.new('RGB',(8,8),'white').save(path,pnginfo=metadata)
             with self.assertRaises(AssetAccessError):ns['read_scientific_asset'](record['structure_image_path'],'structure')

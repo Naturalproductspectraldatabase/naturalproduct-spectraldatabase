@@ -36,7 +36,7 @@ from npdb_browser_qa import display_class_term, display_source_term, category_co
 from npdb_asset_paths import AssetAccessError, read_local_asset, validate_asset_content, write_local_asset, validate_https_asset_url, read_https_asset
 from npdb_sqlite_snapshot import verified_sqlite_snapshot_bytes
 from npdb_location_policy import FieldPolicy, Identity, value_digest
-from npdb_field_access import Disclosure, READ_DEPTH, ASSET_IO, evidence_from_config, is_protected, canonical, context as field_context, SealedPayload, verify_payload
+from npdb_field_access import Disclosure, READ_DEPTH, ASSET_IO, evidence_from_config, is_protected, canonical, context as field_context, SealedPayload, verify_payload, parse_asset_token
 
 try:
     from PIL import Image, ImageOps
@@ -1109,6 +1109,27 @@ def field_policy_raw_record(table, record_id, *, _capability=None):
     if configured_session_identity() != identity:
         raise PermissionError("Request authorization changed; please retry.")
     return result
+
+
+def resolve_reviewed_asset_source(source, *, _capability=None):
+    """Internal-only resolver; never expose a private path/URL to a non-owner."""
+    require_backend_permission("read")
+    if _capability is not _FIELD_READ_CAPABILITY:
+        require_backend_permission("admin")
+    token=parse_asset_token(source)
+    if not token:
+        if str(source).startswith("npdbasset:"):
+            raise AssetAccessError("Invalid reviewed attachment reference.")
+        return source
+    table,record_id,field,digest=token
+    raw=field_policy_raw_record(table,record_id,_capability=_FIELD_READ_CAPABILITY)
+    value=raw.get(field)
+    identity,epoch,fact=asset_policy_approval(value)
+    if fact is None and not is_backend_owner():
+        raise AssetAccessError("Attachment requires authorized provenance review.")
+    if fact and (fact.field!=field or fact.record_id!=record_id or fact.asset_sha256!=digest):
+        raise AssetAccessError("Attachment approval changed.")
+    return value
 
 
 def asset_policy_approval(source):
@@ -5696,6 +5717,8 @@ def is_supabase_storage_reference(value) -> bool:
 
 
 def is_generated_structure_reference(value) -> bool:
+    if parse_asset_token(value):
+        value = resolve_reviewed_asset_source(value,_capability=_FIELD_READ_CAPABILITY)
     reference = parse_supabase_storage_reference(value)
     if not reference:
         return False
@@ -5803,7 +5826,10 @@ LOCAL_SPECTRUM_SUFFIXES = LOCAL_IMAGE_SUFFIXES | frozenset({
 @authorized_read
 def read_scientific_asset(source, kind="attachment"):
     require_backend_permission("read")
+    source = resolve_reviewed_asset_source(source,_capability=_FIELD_READ_CAPABILITY)
     approval = asset_policy_approval(source)
+    if is_external_url(source) or is_supabase_storage_reference(source):
+        return read_remote_scientific_asset(source)[0]
     roots = {"structure": (STRUCTURES_DIR,), "spectrum": (SPECTRA_DIR,),
              "specimen": (SPECIMENS_DIR,),
              "attachment": (STRUCTURES_DIR, SPECTRA_DIR, SPECIMENS_DIR)}
@@ -5817,6 +5843,7 @@ def read_scientific_asset(source, kind="attachment"):
 @authorized_read
 def read_remote_scientific_asset(source, *, image_only=False):
     require_backend_permission("read")
+    source = resolve_reviewed_asset_source(source,_capability=_FIELD_READ_CAPABILITY)
     approval = asset_policy_approval(source)
     token = ASSET_IO.set(True)
     try:
@@ -9356,7 +9383,7 @@ def field_provenance_export(frame, table):
             if not is_protected(field,value):
                 continue
             original = ctx.get("values",{}).get(field,value)
-            fact = disclosure.policy.evidence_for(table,ctx.get("id",""),field,original,ctx.get("revision",""))
+            fact = disclosure.fact(field,original,ctx)
             visible = identity.role == "owner" or disclosure.visible(field,original,ctx)
             if not visible:
                 continue
@@ -9430,6 +9457,8 @@ def build_compound_record_bundle(compound_row, proton_df, carbon_df, spectra_df,
     structure_bytes, structure_suffix = _compound_structure_asset(row_data)
     has_registered_structure = bool(maybe_blank(row_data.get("structure_image_path")))
     source_reference = maybe_blank(row_data.get("structure_image_path"))
+    if parse_asset_token(source_reference):
+        source_reference = resolve_reviewed_asset_source(source_reference,_capability=_FIELD_READ_CAPABILITY)
     generated_ref = bool(source_reference and is_generated_structure_reference(source_reference))
     structure_asset_origin_class = (
         "generated_storage_unverified" if generated_ref else
@@ -9475,7 +9504,7 @@ def build_compound_record_bundle(compound_row, proton_df, carbon_df, spectra_df,
             "linked_specimen_rows": int(len(related.get("specimens", []))),
             "specimen_compound_link_rows": int(len(related.get("specimen_compounds", []))),
         },
-        "spectra_policy": "Spectra image/raw files are listed as cloud links only and are not embedded in this download package.",
+        "spectra_policy": "Spectra files are listed as record references, not embedded. Non-owner references are opaque app locators, not browser-direct Storage links.",
         "structure_asset_status": structure_asset_status,
         "structure_asset_origin_class": structure_asset_origin_class,
         "structure_asset_sha256": hashlib.sha256(structure_bytes).hexdigest() if structure_bytes else None,
@@ -9714,8 +9743,9 @@ def render_registered_file_preview(file_path_value, caption: str = "", spectrum_
     except (AssetAccessError, OSError, ValueError, TypeError):
         st.warning("Local asset is unavailable or not permitted. Ask a curator to review its registered location.")
         return
-    name = Path(path_text).name
-    suffix = Path(name).suffix.lower()
+    private_source = resolve_reviewed_asset_source(path_text,_capability=_FIELD_READ_CAPABILITY)
+    suffix = Path(urlparse(str(private_source)).path).suffix.lower()
+    name = Path(path_text).name if is_backend_owner() else "NPDB_attachment" + suffix
     if suffix in LOCAL_IMAGE_SUFFIXES:
         st.image(file_bytes, caption=caption or name, width="stretch")
         return
