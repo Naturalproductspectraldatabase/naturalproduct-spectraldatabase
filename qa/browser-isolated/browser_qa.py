@@ -384,6 +384,11 @@ def issued_capability(browser,root,credentials,alteration):
         data,url=downloaded_zip(page)
         initial=context.request.get(url,max_redirects=0)
         initial_available=initial.status==200 and hashlib.sha256(initial.body()).digest()==hashlib.sha256(data).digest()
+        anonymous=guarded_context(browser,1280)
+        try:
+            active=anonymous.request.get(url,max_redirects=0)
+            active_replay=active.status==200 and hashlib.sha256(active.body()).digest()==hashlib.sha256(data).digest()
+        finally:anonymous.close()
         if alteration=='logout':
             sidebar_state(page,True)
             page.get_by_role('button',name='Log out',exact=True).click()
@@ -403,7 +408,7 @@ def issued_capability(browser,root,credentials,alteration):
             response=anonymous.request.get(url,max_redirects=0)
             remains=response.status==200 and hashlib.sha256(response.body()).digest()==hashlib.sha256(data).digest()
         finally:anonymous.close()
-        return dict(passed=not remains,status_override='UNTESTED' if not initial_available else None,initial_authorized_retrieval_status=initial.status,backend_login_revoked=True,anonymous_replay_status=response.status,
+        return dict(passed=not remains and not active_replay,active_anonymous_replay_status=active.status,active_cross_session_replay=active_replay,status_override='UNTESTED' if not initial_available else None,initial_authorized_retrieval_status=initial.status,backend_login_revoked=True,anonymous_replay_status=response.status,
                     identical_capability_bytes_retrievable=remains,
                     limitation='NATIVE_STREAMLIT_MEDIA_CAPABILITY_NOT_RECIPIENT_BOUND',synthetic_only=True)
     finally:

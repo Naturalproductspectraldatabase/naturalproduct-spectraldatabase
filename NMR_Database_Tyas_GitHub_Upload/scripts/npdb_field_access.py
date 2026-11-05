@@ -238,7 +238,8 @@ class Disclosure:
             # Keep only named schema/approved policy/container columns. Arbitrary
             # unreviewed column labels must not become filenames or CSV headers.
             keep=[c for c in output.columns if key(canonical(c,aliases)) in SCIENTIFIC or key(canonical(c,aliases)) in OPAQUE or key(canonical(c,aliases)) in {key(v) for v in ALIASES.values()} or key(c) in CONTAINERS or c in {'Field','Value'}]
-            output=output[keep].copy()
+            output=output[keep].copy().reset_index(drop=True)
+            output.columns.name=None
         output.attrs = {_RECEIPT: {'contexts': deepcopy(contexts), 'signature': _signature(output.to_dict('records'),contexts), 'rows':[{'context':c,'signature':_signature(r,c)} for r,c in zip(output.to_dict('records'),contexts)]}}
         return output
 

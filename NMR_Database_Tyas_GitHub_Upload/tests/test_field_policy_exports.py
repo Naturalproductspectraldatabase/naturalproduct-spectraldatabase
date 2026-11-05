@@ -355,6 +355,18 @@ class SuccessfulFieldExports(unittest.TestCase):
             with sqlite3.connect(db) as connection:self.assertEqual(connection.execute('SELECT count(*) FROM compounds').fetchone()[0],1)
             with self.assertRaises(PermissionError):ns['_snapshot_dataframe']('../private_config')
 
+    @unittest.skipUnless(__import__('importlib').util.find_spec('openpyxl'),'openpyxl not installed')
+    def test_workbook_sheet_and_dataframe_index_metadata_cannot_leak(self):
+        ns,record,_=fixture('viewer');frame=pd.DataFrame([record],index=[PRIVATE])
+        projected=ns['policy_frame'](frame)
+        self.assertNotIn(PRIVATE,str(projected.index))
+        data=ns['dataframe_to_excel_bytes'](frame,sheet_name=PRIVATE)
+        book=__import__('openpyxl').load_workbook(io.BytesIO(data),data_only=True)
+        self.assertNotIn(PRIVATE,str(book.sheetnames));self.assertIn(PUBLIC,text_in_workbook(data))
+        data=ns['_dataframes_to_record_workbook']({PRIVATE:frame})
+        book=__import__('openpyxl').load_workbook(io.BytesIO(data),data_only=True)
+        self.assertNotIn(PRIVATE,str(book.sheetnames));self.assertNotIn(PRIVATE,text_in_workbook(data))
+
     def test_owner_review_requires_individually_enumerated_verified_evidence(self):
         _,record,_=fixture()
         packet=prepare('compounds',[record]);self.assertTrue(all(e['classification']=='UNKNOWN_UNVERIFIED' for e in packet['entries']))

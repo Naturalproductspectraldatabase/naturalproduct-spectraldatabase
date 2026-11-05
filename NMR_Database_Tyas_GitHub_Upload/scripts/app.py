@@ -5934,6 +5934,8 @@ def dataframe_to_csv_bytes(df: pd.DataFrame) -> bytes:
 
 @authorized_read
 def dataframe_to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Data") -> bytes:
+    if not is_backend_owner() and sheet_name not in {"Data","Metadata","1H_NMR","13C_NMR","Bioactivity","Spectra_Files","Name Search","13C Search","1H Search","Combined Search"}:
+        sheet_name = "Data"
     if Alignment is None and Font is None and PatternFill is None:
         raise ModuleNotFoundError("openpyxl is not available")
 
@@ -9225,8 +9227,10 @@ def _dataframes_to_record_workbook(sheets: dict[str, pd.DataFrame]) -> bytes:
 
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        for raw_name, df in sheets.items():
-            sheet_name = raw_name[:31]
+        for number, (raw_name, df) in enumerate(sheets.items(),start=1):
+            sheet_name = str(raw_name)[:31]
+            if not is_backend_owner() and raw_name not in {"Data","Metadata","1H_NMR","13C_NMR","Spectra_Files","Bioactivity","specimens","specimen_compounds","specimen_1h_extracts"}:
+                sheet_name = f"Data_{number}"
             export_df = redact_private_gps_for_current_user(df)
             export_df.to_excel(writer, sheet_name=sheet_name, index=False)
             worksheet = writer.book[sheet_name]
