@@ -52,8 +52,11 @@ def settle(page):
     page.wait_for_timeout(350)
 
 
-def guarded_context(browser, width):
-    context = browser.new_context(viewport={'width': width, 'height': 1000},
+def guarded_context(browser, width, transport="native_proxy"):
+    options={}
+    if transport=='native_proxy':
+        options['proxy']={'server':'http://127.0.0.1:1','bypass':'127.0.0.1'}
+    context = browser.new_context(**options, viewport={'width': width, 'height': 1000},
                                   device_scale_factor=1, service_workers='block',
                                   accept_downloads=False)
     context.set_default_timeout(8000)
@@ -68,7 +71,8 @@ def guarded_context(browser, width):
         if 300 <= response.status < 400:
             return req.abort()
         req.fulfill(response=response)
-    context.route('**/*', route)
+    if transport=='route_fetch':
+        context.route('**/*', route)
     # Preserve Streamlit's native websocket subprotocol/cookie handshake. The
     # constructor guard limits browser destinations; kernel network=none is the
     # independent enforcement boundary for workers and backend processes too.
@@ -81,7 +85,111 @@ def guarded_context(browser, width):
         return Reflect.construct(target,args);
       }});
     })();""")
+    META['transport']=transport
     return context
+
+
+
+class BootstrapProbe:
+    """Counts only: never retain response headers, URLs, frame bodies or console text."""
+    def __init__(self, page):
+        self.page=page
+        self.http={}
+        self.ws_handshakes=[]
+        self.ws_sent=0
+        self.ws_received=0
+        self.ws_errors=[]
+        self.js_errors=[]
+        self.console_errors=[]
+        self.cdp=page.context.new_cdp_session(page)
+        self.cdp.send('Network.enable')
+        self.cdp.on('Network.responseReceived', self.response)
+        self.cdp.on('Network.webSocketHandshakeResponseReceived', self.handshake)
+        self.cdp.on('Network.webSocketFrameSent', lambda _: self.count_ws('sent'))
+        self.cdp.on('Network.webSocketFrameReceived', lambda _: self.count_ws('received'))
+        self.cdp.on('Network.webSocketFrameError', lambda e:self.ws_errors.append(self.category(e.get('errorMessage',''))))
+        page.on('pageerror',lambda e:self.js_errors.append(self.category(str(e))))
+        page.on('console',lambda m:self.console_errors.append(self.category(m.text)) if m.type=='error' else None)
+
+    @staticmethod
+    def category(message):
+        for marker,category in [('SyntaxError','SYNTAX'),('TypeError','TYPE'),('ReferenceError','REFERENCE'),
+                                ('Content Security Policy','CSP'),('dynamically imported','DYNAMIC_IMPORT'),
+                                ('ERR_PROXY_CONNECTION_FAILED','PROXY_DENIED'),('ERR_CONNECTION_REFUSED','CONNECTION_REFUSED'),
+                                ('WebSocket','WEBSOCKET'),('ERR_FAILED','NETWORK_FAILED')]:
+            if marker in message:
+                return category
+        return 'OTHER'
+
+    def count_ws(self,direction):
+        if direction=='sent': self.ws_sent+=1
+        else: self.ws_received+=1
+
+    def handshake(self,event):
+        self.ws_handshakes.append(int(event.get('response',{}).get('status',0)))
+
+    def response(self,event):
+        response=event.get('response',{})
+        kind=event.get('type','Other')
+        if kind not in ('Document','Script','Stylesheet','Fetch','XHR'):return
+        mime=response.get('mimeType','')
+        category='javascript' if 'javascript' in mime else ('css' if 'css' in mime else ('html' if 'html' in mime else 'other'))
+        key=f"{kind}:{int(response.get('status',0))}:{category}"
+        self.http[key]=self.http.get(key,0)+1
+
+    def metrics(self,root):
+        values=dict(http_response_counts=self.http,ws_handshake_statuses=self.ws_handshakes,
+                    ws_frames_sent=self.ws_sent,ws_frames_received=self.ws_received,
+                    ws_error_categories=self.ws_errors,js_error_categories=self.js_errors,
+                    console_error_categories=self.console_errors)
+        try:
+            values.update(self.page.evaluate("""() => ({document_ready:document.readyState,
+              dom_elements:document.querySelectorAll('*').length,
+              input_count:document.querySelectorAll('input').length,
+              app_exception_count:document.querySelectorAll('[data-testid="stException"]').length,
+              alert_count:document.querySelectorAll('[data-testid="stAlert"]').length,
+              main_count:document.querySelectorAll('[data-testid="stMain"]').length})"""))
+        except Exception:
+            values['dom_probe_unavailable']=True
+        marker=Path('/tmp')/(root.name+'-execution.txt')
+        values['app_script_execution_starts']=len(marker.read_text().splitlines()) if marker.exists() else 0
+        log=Path('/tmp/streamlit-private.log').read_text(errors='replace')
+        values['server_error_types']=[n for n in ('NameError','TypeError','ModuleNotFoundError','PermissionError','StreamlitAPIException') if n in log]
+        return values
+
+
+def minimal_comparison(browser):
+    root=Path('/tmp/minimal_control')
+    (root/'scripts').mkdir(parents=True)
+    (root/'.streamlit').mkdir()
+    (root/'.streamlit/config.toml').write_bytes(Path('/baseline-config.toml').read_bytes())
+    (root/'scripts/app.py').write_text('import streamlit as st\nst.title("Synthetic bootstrap control")\nst.text_input("Synthetic bootstrap input")\n')
+    proc,log=start_app(root,'[]')
+    ready=False
+    try:
+        for transport in ('route_fetch','native_proxy'):
+            context=guarded_context(browser,768,transport)
+            page=context.new_page()
+            probe=BootstrapProbe(page)
+            result=False
+            error=None
+            try:
+                page.goto(BASE,timeout=15000)
+                page.get_by_label('Synthetic bootstrap input',exact=True).wait_for(state='visible',timeout=15000)
+                result=True
+                META['rendered_browser_pages']+=1
+            except Exception as exc:
+                error=type(exc).__name__
+            metrics=probe.metrics(root)
+            emit(f'bootstrap/minimal/{transport}','PASS' if result else 'FAIL',
+                 viewport=768,rendered_input=result,error_type=error,**metrics)
+            if transport=='native_proxy':ready=result
+            context.close()
+    finally:
+        proc.terminate()
+        proc.wait(timeout=8)
+        log.close()
+    return ready
 
 
 def login(page, credentials, role):
@@ -241,9 +349,19 @@ def readability(page):
 
 
 def start_app(root, users):
+    hooks=Path('/tmp/qa-bootstrap-hooks')
+    hooks.mkdir(exist_ok=True)
+    (hooks/'sitecustomize.py').write_text("""import os, sys
+from pathlib import Path
+def count_execution(event,args):
+    if event=='exec' and args and getattr(args[0],'co_name','')=='<module>' and getattr(args[0],'co_filename','').endswith('/scripts/app.py'):
+        with open(os.environ['QA_EXECUTION_MARKER'],'a') as marker:marker.write('exec\\n')
+sys.addaudithook(count_execution)
+""")
     env = dict(PATH='/venv/bin:/usr/bin:/bin', HOME='/tmp/qa-home', TMPDIR='/tmp',
                LANG='C.UTF-8', PYTHONUNBUFFERED='1', PYTHONDONTWRITEBYTECODE='1',
-               NPDB_READ_BACKEND='local', NPDB_APPROVED_USERS=users)
+               NPDB_READ_BACKEND='local', NPDB_APPROVED_USERS=users,
+               PYTHONPATH=str(hooks),QA_EXECUTION_MARKER=str(Path('/tmp')/(root.name+'-execution.txt')))
     log = open('/tmp/streamlit-private.log', 'wb')
     proc = subprocess.Popen(['/venv/bin/python','-m','streamlit','run','scripts/app.py',
                              '--server.address=127.0.0.1',f'--server.port={PORT}',
@@ -315,6 +433,11 @@ def main():
         browser = pw.chromium.launch(headless=True, args=['--no-sandbox','--disable-dev-shm-usage'])
         META['browser_version'] = browser.version
         smoke = False
+        META['stage']='minimal_bootstrap_comparison'
+        if not minimal_comparison(browser):
+            emit('runner_smoke_768','UNTESTED',reason='minimal_control_not_ready')
+            browser.close()
+            return 2
         for theme in themes:
             root = Path('/tmp')/theme
             META['stage']='fixture_preflight'
@@ -328,6 +451,7 @@ def main():
                 for width in widths:
                     context = guarded_context(browser, width)
                     page = context.new_page()
+                    probe=BootstrapProbe(page) if theme=='shipped' and width==768 else None
                     try:
                         META['stage']='synthetic_login'
                         login(page, credentials, 'viewer')
@@ -335,6 +459,7 @@ def main():
                             # Readiness is not layout acceptance. App defects stay FAIL below.
                             smoke = True
                             META['stage']='browser_matrix'
+                            emit('bootstrap/npdb/native_proxy','PASS',**probe.metrics(root))
                             emit('runner_smoke_768','PASS', viewport=768, rendered_pages=1,
                                  browser_started=True, authenticated_synthetic_home=True)
                         for state in ('collapsed','expanded'):
@@ -352,18 +477,8 @@ def main():
                             emit(f'{theme}/readability',status,estimate_only=True,**metrics)
                     except Exception as exc:
                         if not smoke:
-                            diagnostics={}
-                            try:
-                                diagnostics=page.evaluate('''() => ({document_ready:document.readyState,
-                                  dom_elements:document.querySelectorAll('*').length,
-                                  input_count:document.querySelectorAll('input').length,
-                                  app_exception_count:document.querySelectorAll('[data-testid="stException"]').length,
-                                  main_count:document.querySelectorAll('[data-testid="stMain"]').length})''')
-                            except Exception:
-                                diagnostics={'dom_probe_unavailable':True}
-                            private_log=Path('/tmp/streamlit-private.log').read_text(errors='replace')
-                            diagnostics['server_error_types']=[name for name in
-                                ('NameError','TypeError','ModuleNotFoundError','PermissionError','StreamlitAPIException') if name in private_log]
+                            diagnostics=probe.metrics(root) if probe else {}
+                            emit('bootstrap/npdb/native_proxy','FAIL',error_type=type(exc).__name__,**diagnostics)
                             emit('runner_smoke_768','FAIL',error_type=type(exc).__name__,authenticated_home_rendered=False,**diagnostics)
                             return 2
                         emit(f'{theme}/page/{width}','FAIL',error_type=type(exc).__name__)
