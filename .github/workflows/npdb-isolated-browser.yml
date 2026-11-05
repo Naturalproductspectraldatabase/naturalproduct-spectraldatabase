@@ -1,0 +1,58 @@
+name: NPDB isolated browser feasibility and synthetic QA
+on:
+  push:
+    branches: [test/npdb-isolated-browser-infrastructure-20261105]
+permissions:
+  contents: read
+concurrency:
+  group: npdb-browser-isolation-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  browser:
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Fetch exact infrastructure revision without checkout or gitlink traversal
+        run: |
+          set -eu
+          test "$GITHUB_REPOSITORY" = "Naturalproductspectraldatabase/naturalproduct-spectraldatabase"
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          test "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA"
+          echo "Infrastructure SHA: $GITHUB_SHA"
+      - name: Construct code-only context from frozen candidate
+        env:
+          CANDIDATE: 9d81a72e397897fe1614ca98adfec254cb4f1c4f
+        run: |
+          set -eu
+          git fetch --no-tags --depth=1 origin "$CANDIDATE"
+          test "$(git rev-parse FETCH_HEAD)" = "$CANDIDATE"
+          mkdir -p "$RUNNER_TEMP/npdb-browser-build/app"
+          python3 - <<'PY'
+          import os, pathlib, subprocess
+          target = pathlib.Path(os.environ['RUNNER_TEMP'])/'npdb-browser-build'
+          sha = os.environ['CANDIDATE']
+          prefix = 'NMR_Database_Tyas_GitHub_Upload/scripts/'
+          names = subprocess.check_output(['git','ls-tree','-r','--name-only',sha,prefix], text=True).splitlines()
+          for name in names:
+              if name.startswith(prefix) and '/' not in name[len(prefix):] and name.endswith('.py'):
+                  (target/'app'/pathlib.Path(name).name).write_bytes(subprocess.check_output(['git','show',sha+':'+name]))
+          config = subprocess.check_output(['git','show',sha+':NMR_Database_Tyas_GitHub_Upload/.streamlit/config.toml'])
+          (target/'shipped-config.toml').write_bytes(config)
+          for name in ('Dockerfile','fixture.py','browser_qa.py'):
+              (target/name).write_bytes(subprocess.check_output(['git','show',os.environ['GITHUB_SHA']+':qa/browser-isolated/'+name]))
+          assert sorted(p.name for p in target.iterdir()) == ['Dockerfile','app','browser_qa.py','fixture.py','shipped-config.toml']
+          assert not any(p.name == 'secrets.toml' for p in target.rglob('*'))
+          print('PASS: code-only build context from frozen candidate; no data/assets/secrets copied')
+          PY
+      - name: Build pinned disposable browser runtime (application not running)
+        run: docker build --tag npdb-browser-isolated "$RUNNER_TEMP/npdb-browser-build"
+      - name: Run bounded QA without network, host mounts, credentials or writable root
+        run: |
+          timeout 600 docker run --rm --init --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges --pids-limit 512 \
+            --memory 3g --cpus 2 --shm-size 512m \
+            --tmpfs /tmp:rw,nosuid,nodev,size=768m,mode=1777 \
+            npdb-browser-isolated
