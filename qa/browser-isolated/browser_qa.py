@@ -327,10 +327,10 @@ def nmr(page, mode, evidence_key):
     settle(page)
     if mode in ('1H Match', 'Combined Match'):
         META['interaction']='fill_proton_query'
-        page.get_by_label('Enter 1H peaks (comma, space, or newline separated)', exact=True).fill('1, 2, 3')
+        page.get_by_label('Enter 1H peaks (comma, space, or newline separated)', exact=True).fill('1.18, 3.65, 2.0')
     if mode in ('13C Match', 'Combined Match'):
         META['interaction']='fill_carbon_query'
-        page.get_by_label('Enter 13C peaks (comma, space, or newline separated)', exact=True).fill('10, 20, 30')
+        page.get_by_label('Enter 13C peaks (comma, space, or newline separated)', exact=True).fill('18.7, 58.2')
     label = {'1H Match':'Run 1H Match','13C Match':'Run 13C Match','Combined Match':'Run Combined Match'}[mode]
     META['interaction']='submit_nmr_query'
     page.get_by_role('button', name=label, exact=True).click()
@@ -536,7 +536,7 @@ def main():
             users, credentials, source_hash = prepare(root, dark=theme=='temporary_dark')
             META['app_py_sha256'] = source_hash
             META['fixture_generator_sha256'] = hashlib.sha256(Path('/qa/fixture.py').read_bytes()).hexdigest()
-            emit(f'{theme}/fixture_preflight','PASS',compounds=2,proton_peaks=3,carbon_peaks=3,sensitive_fields_synthetic_only=True, linked_specimens=1,linked_bioactivity=1,published_field_approvals=2)
+            emit(f'{theme}/fixture_preflight','PASS',compounds=2,proton_peaks=3,carbon_peaks=2,sensitive_fields_synthetic_only=True, linked_specimens=1,linked_bioactivity=1,published_field_approvals=2)
             META['stage']='streamlit_start'
             proc, log = start_app(root, users)
             try:

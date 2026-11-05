@@ -10,7 +10,7 @@ import sqlite3
 from contextlib import closing
 
 CANDIDATE = os.environ['NPDB_QA_CANDIDATE']
-FIXTURE_VERSION = 'isolated-browser-field-policy-v2'
+FIXTURE_VERSION = 'isolated-browser-field-policy-v3'
 PRIVATE = 'SYNTHETIC-RESTRICTED-BROWSER-SENTINEL'
 PUBLIC = 'SYNTHETIC-PUBLISHED-ORIGINAL-PRECISION'
 ROLES = ('owner', 'editor', 'viewer')
@@ -43,10 +43,12 @@ def prepare(root, dark=False):
     with closing(connect()) as conn:
         conn.execute("INSERT INTO compounds(id,trivial_name,molecular_formula,smiles,compound_class,source_category,structure_image_path,curation_status,data_source) VALUES(1,'Synthetic ethanol','C2H6O','CCO','Synthetic','Synthetic','data/structures/synthetic.png','imported','Synthetic fixture')")
         conn.execute("INSERT INTO compounds(id,trivial_name,molecular_formula,smiles,compound_class,source_category,curation_status,data_source) VALUES(2,'Synthetic distractor','CH4','C','Synthetic','Synthetic','imported','Synthetic fixture')")
-        for x in (1, 2, 3):
-            conn.execute("INSERT INTO proton_nmr(compound_id,delta_ppm,assignment,solvent,instrument_mhz) VALUES(1,?,?,'Synthetic',500)", (x, f'H{x}'))
-        for x in (10, 20, 30):
-            conn.execute("INSERT INTO carbon_nmr(compound_id,delta_ppm,assignment,solvent,instrument_mhz) VALUES(1,?,?,'Synthetic',125)", (x, f'C{x}'))
+        # Synthetic plausible shifts only, not experimental observations. Ethanol
+        # has two carbon sites and three proton environments including OH.
+        for shift,assignment,count in ((1.18,'H1',3),(3.65,'H2',2),(2.0,'OH',1)):
+            conn.execute("INSERT INTO proton_nmr(compound_id,delta_ppm,assignment,proton_count,solvent,instrument_mhz) VALUES(1,?,?,?,'Synthetic fixture',500)", (shift,assignment,count))
+        for shift,assignment in ((18.7,'C1'),(58.2,'C2')):
+            conn.execute("INSERT INTO carbon_nmr(compound_id,delta_ppm,assignment,solvent,instrument_mhz) VALUES(1,?,?,'Synthetic fixture',125)", (shift,assignment))
         conn.execute("UPDATE compounds SET sample_code=?,collection_location=?,gps_coordinates=?,depth_m=42.125,note=?,doi='10.0000/synthetic-not-real',journal_name='Synthetic journal',article_title='Synthetic reference' WHERE id=1",(PRIVATE,PRIVATE,PUBLIC,PRIVATE))
         conn.execute("INSERT INTO specimens(id,specimen_name,scientific_name,collection_location,gps_coordinates,depth_m,collector,note) VALUES(1,?,'Synthetic taxon',?,?,42.125,?,?)",(PRIVATE,PRIVATE,PUBLIC,PRIVATE,PRIVATE))
         conn.execute("INSERT INTO specimen_compounds(specimen_id,compound_id,evidence_note,reference_note) VALUES(1,1,?,?)",(PRIVATE,PRIVATE))
@@ -54,7 +56,7 @@ def prepare(root, dark=False):
         conn.commit()
         assert conn.execute('SELECT count(*) FROM compounds').fetchone()[0] == 2
         assert conn.execute('SELECT count(*) FROM proton_nmr').fetchone()[0] == 3
-        assert conn.execute('SELECT count(*) FROM carbon_nmr').fetchone()[0] == 3
+        assert conn.execute('SELECT count(*) FROM carbon_nmr').fetchone()[0] == 2
         assert conn.execute('SELECT sample_code,gps_coordinates FROM compounds WHERE id=1').fetchone() == (PRIVATE,PUBLIC)
         conn.row_factory=sqlite3.Row
         row=dict(conn.execute('SELECT * FROM compounds WHERE id=1').fetchone())
