@@ -1061,7 +1061,7 @@ def current_disclosure():
     def identity():
         require_backend_permission("read")
         role, revision = configured_session_identity()
-        return Identity("owner" if is_backend_owner() else role, revision)
+        return Identity("owner" if is_backend_owner() else ("viewer" if role == "approved-viewer" else role), revision)
     return Disclosure(FieldPolicy(identity, evidence_from_config(get_secret_object("NPDB_FIELD_PROVENANCE"))))
 
 

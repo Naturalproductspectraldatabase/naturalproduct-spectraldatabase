@@ -82,6 +82,16 @@ def text_in_workbook(data):
 
 
 class SuccessfulFieldExports(unittest.TestCase):
+    def test_legacy_approved_viewer_receives_only_viewer_disclosure(self):
+        ns,record,_=fixture('approved-viewer')
+        self.assertEqual(ns['current_backend_role'](),'approved-viewer')
+        text=ns['dataframe_to_csv_bytes'](pd.DataFrame([record])).decode()
+        self.assertIn(PUBLIC,text)
+        self.assertNotIn(PRIVATE,text)
+        ns['load_approved_users']().clear()
+        with self.assertRaises(PermissionError):
+            ns['dataframe_to_csv_bytes'](pd.DataFrame([record]))
+
     def test_actual_name_csv_and_owner_held_frames_all_roles(self):
         for role in ('owner','editor','viewer'):
             ns,record,config=fixture(role)
