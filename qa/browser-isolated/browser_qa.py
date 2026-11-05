@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import socket
 import subprocess
 import sys
@@ -196,14 +197,18 @@ def login(page, credentials, role):
     page.goto(BASE, timeout=15000)
     page.get_by_placeholder('Enter your username').wait_for(state='visible', timeout=30000)
     META['rendered_browser_pages'] += 1
+    META['interaction']='fill_synthetic_username'
     page.get_by_placeholder('Enter your username').fill(credentials[role][0])
+    META['interaction']='fill_synthetic_password'
     page.get_by_placeholder('Enter your password').fill(credentials[role][1])
-    page.get_by_role('button', name='Open Database', exact=True).click()
+    META['interaction']='submit_synthetic_login'
+    page.get_by_role('button', name=re.compile(r'^Open Database\s*→?$')).click()
     page.get_by_test_id('stSidebar').wait_for(state='attached')
     settle(page)
     page.get_by_role('button', name='Home', exact=True).wait_for(state='attached', timeout=15000)
     assert page.get_by_test_id('stException').count() == 0
     META['authenticated_home_views'] += 1
+    META['interaction']='authenticated_home_ready'
 
 
 LAYOUT_JS = '''() => {
