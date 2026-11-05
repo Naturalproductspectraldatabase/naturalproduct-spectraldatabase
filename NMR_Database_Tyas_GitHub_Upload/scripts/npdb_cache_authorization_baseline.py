@@ -54,10 +54,14 @@ def run_case(name,args,state):
               INSERT INTO spectra_files VALUES(1,1,'SYNTHETIC','SYNTHETIC-NO-FILE',NULL);
             ''')
             conn.commit()
+        io_calls=[]
+        def connection():
+            io_calls.append(True)
+            return sqlite3.connect(db)
         ns=bind_authorization(role='owner')
         ns['st'].cache_data=real_st.cache_data
         ns.update(__name__='npdb_synthetic_baseline',pd=pd,DB_PATH=db,
-                  get_connection=lambda:sqlite3.connect(db),get_npdb_read_backend=lambda:'local',
+                  get_connection=connection,get_npdb_read_backend=lambda:'local',
                   get_db_signature=lambda:('synthetic',str(db)),
                   compound_select_columns=lambda:'id,trivial_name,gps_coordinates,collection_location',
                   enrich_compounds_dataframe=lambda x:x.copy(),
@@ -68,8 +72,18 @@ def run_case(name,args,state):
             live(func,ns)
         for func in ('_load_all_compounds_cached','_load_compound_row_cached','load_all_proton_data','load_all_carbon_data','load_all_spectra_files'):
             ns[func].clear()
+        cache_verified=False
         if state!='anonymous_cold':
             assert len(ns[name](*args))==1
+            if name!='_sqlite_dataframe':
+                before=len(io_calls)
+                assert len(ns[name](*args))==1
+                assert len(io_calls)==before, 'Expected real cache hit before invalidation'
+                target={'load_all_compounds':'_load_all_compounds_cached','load_compound_row':'_load_compound_row_cached'}.get(name,name)
+                ns[target].clear()
+                assert len(ns[name](*args))==1
+                assert len(io_calls)>before, 'Cache clear must invalidate underlying data'
+                cache_verified=True
         if state in ('anonymous_cold','logout_warm'):
             ns['st'].session_state['npdb_authenticated']=False
         elif state=='revocation_warm':
@@ -80,9 +94,9 @@ def run_case(name,args,state):
         try:
             result=ns[name](*args)
         except PermissionError:
-            return {'function':name,'state':state,'desired':'DENY','actual':'DENIED','security_status':'PASS'}
+            return {'function':name,'state':state,'desired':'DENY','actual':'DENIED','security_status':'PASS','cache_hit_and_clear_verified':cache_verified}
         return {'function':name,'state':state,'desired':'DENY','actual':'RETURNED_ROWS',
-                'row_count':len(result),'security_status':'FAIL'}
+                'row_count':len(result),'security_status':'FAIL','cache_hit_and_clear_verified':cache_verified}
 
 
 if __name__=='__main__':

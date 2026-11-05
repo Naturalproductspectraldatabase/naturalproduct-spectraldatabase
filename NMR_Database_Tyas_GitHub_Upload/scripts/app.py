@@ -1117,6 +1117,9 @@ def authorized_read(reader):
     def read(*args, **kwargs):
         require_backend_permission("read")
         return reader(*args, **kwargs)
+    # CachedFunc exposes clear on its class, so wraps' __dict__ copy is insufficient.
+    if hasattr(reader, "clear"):
+        read.clear = reader.clear
     return read
 
 
