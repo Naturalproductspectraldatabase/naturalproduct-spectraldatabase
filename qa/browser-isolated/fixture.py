@@ -10,7 +10,9 @@ import sqlite3
 from contextlib import closing
 
 CANDIDATE = os.environ['NPDB_QA_CANDIDATE']
-FIXTURE_VERSION = 'isolated-browser-v1'
+FIXTURE_VERSION = 'isolated-browser-field-policy-v2'
+PRIVATE = 'SYNTHETIC-RESTRICTED-BROWSER-SENTINEL'
+PUBLIC = 'SYNTHETIC-PUBLISHED-ORIGINAL-PRECISION'
 ROLES = ('owner', 'editor', 'viewer')
 
 
@@ -45,11 +47,22 @@ def prepare(root, dark=False):
             conn.execute("INSERT INTO proton_nmr(compound_id,delta_ppm,assignment,solvent,instrument_mhz) VALUES(1,?,?,'Synthetic',500)", (x, f'H{x}'))
         for x in (10, 20, 30):
             conn.execute("INSERT INTO carbon_nmr(compound_id,delta_ppm,assignment,solvent,instrument_mhz) VALUES(1,?,?,'Synthetic',125)", (x, f'C{x}'))
+        conn.execute("UPDATE compounds SET sample_code=?,collection_location=?,gps_coordinates=?,depth_m=42.125,note=?,doi='10.0000/synthetic-not-real',journal_name='Synthetic journal',article_title='Synthetic reference' WHERE id=1",(PRIVATE,PRIVATE,PUBLIC,PRIVATE))
+        conn.execute("INSERT INTO specimens(id,specimen_name,scientific_name,collection_location,gps_coordinates,depth_m,collector,note) VALUES(1,?,'Synthetic taxon',?,?,42.125,?,?)",(PRIVATE,PRIVATE,PUBLIC,PRIVATE,PRIVATE))
+        conn.execute("INSERT INTO specimen_compounds(specimen_id,compound_id,evidence_note,reference_note) VALUES(1,1,?,?)",(PRIVATE,PRIVATE))
+        conn.execute("INSERT INTO bioactivity_records(compound_id,activity_label,potency_type,potency_value,potency_unit,note) VALUES(1,'Synthetic assay','IC50',2.1,'uM',?)",(PRIVATE,))
         conn.commit()
         assert conn.execute('SELECT count(*) FROM compounds').fetchone()[0] == 2
         assert conn.execute('SELECT count(*) FROM proton_nmr').fetchone()[0] == 3
         assert conn.execute('SELECT count(*) FROM carbon_nmr').fetchone()[0] == 3
-        assert conn.execute('SELECT count(*) FROM compounds WHERE sample_code IS NOT NULL OR collection_location IS NOT NULL OR gps_coordinates IS NOT NULL OR depth_m IS NOT NULL').fetchone()[0] == 0
+        assert conn.execute('SELECT sample_code,gps_coordinates FROM compounds WHERE id=1').fetchone() == (PRIVATE,PUBLIC)
+        conn.row_factory=sqlite3.Row
+        row=dict(conn.execute('SELECT * FROM compounds WHERE id=1').fetchone())
+        facts=[]
+        def digest(value):return hashlib.sha256(json.dumps(value,ensure_ascii=False,sort_keys=True,allow_nan=False,separators=(',',':')).encode()).hexdigest()
+        for field in ('gps_coordinates','structure_image_path'):
+            facts.append(dict(table='compounds',record_id='1',field=field,record_revision=row['updated_at'],value_sha256=digest(row[field]),classification='PUBLISHED_VERIFIED',verification_status='VERIFIED',source_reference='Synthetic QA source, not a publication',source_locator='Synthetic fixture figure/field',verified_by='Synthetic owner',verifier_role='owner',asset_sha256=hashlib.sha256((root/'data/structures/synthetic.png').read_bytes()).hexdigest() if field=='structure_image_path' else ''))
+        (root/'provenance-fixture.json').write_text(json.dumps(dict(version=1,entries=facts)))
         assert conn.execute("SELECT count(*) FROM compounds WHERE curation_status != 'imported'").fetchone()[0] == 0
     assert not list(root.rglob('secrets.toml'))
     users = []
@@ -62,4 +75,5 @@ def prepare(root, dark=False):
         encoded = base64.urlsafe_b64encode(digest).decode().rstrip('=')
         users.append({'username': username, 'role': role, 'password_hash': f'pbkdf2_sha256$10000${salt}${encoded}'})
         credentials[role] = (username, password)
+    (root/'synthetic-users.json').write_text(json.dumps(users))
     return json.dumps(users), credentials, hashlib.sha256(source.read_bytes()).hexdigest()

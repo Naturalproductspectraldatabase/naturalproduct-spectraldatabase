@@ -14,7 +14,9 @@ import traceback
 import urllib.request
 
 from playwright.sync_api import sync_playwright
-from fixture import CANDIDATE, FIXTURE_VERSION, ROLES, prepare
+from fixture import CANDIDATE, FIXTURE_VERSION, ROLES, PRIVATE, PUBLIC, prepare
+import io
+import zipfile
 
 PORT = 8620
 BASE = f'http://127.0.0.1:{PORT}'
@@ -61,7 +63,7 @@ def guarded_context(browser, width, transport="native_proxy"):
         options['proxy']={'server':'http://127.0.0.1:1','bypass':'127.0.0.1'}
     context = browser.new_context(**options, viewport={'width': width, 'height': 1000},
                                   device_scale_factor=1, service_workers='block',
-                                  accept_downloads=False)
+                                  accept_downloads=True)
     context.set_default_timeout(8000)
     from urllib.parse import urlparse
     def allowed(url):
@@ -345,6 +347,67 @@ def nmr(page, mode, evidence_key):
                 record_open=record, correct_synthetic_record=correct, ppm_text_present=units)
 
 
+def downloaded_zip(page):
+    META['interaction']='download_full_record'
+    with page.expect_download(timeout=10000) as pending:
+        page.get_by_role('button',name='Download Full Record',exact=True).click()
+    download=pending.value
+    data=Path(download.path()).read_bytes()
+    assert download.url.startswith(BASE+'/media/')
+    return data,download.url
+
+
+def inspect_record_export(page,role):
+    data,url=downloaded_zip(page)
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        text='\n'.join(archive.read(n).decode() for n in archive.namelist() if n.endswith(('.csv','.txt','.json')))
+        manifest=json.loads(archive.read('manifest.json'))
+        from openpyxl import load_workbook
+        book=load_workbook(io.BytesIO(archive.read('NPDB_full_record.xlsx')),data_only=True)
+        spreadsheet='\n'.join(str(c.value) for sheet in book for row in sheet for c in row if c.value is not None)
+    return dict(passed=PUBLIC in text and PUBLIC in spreadsheet and (PRIVATE in text)==(role=='owner') and
+                (PRIVATE in spreadsheet)==(role=='owner') and manifest['compound_id']==1 and
+                '1H_NMR' in book.sheetnames and '13C_NMR' in book.sheetnames,
+                production_format_zip_opened=True,xlsx_opened=True,published_preserved=PUBLIC in text,
+                restricted_present=PRIVATE in text,expected_restricted=role=='owner',same_compound_id=manifest['compound_id']==1)
+
+
+def issued_capability(browser,root,credentials,alteration):
+    # Private synthetic control file changes server allowlist on the NEXT real
+    # app-script execution; no application source or production config touched.
+    original=(root/'synthetic-users.json').read_text()
+    context=guarded_context(browser,1280);page=context.new_page()
+    try:
+        login(page,credentials,'owner')
+        nmr(page,'13C Match','capability_diagnostic/'+alteration)
+        data,url=downloaded_zip(page)
+        if alteration=='logout':
+            sidebar_state(page,True)
+            page.get_by_role('button',name='Log out',exact=True).click()
+        else:
+            users=json.loads(original)
+            if alteration=='remove':users=[u for u in users if u['role']!='owner']
+            elif alteration=='rotate':
+                next(u for u in users if u['role']=='owner')['password_hash']='pbkdf2_sha256$10000$rotated$synthetic'
+            else:next(u for u in users if u['role']=='owner')['role']='viewer'
+            (root/'synthetic-users.json').write_text(json.dumps(users))
+            sidebar_state(page,True)
+            page.get_by_role('button',name='Home',exact=True).click()
+        page.get_by_placeholder('Enter your username').wait_for(state='visible',timeout=10000)
+        # A different browser context has no authenticated application session.
+        anonymous=guarded_context(browser,1280)
+        try:
+            response=anonymous.request.get(url,max_redirects=0)
+            remains=response.status==200 and hashlib.sha256(response.body()).digest()==hashlib.sha256(data).digest()
+        finally:anonymous.close()
+        return dict(passed=not remains,backend_login_revoked=True,anonymous_replay_status=response.status,
+                    identical_capability_bytes_retrievable=remains,
+                    limitation='NATIVE_STREAMLIT_MEDIA_CAPABILITY_NOT_RECIPIENT_BOUND',synthetic_only=True)
+    finally:
+        (root/'synthetic-users.json').write_text(original)
+        context.close()
+
+
 def readability(page):
     # Conservative DOM estimate: gradients/complex backgrounds remain UNTESTED.
     return page.evaluate('''() => {
@@ -373,11 +436,14 @@ from pathlib import Path
 def count_execution(event,args):
     if event=='exec' and args and getattr(args[0],'co_name','')=='<module>' and getattr(args[0],'co_filename','').endswith('/scripts/app.py'):
         with open(os.environ['QA_EXECUTION_MARKER'],'a') as marker:marker.write('exec\\n')
+        os.environ['NPDB_APPROVED_USERS']=Path(os.environ['QA_SYNTHETIC_USERS']).read_text()
 sys.addaudithook(count_execution)
 """)
     env = dict(PATH='/venv/bin:/usr/bin:/bin', HOME='/tmp/qa-home', TMPDIR='/tmp',
                LANG='C.UTF-8', PYTHONUNBUFFERED='1', PYTHONDONTWRITEBYTECODE='1',
                NPDB_READ_BACKEND='local', NPDB_APPROVED_USERS=users,
+               NPDB_FIELD_PROVENANCE=(root/'provenance-fixture.json').read_text(),
+               QA_SYNTHETIC_USERS=str(root/'synthetic-users.json'),
                PYTHONPATH=str(hooks),QA_EXECUTION_MARKER=str(Path('/tmp')/(root.name+'-execution.txt')))
     log = open('/tmp/streamlit-private.log', 'wb')
     proc = subprocess.Popen(['/venv/bin/python','-m','streamlit','run','scripts/app.py',
@@ -461,7 +527,7 @@ def main():
             users, credentials, source_hash = prepare(root, dark=theme=='temporary_dark')
             META['app_py_sha256'] = source_hash
             META['fixture_generator_sha256'] = hashlib.sha256(Path('/qa/fixture.py').read_bytes()).hexdigest()
-            emit(f'{theme}/fixture_preflight','PASS',compounds=2,proton_peaks=3,carbon_peaks=3,sensitive_fields_blank=True)
+            emit(f'{theme}/fixture_preflight','PASS',compounds=2,proton_peaks=3,carbon_peaks=3,sensitive_fields_synthetic_only=True, linked_specimens=1,linked_bioactivity=1,published_field_approvals=2)
             META['stage']='streamlit_start'
             proc, log = start_app(root, users)
             try:
@@ -509,10 +575,14 @@ def main():
                         attempt(f'{theme}/role/{role}',lambda r=role:role_ui(page,r))
                         for mode in ('1H Match','13C Match','Combined Match'):
                             attempt(f'{theme}/nmr/{role}/{mode}',lambda m=mode:nmr(page,m,f'{theme}/nmr_readability/{role}/{m}'))
+                        attempt(f'{theme}/field_export/{role}',lambda r=role:inspect_record_export(page,r))
                     except Exception as exc:
                         emit(f'{theme}/role/{role}','FAIL',error_type=type(exc).__name__)
                     finally:
                         context.close()
+                if theme=='shipped':
+                    for alteration in ('logout','remove','rotate','role'):
+                        attempt('issued_capability/'+alteration,lambda a=alteration:issued_capability(browser,root,credentials,a))
                 context=guarded_context(browser,1280)
                 try:
                     attempt(f'{theme}/recovery_focus',lambda:recovery(context.new_page()))
