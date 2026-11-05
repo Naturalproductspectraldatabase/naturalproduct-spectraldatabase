@@ -220,7 +220,7 @@ class SuccessfulFieldExports(unittest.TestCase):
         self.assertNotIn(PRIVATE,text);self.assertIn('uM',text)
 
     def test_each_location_field_has_independent_classification_all_roles(self):
-        fields=('gps_coordinates','collection_location','depth_m','sample_code','sampling_date','collector')
+        fields=('gps_coordinates','collection_location','depth_m','sample_code','sampling_date','collection_date','collector')
         for role in ('owner','viewer','editor'):
             for classification in ('PUBLISHED_VERIFIED','INTERNAL_UNPUBLISHED','SENSITIVE_RESTRICTED','UNKNOWN_UNVERIFIED'):
                 ns,record,config=fixture(role);config['entries']=[]

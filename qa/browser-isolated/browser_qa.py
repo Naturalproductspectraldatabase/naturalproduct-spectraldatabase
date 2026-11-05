@@ -436,13 +436,14 @@ from pathlib import Path
 def count_execution(event,args):
     if event=='exec' and args and getattr(args[0],'co_name','')=='<module>' and getattr(args[0],'co_filename','').endswith('/scripts/app.py'):
         with open(os.environ['QA_EXECUTION_MARKER'],'a') as marker:marker.write('exec\\n')
-        os.environ['NPDB_APPROVED_USERS']=Path(os.environ['QA_SYNTHETIC_USERS']).read_text()
+        if Path(os.environ['QA_SYNTHETIC_USERS']).exists():
+            os.environ['NPDB_APPROVED_USERS']=Path(os.environ['QA_SYNTHETIC_USERS']).read_text()
 sys.addaudithook(count_execution)
 """)
     env = dict(PATH='/venv/bin:/usr/bin:/bin', HOME='/tmp/qa-home', TMPDIR='/tmp',
                LANG='C.UTF-8', PYTHONUNBUFFERED='1', PYTHONDONTWRITEBYTECODE='1',
                NPDB_READ_BACKEND='local', NPDB_APPROVED_USERS=users,
-               NPDB_FIELD_PROVENANCE=(root/'provenance-fixture.json').read_text(),
+               NPDB_FIELD_PROVENANCE=(root/'provenance-fixture.json').read_text() if (root/'provenance-fixture.json').exists() else '',
                QA_SYNTHETIC_USERS=str(root/'synthetic-users.json'),
                PYTHONPATH=str(hooks),QA_EXECUTION_MARKER=str(Path('/tmp')/(root.name+'-execution.txt')))
     log = open('/tmp/streamlit-private.log', 'wb')
