@@ -5357,6 +5357,7 @@ def search_by_structure(
     return results, ""
 
 
+@authorized_read
 def export_structure_search_results(results: list[dict]) -> pd.DataFrame:
     rows = []
     for i, item in enumerate(results, start=1):
@@ -5645,6 +5646,7 @@ LOCAL_SPECTRUM_SUFFIXES = LOCAL_IMAGE_SUFFIXES | frozenset({
 })
 
 
+@authorized_read
 def read_scientific_asset(source, kind="attachment"):
     require_backend_permission("read")
     roots = {"structure": (STRUCTURES_DIR,), "spectrum": (SPECTRA_DIR,),
@@ -5657,6 +5659,7 @@ def read_scientific_asset(source, kind="attachment"):
     return data
 
 
+@authorized_read
 def read_remote_scientific_asset(source, *, image_only=False):
     require_backend_permission("read")
     url = display_asset_url(source)
@@ -5813,6 +5816,7 @@ def dataframe_to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Data") -> byte
     return output.getvalue()
 
 
+@authorized_read
 def download_dataframe_button(label: str, df: pd.DataFrame, file_name: str, key: str, sheet_name: str = "Data"):
     try:
         payload = dataframe_to_excel_bytes(df, sheet_name=sheet_name)
@@ -6771,7 +6775,8 @@ def render_sidebar_navigation():
     for group_title, items in SIDEBAR_NAV_GROUPS:
         visible_items = [
             item for item in items
-            if not (
+            if not (item.get("compound_page") == "Delete Record" and not is_backend_owner())
+            and not (
                 item.get("compound_page")
                 and not can_edit_database()
                 and item.get("compound_page") != "Browse Record"
@@ -8784,6 +8789,7 @@ def search_similarity_combined(query_protons, proton_tol, query_carbons, carbon_
 # =========================
 # Export helpers
 # =========================
+@authorized_read
 def export_name_results(result_df: pd.DataFrame) -> pd.DataFrame:
     export_df = redact_private_gps_for_current_user(result_df)
     if "source_material" in export_df.columns:
@@ -8842,6 +8848,7 @@ def search_preview_results(result_df: pd.DataFrame) -> pd.DataFrame:
     return export_name_results(preview_df)
 
 
+@authorized_read
 def export_similarity_results_13c(results: list) -> pd.DataFrame:
     rows = []
     for i, item in enumerate(results[:10], start=1):
@@ -8866,6 +8873,7 @@ def export_similarity_results_13c(results: list) -> pd.DataFrame:
         })
     return pd.DataFrame(rows)
 
+@authorized_read
 def export_similarity_results_1h(results: list) -> pd.DataFrame:
     rows = []
     for i, item in enumerate(results[:10], start=1):
@@ -8890,6 +8898,7 @@ def export_similarity_results_1h(results: list) -> pd.DataFrame:
         })
     return pd.DataFrame(rows)
 
+@authorized_read
 def export_similarity_results_combined(results: list) -> pd.DataFrame:
     rows = []
     for i, item in enumerate(results[:10], start=1):
@@ -8917,6 +8926,7 @@ def export_similarity_results_combined(results: list) -> pd.DataFrame:
         })
     return pd.DataFrame(rows)
 
+@authorized_read
 def build_compound_summary_text(compound_row, proton_df, carbon_df, spectra_df):
     row = compound_row.iloc[0]
     bioactivity_df = load_bioactivity_data(int(row["id"]))
@@ -8979,6 +8989,7 @@ def _archive_safe_name(value: str, fallback: str = "file") -> str:
     return slugify_value(value, fallback=fallback).replace(" ", "_")
 
 
+@authorized_read
 def _asset_bytes_from_source(source_value: str, kind="attachment") -> tuple[bytes, str]:
     require_backend_permission("read")
     source_text = maybe_blank(source_value)
@@ -9127,6 +9138,7 @@ def _important_bioactivity_dataframe(bioactivity_df: pd.DataFrame) -> pd.DataFra
     ))
 
 
+@authorized_read
 def build_compound_record_bundle(compound_row, proton_df, carbon_df, spectra_df, bioactivity_df) -> tuple[bytes, str]:
     row_data = compound_row.iloc[0]
     compound_id = int(row_data["id"])
@@ -9251,6 +9263,7 @@ def disclose_potency_unit_status(frame: pd.DataFrame) -> pd.DataFrame:
     return output
 
 
+@authorized_read
 def export_bioactivity_results(bioactivity_df: pd.DataFrame) -> pd.DataFrame:
     if bioactivity_df.empty:
         return pd.DataFrame(

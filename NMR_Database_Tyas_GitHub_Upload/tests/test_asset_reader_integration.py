@@ -1,6 +1,7 @@
 """Actual app attachment boundaries; all files and record values are synthetic."""
 import ast
 import hashlib
+from functools import wraps
 import io
 from pathlib import Path
 import sys
@@ -20,9 +21,12 @@ APP = Path(__file__).resolve().parents[1] / 'scripts/app.py'
 def load(ns, *names):
     # Existing media tests exercise an authorized synthetic owner; negative
     # account tests explicitly bind their own real permission context.
-    ns.setdefault("require_backend_permission", bind_authorization()["require_backend_permission"])
+    auth=bind_authorization()
+    ns.setdefault("require_backend_permission", auth["require_backend_permission"])
+    ns.setdefault("configured_session_identity", lambda: ns["require_backend_permission"].__globals__.get("configured_session_identity",auth["configured_session_identity"])())
+    ns.setdefault("wraps",wraps)
     tree = ast.parse(APP.read_text())
-    for name in names:
+    for name in ("authorized_read", *names):
         node = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name][-1]
         exec(compile(ast.Module(body=[node], type_ignores=[]), str(APP), 'exec'), ns)
 

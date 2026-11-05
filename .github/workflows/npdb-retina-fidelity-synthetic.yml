@@ -2,7 +2,7 @@ name: NPDB sidebar Retina fidelity (synthetic)
 
 on:
   push:
-    branches: [fix/npdb-retina-sidebar-logo-20261103, fix/npdb-branding-asset-cache-20261103, fix/npdb-structure-bundle-provenance-20261103, fix/npdb-scientific-truthfulness-20261103, fix/npdb-nmr-bioactivity-disclosure-20261103, fix/npdb-stereo-aware-structure-search-20261103, qa/npdb-cumulative-integration-20261105, fix/npdb-field-location-policy-20261105]
+    branches: [fix/npdb-retina-sidebar-logo-20261103, fix/npdb-branding-asset-cache-20261103, fix/npdb-structure-bundle-provenance-20261103, fix/npdb-scientific-truthfulness-20261103, fix/npdb-nmr-bioactivity-disclosure-20261103, fix/npdb-stereo-aware-structure-search-20261103, qa/npdb-cumulative-integration-20261105, fix/npdb-field-location-policy-20261105, qa/npdb-reliability-preflight-20261105]
   pull_request:
     branches: [fix/npdb-pandas-deployment-envelope-20261103, fix/npdb-preflight-security-validation-20261103, fix/npdb-retina-sidebar-logo-20261103, fix/npdb-branding-asset-cache-20261103, fix/npdb-structure-bundle-provenance-20261103, fix/npdb-scientific-truthfulness-20261103, fix/npdb-nmr-bioactivity-disclosure-20261103, fix/npdb-stereo-aware-structure-search-20261103, qa/npdb-security-candidate-20261105]
 

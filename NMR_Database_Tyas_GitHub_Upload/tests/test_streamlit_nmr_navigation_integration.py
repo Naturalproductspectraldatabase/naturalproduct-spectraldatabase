@@ -94,3 +94,8 @@ class NmrResultNavigationIntegration(unittest.TestCase):
         self.assertFalse(app.session_state['npdb_authenticated'])
         self.assertEqual([w.label for w in app.text_input], ['Username','Password'])
         self.assertFalse(any('SYNTHETIC-NMR-NAV' in t.value for t in app.markdown))
+
+    def test_editor_owner_only_delete_navigation_absent(self):
+        app=self.create_app(editor=True)
+        self.assertFalse(any(b.label=='Delete Record' for b in app.button))
+        self.assertTrue(any(b.label=='Update Metadata' for b in app.button))
