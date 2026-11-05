@@ -232,7 +232,9 @@ class Disclosure:
                         if isinstance(item,dict):return self.record(item,aliases=aliases)
                         if isinstance(item,list):return [nested(v) for v in item]
                         if isinstance(item,tuple):return tuple(nested(v) for v in item)
-                        return deepcopy(item)
+                        # Generic metadata has no field/value provenance for bare
+                        # scalar entries. Preserve named scientific arrays only.
+                        return None if key(field) in CONTAINERS else deepcopy(item)
                     result[label] = nested(value)
             elif is_protected(field, value, aliases):
                 original = ctx.get('values',{}).get(field, value)
