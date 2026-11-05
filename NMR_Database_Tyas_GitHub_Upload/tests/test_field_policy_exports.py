@@ -409,6 +409,15 @@ class SuccessfulFieldExports(unittest.TestCase):
         nested=ns['current_disclosure']().payload({'matches':[(1,{'note':PRIVATE,'gps_coordinates':PRIVATE,'smiles':'CCO'})]})
         self.assertNotIn(PRIVATE,str(nested));self.assertIn('CCO',str(nested))
 
+    def test_unlabelled_generic_metadata_scalars_require_owner(self):
+        metadata={'metadata':[PRIVATE,{'smiles':'CCO','note':PRIVATE}], 'attachments':[(PRIVATE,{'file_path':PRIVATE})]}
+        ns,_,_=fixture('viewer')
+        result=ns['current_disclosure']().payload(metadata)
+        self.assertNotIn(PRIVATE,str(result))
+        self.assertIn('CCO',str(result))
+        owner,_,_=fixture('owner')
+        self.assertEqual(owner['current_disclosure']().payload(metadata),metadata)
+
     def test_prior_owner_preview_cannot_register_in_a_valid_viewer_session(self):
         owner,_,_=fixture('owner');viewer,_,_=fixture('viewer')
         payload=owner['dataframe_to_csv_bytes'](pd.DataFrame([{'smiles':'CCO'}]))
