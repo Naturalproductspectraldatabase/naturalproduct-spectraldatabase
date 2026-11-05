@@ -340,12 +340,14 @@ def nmr(page, mode, evidence_key):
     state='FAIL' if metrics['below_4_5'] else ('UNTESTED' if metrics['unknown_background'] or not metrics['measured'] else 'PASS')
     emit(evidence_key,state,estimate_only=True,**metrics)
     META['interaction']='open_nmr_record'
+    opened_at=time.perf_counter()
     page.get_by_role('button', name='Open Record #1', exact=True).click()
     settle(page)
+    page.get_by_role('button',name='Download Full Record',exact=True).wait_for(state='visible',timeout=15000)
     record = page.get_by_role('button', name='Download Full Record', exact=False).count()>0
     correct = page.get_by_test_id('stMain').get_by_text('Synthetic ethanol', exact=False).count()>0
     return dict(passed=record and correct and page.get_by_test_id('stException').count()==0,
-                record_open=record, correct_synthetic_record=correct, ppm_text_present=units)
+                record_open=record, correct_synthetic_record=correct, ppm_text_present=units, record_open_ms=round((time.perf_counter()-opened_at)*1000), target_is_not_first_dataframe_row=True)
 
 
 def downloaded_zip(page):
@@ -367,10 +369,10 @@ def inspect_record_export(page,role):
         book=load_workbook(io.BytesIO(archive.read('NPDB_full_record.xlsx')),data_only=True)
         spreadsheet='\n'.join(str(c.value) for sheet in book for row in sheet for c in row if c.value is not None)
     return dict(passed=PUBLIC in text and PUBLIC in spreadsheet and (PRIVATE in text)==(role=='owner') and
-                (PRIVATE in spreadsheet)==(role=='owner') and manifest['compound_id']==1 and
+                (PRIVATE in spreadsheet)==(role=='owner') and manifest['compound_id']==2 and
                 '1H_NMR' in book.sheetnames and '13C_NMR' in book.sheetnames and manifest['included'].get('linked_specimen_rows')==1,
                 production_format_zip_opened=True,xlsx_opened=True,published_preserved=PUBLIC in text,
-                restricted_present=PRIVATE in text,expected_restricted=role=='owner',same_compound_id=manifest['compound_id']==1)
+                restricted_present=PRIVATE in text,expected_restricted=role=='owner',same_compound_id=manifest['compound_id']==2)
 
 
 def issued_capability(browser,root,credentials,alteration):
