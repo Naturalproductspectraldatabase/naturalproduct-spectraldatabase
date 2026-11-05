@@ -69,18 +69,24 @@ def guarded_context(browser, width):
             return req.abort()
         req.fulfill(response=response)
     context.route('**/*', route)
-    def websocket(ws):
-        if allowed(ws.url):
-            ws.connect_to_server()
-        else:
-            ws.close()
-    context.route_web_socket('**/*', websocket)
+    # Preserve Streamlit's native websocket subprotocol/cookie handshake. The
+    # constructor guard limits browser destinations; kernel network=none is the
+    # independent enforcement boundary for workers and backend processes too.
+    context.add_init_script("""(() => {
+      const Native = window.WebSocket;
+      window.WebSocket = new Proxy(Native, {construct(target,args) {
+        const u = new URL(args[0], location.href);
+        if (u.protocol !== 'ws:' || u.hostname !== '127.0.0.1' || u.port !== '8620')
+          throw new DOMException('Blocked non-loopback websocket', 'SecurityError');
+        return Reflect.construct(target,args);
+      }});
+    })();""")
     return context
 
 
 def login(page, credentials, role):
     page.goto(BASE, timeout=15000)
-    page.get_by_placeholder('Enter your username').wait_for(state='visible')
+    page.get_by_placeholder('Enter your username').wait_for(state='visible', timeout=30000)
     META['rendered_browser_pages'] += 1
     page.get_by_placeholder('Enter your username').fill(credentials[role][0])
     page.get_by_placeholder('Enter your password').fill(credentials[role][1])
@@ -284,6 +290,10 @@ def main():
     for package,version in {'streamlit':'1.66.1','pandas':'2.2.3','rdkit':'2026.9.1','playwright':'1.64.1','plotly':'7.1.0','Pillow':'12.3.0','openpyxl':'3.1.5'}.items():
         assert importlib.metadata.version(package) == version
     META['stage']='isolation_preflight'
+    # Suppress raw third-party diagnostics; only aggregate JSON is public.
+    fd=os.open('/tmp/browser-library-private.log',os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600)
+    os.dup2(fd,2)
+    os.close(fd)
     isolation()
     Path('/tmp/qa-home').mkdir()
     themes = ('shipped','temporary_dark')
@@ -342,7 +352,19 @@ def main():
                             emit(f'{theme}/readability',status,estimate_only=True,**metrics)
                     except Exception as exc:
                         if not smoke:
-                            emit('runner_smoke_768','FAIL',error_type=type(exc).__name__,authenticated_home_rendered=False)
+                            diagnostics={}
+                            try:
+                                diagnostics=page.evaluate('''() => ({document_ready:document.readyState,
+                                  dom_elements:document.querySelectorAll('*').length,
+                                  input_count:document.querySelectorAll('input').length,
+                                  app_exception_count:document.querySelectorAll('[data-testid="stException"]').length,
+                                  main_count:document.querySelectorAll('[data-testid="stMain"]').length})''')
+                            except Exception:
+                                diagnostics={'dom_probe_unavailable':True}
+                            private_log=Path('/tmp/streamlit-private.log').read_text(errors='replace')
+                            diagnostics['server_error_types']=[name for name in
+                                ('NameError','TypeError','ModuleNotFoundError','PermissionError','StreamlitAPIException') if name in private_log]
+                            emit('runner_smoke_768','FAIL',error_type=type(exc).__name__,authenticated_home_rendered=False,**diagnostics)
                             return 2
                         emit(f'{theme}/page/{width}','FAIL',error_type=type(exc).__name__)
                     finally:
