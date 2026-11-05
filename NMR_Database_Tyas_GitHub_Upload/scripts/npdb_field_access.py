@@ -183,14 +183,21 @@ class Disclosure:
             field = canonical(record['Field'] if vertical and label == 'Value' else label, aliases)
             known = key(field) in SCIENTIFIC or key(field) in OPAQUE or key(field) in {key(v) for v in ALIASES.values()} or key(field) in CONTAINERS
             if not known:
+                if vertical and label == 'Value':result[label]=None
                 continue
             if vertical and label == 'Field':
                 # A user-supplied metadata label can itself contain private text.
                 result[label] = record[label] if key(record[label]) in SCIENTIFIC or key(record[label]) in {key(x) for x in ALIASES.values()} or key(record[label]) in OPAQUE else 'Withheld field'
-            elif isinstance(value, dict):
-                result[label] = self.record(value, aliases=aliases)
-            elif isinstance(value, (list, tuple)):
-                result[label] = [self.record(v, aliases=aliases) if isinstance(v,dict) else (v if not is_protected(field, v, aliases) else None) for v in value]
+            elif isinstance(value, (dict,list,tuple)):
+                if is_protected(field,value,aliases) and key(field) not in CONTAINERS:
+                    result[label] = deepcopy(value) if self.visible(field,value,ctx) else None
+                else:
+                    def nested(item):
+                        if isinstance(item,dict):return self.record(item,aliases=aliases)
+                        if isinstance(item,list):return [nested(v) for v in item]
+                        if isinstance(item,tuple):return tuple(nested(v) for v in item)
+                        return deepcopy(item)
+                    result[label] = nested(value)
             elif is_protected(field, value, aliases):
                 original = ctx.get('values',{}).get(field, value)
                 same = plain(original) == plain(value) or str(original).strip() == str(value).strip()

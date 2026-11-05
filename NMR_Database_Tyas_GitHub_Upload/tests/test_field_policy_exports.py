@@ -380,6 +380,13 @@ class SuccessfulFieldExports(unittest.TestCase):
         self.assertEqual(result['carbon_matches'],[(18.7,18.7,0)])
         self.assertNotIn(PRIVATE,str(result))
 
+    def test_unknown_vertical_values_and_deep_sequence_metadata_are_withheld(self):
+        ns,record,_=fixture('viewer')
+        vertical=pd.DataFrame([{'Field':PRIVATE,'Value':PRIVATE}])
+        self.assertNotIn(PRIVATE,ns['dataframe_to_csv_bytes'](vertical).decode())
+        nested=ns['current_disclosure']().payload({'matches':[(1,{'note':PRIVATE,'gps_coordinates':PRIVATE,'smiles':'CCO'})]})
+        self.assertNotIn(PRIVATE,str(nested));self.assertIn('CCO',str(nested))
+
     def test_owner_review_requires_individually_enumerated_verified_evidence(self):
         _,record,_=fixture()
         packet=prepare('compounds',[record]);self.assertTrue(all(e['classification']=='UNKNOWN_UNVERIFIED' for e in packet['entries']))
