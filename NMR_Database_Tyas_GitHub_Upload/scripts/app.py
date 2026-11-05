@@ -12840,6 +12840,9 @@ def snapshot_csv_available(table: str = "compounds") -> bool:
 
 
 def _select_existing_columns(df: pd.DataFrame, columns: str | list[str] | None) -> pd.DataFrame:
+    # This final legacy definition is also used by record exports. Padding must
+    # not mutate a held/cache-derived input or invalidate its signed context.
+    df = df.copy(deep=True)
     if df.empty or not columns:
         return df
     if isinstance(columns, str):

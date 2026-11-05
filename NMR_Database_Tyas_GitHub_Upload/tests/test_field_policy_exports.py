@@ -334,6 +334,10 @@ class SuccessfulFieldExports(unittest.TestCase):
         second=ns['policy_frame'](first,'proton_nmr')
         self.assertEqual(first.to_dict(),second.to_dict())
         self.assertEqual(second.iloc[0]['delta_ppm'],1.23)
+        columns=list(second.columns)
+        ns['_select_existing_columns'](second,['delta_ppm','note','new_optional_column'])
+        self.assertEqual(list(second.columns),columns)
+        self.assertEqual(ns['policy_frame'](second,'proton_nmr').to_dict(),second.to_dict())
 
     def test_raw_sql_read_cannot_mutate_or_open_unrelated_tables(self):
         ns,record,_=fixture('owner')
