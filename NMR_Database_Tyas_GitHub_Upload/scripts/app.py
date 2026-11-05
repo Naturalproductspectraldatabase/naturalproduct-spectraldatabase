@@ -9332,6 +9332,24 @@ def _important_bioactivity_dataframe(bioactivity_df: pd.DataFrame) -> pd.DataFra
 
 
 @authorized_read
+def record_related_specimen_tables(compound_id):
+    links = load_specimen_compound_links()
+    if links.empty or "compound_id" not in links:
+        return {}
+    links = links[pd.to_numeric(links["compound_id"],errors="coerce") == int(compound_id)].copy()
+    specimen_ids = set(pd.to_numeric(links["specimen_id"],errors="coerce").dropna().astype(int))
+    specimens = load_all_specimens(get_db_signature())
+    if not specimens.empty:
+        specimens = specimens[pd.to_numeric(specimens["id"],errors="coerce").isin(specimen_ids)].copy()
+    extracts = load_specimen_extracts(db_signature=get_db_signature())
+    if not extracts.empty:
+        extracts = extracts[pd.to_numeric(extracts["specimen_id"],errors="coerce").isin(specimen_ids)].copy()
+    return {"specimens":policy_frame(specimens,"specimens"),
+            "specimen_compounds":policy_frame(links,"specimen_compounds"),
+            "specimen_1h_extracts":policy_frame(extracts,"specimen_1h_extracts")}
+
+
+@authorized_read
 def build_compound_record_bundle(compound_row, proton_df, carbon_df, spectra_df, bioactivity_df) -> tuple[bytes, str]:
     compound_row = policy_frame(compound_row, "compounds")
     proton_df = policy_frame(proton_df, "proton_nmr")
@@ -9398,6 +9416,9 @@ def build_compound_record_bundle(compound_row, proton_df, carbon_df, spectra_df,
         "Bioactivity": bioactivity_export_df,
     }
 
+    related = record_related_specimen_tables(compound_id)
+    workbook_sheets.update(related)
+
     manifest = {
         "project": "NPDB: Natural Products Spectral Database",
         "compound_id": compound_id,
@@ -9409,6 +9430,8 @@ def build_compound_record_bundle(compound_row, proton_df, carbon_df, spectra_df,
             "carbon_nmr_rows": int(len(carbon_df)),
             "spectra_file_rows": int(len(spectra_df)),
             "bioactivity_rows": int(len(bioactivity_df)),
+            "linked_specimen_rows": int(len(related.get("specimens", []))),
+            "specimen_compound_link_rows": int(len(related.get("specimen_compounds", []))),
         },
         "spectra_policy": "Spectra image/raw files are listed as cloud links only and are not embedded in this download package.",
         "structure_asset_status": structure_asset_status,
@@ -9431,6 +9454,8 @@ def build_compound_record_bundle(compound_row, proton_df, carbon_df, spectra_df,
         archive.writestr("tables/13C_NMR_chemical_shifts.csv", carbon_export_df.to_csv(index=False))
         archive.writestr("tables/spectra_files.csv", spectra_export_df.to_csv(index=False))
         archive.writestr("tables/bioactivity_records.csv", bioactivity_export_df.to_csv(index=False))
+        for table, frame in related.items():
+            archive.writestr(f"tables/{table}.csv", dataframe_to_csv_bytes(frame))
         try:
             archive.writestr("NPDB_full_record.xlsx", _dataframes_to_record_workbook(workbook_sheets))
         except Exception:

@@ -295,6 +295,36 @@ class SuccessfulFieldExports(unittest.TestCase):
         nested=viewer['current_disclosure']().payload({PRIVATE:PRIVATE,'nested':{PRIVATE:PRIVATE,'smiles':'CCO'}})
         self.assertNotIn(PRIVATE,str(nested));self.assertIn('CCO',str(nested))
 
+    def test_editor_update_preserves_hidden_stored_values(self):
+        ns,record,_=fixture('editor')
+        with tempfile.TemporaryDirectory() as directory:
+            db=Path(directory)/'only-synthetic.sqlite'
+            with sqlite3.connect(db) as connection:pd.DataFrame([record]).to_sql('compounds',connection,index=False)
+            ns.update(get_connection=lambda:sqlite3.connect(db),get_npdb_read_backend=lambda:'local',
+                _sqlite_columns=lambda table:list(record),use_supabase_write_backend=lambda:False,record_audit_event=lambda *a,**k:None)
+            load(ns,'_sqlite_upsert_row')
+            ns['_sqlite_upsert_row']('compounds',dict(id=501,trivial_name='Synthetic edited name',note='',sample_code='',collection_location='',structure_image_path=''))
+            with sqlite3.connect(db) as connection:stored=pd.read_sql_query('SELECT * FROM compounds',connection).iloc[0]
+            self.assertEqual(stored['trivial_name'],'Synthetic edited name')
+            for field in ('note','sample_code','collection_location'):
+                self.assertEqual(stored[field],PRIVATE)
+
+    def test_linked_specimen_tables_follow_same_compound_and_field_decisions(self):
+        ns,record,_=fixture('viewer')
+        ns.update(load_specimen_compound_links=lambda:pd.DataFrame([dict(id=1,compound_id=501,specimen_id=7,evidence_note=PRIVATE,reference_note=PRIVATE,created_at='synthetic')]),
+            load_all_specimens=lambda *a:pd.DataFrame([dict(id=7,scientific_name='Synthetic taxon',specimen_name=PRIVATE,collection_location=PRIVATE,gps_coordinates=PRIVATE,updated_at='synthetic')]),
+            load_specimen_extracts=lambda **kw:pd.DataFrame([dict(id=9,specimen_id=7,file_path=PRIVATE,note=PRIVATE,solvent='Synthetic',updated_at='synthetic')]),
+            get_db_signature=lambda:'synthetic')
+        load(ns,'record_related_specimen_tables')
+        blob,_=ns['build_compound_record_bundle'](pd.DataFrame([record]),pd.DataFrame(),pd.DataFrame(),pd.DataFrame(),pd.DataFrame())
+        with zipfile.ZipFile(io.BytesIO(blob)) as archive:
+            links=pd.read_csv(io.BytesIO(archive.read('tables/specimen_compounds.csv')))
+            specimens=pd.read_csv(io.BytesIO(archive.read('tables/specimens.csv')))
+            self.assertEqual(int(links.iloc[0]['compound_id']),501)
+            self.assertEqual(int(links.iloc[0]['specimen_id']),int(specimens.iloc[0]['id']))
+            self.assertNotIn(PRIVATE,archive.read('tables/specimens.csv').decode())
+            self.assertIn('Synthetic taxon',archive.read('tables/specimens.csv').decode())
+
     def test_owner_review_requires_individually_enumerated_verified_evidence(self):
         _,record,_=fixture()
         packet=prepare('compounds',[record]);self.assertTrue(all(e['classification']=='UNKNOWN_UNVERIFIED' for e in packet['entries']))

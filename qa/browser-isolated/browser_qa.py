@@ -43,7 +43,8 @@ def attempt(key, fn):
     try:
         metrics = fn() or {}
         passed = metrics.pop('passed', True)
-        emit(key, 'PASS' if passed else 'FAIL', **metrics)
+        status = metrics.pop('status_override',None) or ('PASS' if passed else 'FAIL')
+        emit(key, status, **metrics)
     except Exception as exc:
         # Never publish raw exception text (can contain DOM, values or credentials).
         frames=[{'file':Path(f.filename).name,'line':f.lineno,'function':f.name}
@@ -367,7 +368,7 @@ def inspect_record_export(page,role):
         spreadsheet='\n'.join(str(c.value) for sheet in book for row in sheet for c in row if c.value is not None)
     return dict(passed=PUBLIC in text and PUBLIC in spreadsheet and (PRIVATE in text)==(role=='owner') and
                 (PRIVATE in spreadsheet)==(role=='owner') and manifest['compound_id']==1 and
-                '1H_NMR' in book.sheetnames and '13C_NMR' in book.sheetnames,
+                '1H_NMR' in book.sheetnames and '13C_NMR' in book.sheetnames and manifest['included'].get('linked_specimen_rows')==1,
                 production_format_zip_opened=True,xlsx_opened=True,published_preserved=PUBLIC in text,
                 restricted_present=PRIVATE in text,expected_restricted=role=='owner',same_compound_id=manifest['compound_id']==1)
 
@@ -381,6 +382,8 @@ def issued_capability(browser,root,credentials,alteration):
         login(page,credentials,'owner')
         nmr(page,'13C Match','capability_diagnostic/'+alteration)
         data,url=downloaded_zip(page)
+        initial=context.request.get(url,max_redirects=0)
+        initial_available=initial.status==200 and hashlib.sha256(initial.body()).digest()==hashlib.sha256(data).digest()
         if alteration=='logout':
             sidebar_state(page,True)
             page.get_by_role('button',name='Log out',exact=True).click()
@@ -400,7 +403,7 @@ def issued_capability(browser,root,credentials,alteration):
             response=anonymous.request.get(url,max_redirects=0)
             remains=response.status==200 and hashlib.sha256(response.body()).digest()==hashlib.sha256(data).digest()
         finally:anonymous.close()
-        return dict(passed=not remains,backend_login_revoked=True,anonymous_replay_status=response.status,
+        return dict(passed=not remains,status_override='UNTESTED' if not initial_available else None,initial_authorized_retrieval_status=initial.status,backend_login_revoked=True,anonymous_replay_status=response.status,
                     identical_capability_bytes_retrievable=remains,
                     limitation='NATIVE_STREAMLIT_MEDIA_CAPABILITY_NOT_RECIPIENT_BOUND',synthetic_only=True)
     finally:

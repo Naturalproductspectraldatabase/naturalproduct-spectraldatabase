@@ -32,6 +32,7 @@ def bind_authorization(ns=None, role='owner', username=None, authenticated=True)
               evidence_from_config=evidence_from_config,is_protected=is_protected,canonical=canonical,
               field_context=context,FieldPolicy=FieldPolicy,Identity=Identity,value_digest=value_digest)
     ns.setdefault('get_secret_object',lambda *keys:None)
+    ns.setdefault('record_related_specimen_tables',lambda *args:{})
     ns.setdefault('_FIELD_READ_CAPABILITY',object())
     ns.setdefault('get_npdb_read_backend',lambda:'supabase' if ns.get('use_supabase_backend',lambda:False)() else 'local')
     tree = ast.parse(APP.read_text())
