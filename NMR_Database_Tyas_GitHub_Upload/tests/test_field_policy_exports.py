@@ -399,6 +399,12 @@ class SuccessfulFieldExports(unittest.TestCase):
         nested=ns['current_disclosure']().payload({'matches':[(1,{'note':PRIVATE,'gps_coordinates':PRIVATE,'smiles':'CCO'})]})
         self.assertNotIn(PRIVATE,str(nested));self.assertIn('CCO',str(nested))
 
+    def test_prior_owner_preview_cannot_register_in_a_valid_viewer_session(self):
+        owner,_,_=fixture('owner');viewer,_,_=fixture('viewer')
+        payload=owner['dataframe_to_csv_bytes'](pd.DataFrame([{'smiles':'CCO'}]))
+        viewer['st'].image=lambda *a,**k:self.fail('old owner media registered')
+        with self.assertRaises(PermissionError):viewer['guarded_scientific_image'](payload)
+
     def test_owner_review_requires_individually_enumerated_verified_evidence(self):
         _,record,_=fixture()
         packet=prepare('compounds',[record]);self.assertTrue(all(e['classification']=='UNKNOWN_UNVERIFIED' for e in packet['entries']))

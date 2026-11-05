@@ -1287,6 +1287,8 @@ def authorized_read(reader):
             raise PermissionError("The request identity changed; please retry.")
         if field_policy_revision() != policy_revision:
             raise PermissionError("Disclosure policy changed; please retry.")
+        if Image is not None and isinstance(result, Image.Image):
+            result._npdb_render_lease = SealedPayload(pil_image_to_png_bytes(result),identity,policy_revision)
         if isinstance(result,bytes):
             result = SealedPayload(result, identity, policy_revision)
         elif isinstance(result,tuple) and result and isinstance(result[0],bytes):
@@ -6031,6 +6033,23 @@ def download_dataframe_button(label: str, df: pd.DataFrame, file_name: str, key:
     )
 
 
+def guarded_scientific_image(data, *, generated=False, **kwargs):
+    """Revalidate just before media registration; issued HTTP URLs remain a gate."""
+    require_backend_permission("read")
+    identity = configured_session_identity()
+    epoch = field_policy_revision()
+    if not generated:
+        lease = data if isinstance(data,bytes) else getattr(data,"_npdb_render_lease",None)
+        if not verify_payload(lease,identity,epoch):
+            raise PermissionError("Regenerate this preview for the current session and policy.")
+        if Image is not None and isinstance(data,Image.Image) and bytes(lease) != pil_image_to_png_bytes(data):
+            raise PermissionError("Preview content changed; regenerate it.")
+    require_backend_permission("read")
+    if configured_session_identity()!=identity or field_policy_revision()!=epoch:
+        raise PermissionError("Preview authorization changed; please retry.")
+    return st.image(data,**kwargs)
+
+
 def guarded_download_button(*, data, file_name, **kwargs):
     """Check BEFORE publication side effect; post-call auth cannot retract URLs.
 
@@ -6219,6 +6238,7 @@ def first_structure_identifier(smiles: str = "", inchi: str = "", inchikey: str 
     return ""
 
 
+@authorized_read
 def load_standardized_structure_image(image_path: Path, size=STRUCTURE_DETAIL_IMAGE_SIZE, fallback_smiles: str = ""):
     if Image is None or image_path is None:
         return None
@@ -6232,6 +6252,7 @@ def load_standardized_structure_image(image_path: Path, size=STRUCTURE_DETAIL_IM
         return None
 
 
+@authorized_read
 def load_external_structure_png_bytes(source_text: str, size=STRUCTURE_DETAIL_IMAGE_SIZE, fallback_smiles: str = "", renderer_version: str = STRUCTURE_RENDERER_VERSION) -> bytes:
     _ = renderer_version
     if Image is None:
@@ -6247,6 +6268,7 @@ def load_external_structure_png_bytes(source_text: str, size=STRUCTURE_DETAIL_IM
         return b""
 
 
+@authorized_read
 def load_standardized_structure_source(source_value, size=STRUCTURE_DETAIL_IMAGE_SIZE, fallback_smiles: str = ""):
     if Image is None or source_value is None:
         return None
@@ -6281,7 +6303,7 @@ def render_structure_preview(smiles_text: str, caption: str | None = None, empty
     if not ensure_rdkit_loaded():
         fallback_url = structure_smiles_image_url(smiles_value)
         if fallback_url:
-            st.image(fallback_url, caption=caption or "Rendered from SMILES", width="stretch")
+            guarded_scientific_image(fallback_url, generated=True, caption=caption or "Rendered from SMILES", width="stretch")
         elif empty_message:
             st.info("Structure preview becomes available when RDKit drawing support is active.")
         return
@@ -6290,18 +6312,18 @@ def render_structure_preview(smiles_text: str, caption: str | None = None, empty
         if mol is None:
             fallback_url = structure_smiles_image_url(smiles_value)
             if fallback_url:
-                st.image(fallback_url, caption=caption or "Rendered from SMILES", width="stretch")
+                guarded_scientific_image(fallback_url, generated=True, caption=caption or "Rendered from SMILES", width="stretch")
             elif empty_message:
                 st.info("Stored structure could not be rendered from the available structure string.")
             return
         image = render_rdkit_structure_image(mol, size=size)
         if image is None:
             raise RuntimeError("Structure renderer returned no image.")
-        st.image(image, caption=caption, width="stretch")
+        guarded_scientific_image(image, generated=True, caption=caption, width="stretch")
     except Exception:
         fallback_url = structure_smiles_image_url(smiles_value)
         if fallback_url:
-            st.image(fallback_url, caption=caption or "Rendered from SMILES", width="stretch")
+            guarded_scientific_image(fallback_url, generated=True, caption=caption or "Rendered from SMILES", width="stretch")
         elif empty_message:
             st.info("Structure preview could not be rendered for this record.")
 
@@ -7326,7 +7348,7 @@ def render_compound_card(row, show_preview: bool = True, prefer_fast_asset: bool
                     fallback_smiles=first_structure_identifier(row.get("smiles"), row.get("inchi"), row.get("inchikey")),
                 )
                 if standardized_image is not None:
-                    st.image(standardized_image, width="stretch")
+                    guarded_scientific_image(standardized_image, width="stretch")
                     if is_generated_structure_reference(source_value):
                         st.caption("Computed from SMILES (unverified).")
                 else:
@@ -7338,13 +7360,13 @@ def render_compound_card(row, show_preview: bool = True, prefer_fast_asset: bool
                     size=STRUCTURE_THUMBNAIL_IMAGE_SIZE,
                 )
                 if structure_png:
-                    st.image(structure_png, width="stretch")
+                    guarded_scientific_image(structure_png, generated=True, width="stretch")
                 else:
                     structure_url = structure_smiles_image_url(
                         first_structure_identifier(row.get("smiles"), row.get("inchi"), row.get("inchikey"))
                     )
                     if structure_url:
-                        st.image(structure_url, width="stretch")
+                        guarded_scientific_image(structure_url, generated=True, width="stretch")
     with info_col:
         st.markdown(
             f"""
@@ -9736,7 +9758,7 @@ def render_registered_file_preview(file_path_value, caption: str = "", spectrum_
             st.info("Attachment unavailable or awaiting provenance review.")
             return
         if suffix in LOCAL_IMAGE_SUFFIXES:
-            st.image(file_bytes, caption=caption or "Reviewed scientific attachment", width="stretch")
+            guarded_scientific_image(file_bytes, caption=caption or "Reviewed scientific attachment", width="stretch")
         else:
             guarded_download_button(label="Download reviewed attachment", data=file_bytes,
                                     file_name="NPDB_attachment" + suffix, key=key_prefix)
@@ -9751,7 +9773,7 @@ def render_registered_file_preview(file_path_value, caption: str = "", spectrum_
     suffix = Path(urlparse(str(private_source)).path).suffix.lower()
     name = Path(path_text).name if is_backend_owner() else "NPDB_attachment" + suffix
     if suffix in LOCAL_IMAGE_SUFFIXES:
-        st.image(file_bytes, caption=caption or name, width="stretch")
+        guarded_scientific_image(file_bytes, caption=caption or name, width="stretch")
         return
     mime = "application/pdf" if suffix == ".pdf" else "application/octet-stream"
     guarded_download_button(label=f"Download {name}", data=file_bytes, file_name=name, mime=mime,
@@ -9769,7 +9791,7 @@ def render_compound_structure_from_row(row_data, caption: str = "Structure", siz
             fallback_smiles=fallback_structure,
         )
         if standardized_image is not None:
-            st.image(standardized_image, caption=caption, width="stretch")
+            guarded_scientific_image(standardized_image, caption=caption, width="stretch")
             if is_generated_structure_reference(source_value):
                 st.caption("Unverified SMILES depiction — chemical identity has not been curator-verified.")
             return
@@ -9783,11 +9805,11 @@ def render_compound_structure_from_row(row_data, caption: str = "Structure", siz
         st.caption("No curated image registered; depiction below is generated from unverified structure text.")
         structure_png = structure_smiles_png_bytes(fallback_structure, size=size)
         if structure_png:
-            st.image(structure_png, caption=caption, width="stretch")
+            guarded_scientific_image(structure_png, generated=True, caption=caption, width="stretch")
             return
         structure_url = structure_smiles_image_url(fallback_structure)
         if structure_url:
-            st.image(structure_url, caption=caption, width="stretch")
+            guarded_scientific_image(structure_url, generated=True, caption=caption, width="stretch")
             return
     st.info("No structure image available.")
 
@@ -9922,7 +9944,7 @@ def show_compound_detail(compound_id):
                 fallback_smiles=first_structure_identifier(row_data.get("smiles"), row_data.get("inchi"), row_data.get("inchikey")),
             )
             if standardized_image is not None:
-                st.image(standardized_image, width="stretch")
+                guarded_scientific_image(standardized_image, width="stretch")
                 if is_generated_structure_reference(structure_path):
                     st.caption("This depiction was generated from SMILES; its structure is not yet curator-verified.")
             else:

@@ -33,6 +33,7 @@ def bind_authorization(ns=None, role='owner', username=None, authenticated=True)
               evidence_from_config=evidence_from_config,is_protected=is_protected,canonical=canonical,
               field_context=context,FieldPolicy=FieldPolicy,Identity=Identity,value_digest=value_digest)
     ns.setdefault('get_secret_object',lambda *keys:None)
+    ns.setdefault('Image',None)
     ns.setdefault('record_related_specimen_tables',lambda *args:{})
     ns.setdefault('field_provenance_export',lambda *args:b'{}')
     ns.setdefault('_FIELD_READ_CAPABILITY',object())
@@ -41,7 +42,7 @@ def bind_authorization(ns=None, role='owner', username=None, authenticated=True)
     for name in ('configured_session_identity', 'current_backend_role', 'is_backend_owner',
                  'require_backend_permission', 'field_policy_revision', 'current_disclosure', 'policy_frame', 'policy_record',
                  'project_authorized_result', 'field_policy_raw_record', 'resolve_reviewed_asset_source', 'asset_policy_approval', 'finish_asset_policy', 'preserve_unseen_fields',
-                 'guarded_download_button', 'authorized_read', 'is_owner_editor'):
+                 'guarded_download_button', 'guarded_scientific_image', 'authorized_read', 'is_owner_editor'):
         node = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name][-1]
         exec(compile(ast.Module(body=[node], type_ignores=[]), str(APP), 'exec'), ns)
     identity = ns['configured_session_identity']()
