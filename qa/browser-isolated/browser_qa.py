@@ -44,7 +44,9 @@ def attempt(key, fn):
         emit(key, 'PASS' if passed else 'FAIL', **metrics)
     except Exception as exc:
         # Never publish raw exception text (can contain DOM, values or credentials).
-        emit(key, 'FAIL', error_type=type(exc).__name__)
+        frames=[{'file':Path(f.filename).name,'line':f.lineno,'function':f.name}
+                for f in traceback.extract_tb(exc.__traceback__) if Path(f.filename).name=='browser_qa.py']
+        emit(key, 'FAIL', error_type=type(exc).__name__,source_frames=frames,interaction=META.get('interaction','unknown'))
 
 
 def settle(page):
@@ -235,6 +237,8 @@ def sidebar_state(page, expanded):
         if expanded:
             toggle = page.locator('[data-testid="stSidebarCollapsedControl"], [data-testid="stExpandSidebarButton"], [data-testid="collapsedControl"]').filter(visible=True).first
         else:
+            page.get_by_test_id('stSidebar').hover(position={'x':10,'y':20})
+            page.wait_for_timeout(150)
             toggle = page.get_by_test_id('stSidebar').locator('[data-testid="stSidebarCollapseButton"] button, [data-testid="stSidebarCollapseButton"]').first
             if not toggle.count():
                 toggle = page.get_by_test_id('stSidebar').locator('button').first
@@ -261,7 +265,8 @@ def nav(page, name):
 def keyboard_nav(page):
     sidebar_state(page, True)
     target = page.get_by_test_id('stSidebar').get_by_role('button', name='Search Spectra', exact=True)
-    page.locator('body').click(position={'x': 5, 'y': 5})
+    META['interaction']='keyboard_tab_navigation'
+    page.keyboard.press('Escape')
     reached = False
     for count in range(60):
         page.keyboard.press('Tab')
@@ -311,20 +316,26 @@ def role_ui(page, role):
 
 
 def nmr(page, mode, evidence_key):
+    META['interaction']='navigate_search'
     nav(page, 'Search Spectra')
-    page.get_by_role('radio', name=mode, exact=True).check()
+    META['interaction']='select_nmr_mode'
+    page.get_by_test_id('stMain').get_by_role('radiogroup').first.get_by_text(mode,exact=True).click()
     settle(page)
     if mode in ('1H Match', 'Combined Match'):
+        META['interaction']='fill_proton_query'
         page.get_by_label('Enter 1H peaks (comma, space, or newline separated)', exact=True).fill('1, 2, 3')
     if mode in ('13C Match', 'Combined Match'):
+        META['interaction']='fill_carbon_query'
         page.get_by_label('Enter 13C peaks (comma, space, or newline separated)', exact=True).fill('10, 20, 30')
     label = {'1H Match':'Run 1H Match','13C Match':'Run 13C Match','Combined Match':'Run Combined Match'}[mode]
+    META['interaction']='submit_nmr_query'
     page.get_by_role('button', name=label, exact=True).click()
     settle(page)
     units = page.get_by_test_id('stMain').get_by_text('ppm', exact=False).count()>0
     metrics=readability(page)
     state='FAIL' if metrics['below_4_5'] else ('UNTESTED' if metrics['unknown_background'] or not metrics['measured'] else 'PASS')
     emit(evidence_key,state,estimate_only=True,**metrics)
+    META['interaction']='open_nmr_record'
     page.get_by_role('button', name='Open Record #1', exact=True).click()
     settle(page)
     record = page.get_by_role('button', name='Download Full Record', exact=False).count()>0
