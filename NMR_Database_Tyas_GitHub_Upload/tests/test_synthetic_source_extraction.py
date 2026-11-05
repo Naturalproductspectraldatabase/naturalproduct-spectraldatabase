@@ -12,7 +12,8 @@ class SyntheticSourceExtraction(unittest.TestCase):
         module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
         for name in ('requirements.txt','NMR_Database_Tyas_GitHub_Upload/requirements.txt',
                      'NMR_Database_Tyas_GitHub_Upload/scripts/app.py',
-                     'NMR_Database_Tyas_GitHub_Upload/tests/security_schema_gate.sql'):
+                     'NMR_Database_Tyas_GitHub_Upload/tests/security_schema_gate.sql',
+                     'NMR_Database_Tyas_GitHub_Upload/scripts/npdb_synthetic_postgres_restore.sh'):
             self.assertTrue(module.allowed(name),name)
         for name in ('NMR_Database_Tyas_GitHub_Upload/database/nmr.db',
                      'NMR_Database_Tyas_GitHub_Upload/database/backups/private.sql',

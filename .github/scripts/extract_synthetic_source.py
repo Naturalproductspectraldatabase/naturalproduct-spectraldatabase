@@ -14,7 +14,7 @@ def allowed(name):
         return False
     if name in ('requirements.txt',PREFIX+'requirements.txt'):
         return True
-    return any(name.startswith(root) for root in ROOTS) and path.suffix.lower() in {'.py','.js','.sql'}
+    return any(name.startswith(root) for root in ROOTS) and path.suffix.lower() in {'.py','.js','.sql','.sh'}
 
 
 def main(sha):
