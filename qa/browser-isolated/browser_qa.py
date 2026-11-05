@@ -86,7 +86,7 @@ def login(page, credentials, role):
     page.get_by_role('button', name='Open Database', exact=True).click()
     page.get_by_test_id('stSidebar').wait_for(state='attached')
     settle(page)
-    assert page.get_by_role('button', name='Home', exact=True).count() == 1
+    page.get_by_role('button', name='Home', exact=True).wait_for(state='attached', timeout=15000)
     assert page.get_by_test_id('stException').count() == 0
     META['authenticated_home_views'] += 1
 
@@ -150,7 +150,7 @@ def keyboard_nav(page):
             break
     ring = False
     if reached:
-        ring = target.evaluate('''e=>{const s=getComputedStyle(e);return
+        ring = target.evaluate(r'''e=>{const s=getComputedStyle(e);return
           (s.outlineStyle!=='none' && parseFloat(s.outlineWidth)>=2) ||
           /rgba?\([^)]*\) 0px 0px 0px ([2-9]|[1-9][0-9])/.test(s.boxShadow);}'''.replace('return\n', 'return '))
         page.keyboard.press('Enter')
@@ -272,7 +272,7 @@ def isolation():
         connection = socket.create_connection(('192.0.2.1',443), timeout=1)
     except OSError:
         emit('isolation', 'PASS', default_route=False, nonloopback_connection_blocked=True,
-             root_readonly=True, host_mounts=False, inherited_credentials=False)
+             root_readonly=True, host_workspace_mounted=False, inherited_credentials=False)
     else:
         connection.close()
         raise RuntimeError('network_isolation_failed')
@@ -282,6 +282,7 @@ def main():
     assert sys.version_info[:2] == (3,12)
     for package,version in {'streamlit':'1.66.1','pandas':'2.2.3','rdkit':'2026.9.1','playwright':'1.64.1','plotly':'7.1.0','Pillow':'12.3.0','openpyxl':'3.1.5'}.items():
         assert importlib.metadata.version(package) == version
+    META['stage']='isolation_preflight'
     isolation()
     Path('/tmp/qa-home').mkdir()
     themes = ('shipped','temporary_dark')
@@ -299,24 +300,30 @@ def main():
             emit(f'{theme}/{item}', 'UNTESTED')
     emit('runner_smoke_768', 'UNTESTED')
     with sync_playwright() as pw:
+        META['stage']='chromium_launch'
         browser = pw.chromium.launch(headless=True, args=['--no-sandbox','--disable-dev-shm-usage'])
         META['browser_version'] = browser.version
         smoke = False
         for theme in themes:
             root = Path('/tmp')/theme
+            META['stage']='fixture_preflight'
             users, credentials, source_hash = prepare(root, dark=theme=='temporary_dark')
             META['app_py_sha256'] = source_hash
             META['fixture_generator_sha256'] = hashlib.sha256(Path('/qa/fixture.py').read_bytes()).hexdigest()
+            emit(f'{theme}/fixture_preflight','PASS',compounds=2,proton_peaks=3,carbon_peaks=3,sensitive_fields_blank=True)
+            META['stage']='streamlit_start'
             proc, log = start_app(root, users)
             try:
                 for width in widths:
                     context = guarded_context(browser, width)
                     page = context.new_page()
                     try:
+                        META['stage']='synthetic_login'
                         login(page, credentials, 'viewer')
                         if theme=='shipped' and width==768:
                             # Readiness is not layout acceptance. App defects stay FAIL below.
                             smoke = True
+                            META['stage']='browser_matrix'
                             emit('runner_smoke_768','PASS', viewport=768, rendered_pages=1,
                                  browser_started=True, authenticated_synthetic_home=True)
                         for state in ('collapsed','expanded'):
