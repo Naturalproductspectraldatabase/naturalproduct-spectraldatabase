@@ -13,10 +13,15 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-          submodules: false
+      - name: Fetch exact infrastructure revision without checkout or gitlink traversal
+        run: |
+          set -eu
+          test "$GITHUB_REPOSITORY" = "Naturalproductspectraldatabase/naturalproduct-spectraldatabase"
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          test "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA"
+          echo "Infrastructure SHA: $GITHUB_SHA"
       - name: Construct code-only context from frozen candidate
         env:
           CANDIDATE: 9d81a72e397897fe1614ca98adfec254cb4f1c4f
@@ -37,7 +42,7 @@ jobs:
           config = subprocess.check_output(['git','show',sha+':NMR_Database_Tyas_GitHub_Upload/.streamlit/config.toml'])
           (target/'shipped-config.toml').write_bytes(config)
           for name in ('Dockerfile','fixture.py','browser_qa.py'):
-              (target/name).write_bytes((pathlib.Path('qa/browser-isolated')/name).read_bytes())
+              (target/name).write_bytes(subprocess.check_output(['git','show',os.environ['GITHUB_SHA']+':qa/browser-isolated/'+name]))
           assert sorted(p.name for p in target.iterdir()) == ['Dockerfile','app','browser_qa.py','fixture.py','shipped-config.toml']
           assert not any(p.name == 'secrets.toml' for p in target.rglob('*'))
           print('PASS: code-only build context from frozen candidate; no data/assets/secrets copied')
