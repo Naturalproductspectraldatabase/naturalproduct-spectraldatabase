@@ -61,6 +61,7 @@ rank score total_score match_count total_query db_peak_count query_coverage db_c
 proton_match_count proton_total_query proton_query_coverage proton_score
 carbon_match_count carbon_total_query carbon_query_coverage carbon_score
 atom_number atom_label carbon_number proton_number query_peaks matched_peaks db_peaks missing_peaks
+proton_matches carbon_matches proton_db_peak_count carbon_db_peak_count proton_db_coverage carbon_db_coverage proton_avg_difference carbon_avg_difference
 matched_pairs query_coverage_percent db_coverage_percent difference delta formula name count n total Field Mr Category Percentage
 proton carbon structures spectra bioactivity compounds proton_nmr carbon_nmr spectra_files bioactivity_records specimens
 specimen_compounds specimen_1h_extracts proton_peaks carbon_peaks mol fp fingerprint matches
@@ -82,7 +83,7 @@ SCIENTIFIC |= {key(v) for v in (
 
 CONTAINERS = {'payload','nested','metadata','records','attachments','compound','specimen','provenance'}
 
-OPAQUE = {key(v) for v in ('note','description','habitat','traits','color','texture','evidence_note','reference_note','observed_features','source_material','source_summary','specimen_name','file_path','image_path','structure_image_path','extract_label')}
+OPAQUE = {key(v) for v in ('note','description','habitat','traits','color','texture','evidence_note','reference_note','observed_features','source_material','source_summary','specimen_name','file_path','image_path','structure_image_path','extract_label','assay_source','assay_medium','selectivity')}
 
 
 def canonical(label, aliases=None):

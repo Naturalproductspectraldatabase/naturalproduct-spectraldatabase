@@ -367,6 +367,14 @@ class SuccessfulFieldExports(unittest.TestCase):
         book=__import__('openpyxl').load_workbook(io.BytesIO(data),data_only=True)
         self.assertNotIn(PRIVATE,str(book.sheetnames));self.assertNotIn(PRIVATE,text_in_workbook(data))
 
+    def test_combined_nmr_match_pairs_survive_projection_without_notes(self):
+        ns,record,_=fixture('viewer')
+        item={**record,'compound_id':501,'proton_matches':[(1.23,1.23,0)],'carbon_matches':[(18.7,18.7,0)]}
+        result=ns['current_disclosure']().payload([item])[0]
+        self.assertEqual(result['proton_matches'],[(1.23,1.23,0)])
+        self.assertEqual(result['carbon_matches'],[(18.7,18.7,0)])
+        self.assertNotIn(PRIVATE,str(result))
+
     def test_owner_review_requires_individually_enumerated_verified_evidence(self):
         _,record,_=fixture()
         packet=prepare('compounds',[record]);self.assertTrue(all(e['classification']=='UNKNOWN_UNVERIFIED' for e in packet['entries']))
