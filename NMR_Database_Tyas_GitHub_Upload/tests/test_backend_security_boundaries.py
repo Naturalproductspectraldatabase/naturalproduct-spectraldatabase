@@ -75,6 +75,8 @@ class BackendSecurityBoundaryTests(unittest.TestCase):
                 ns['get_connection'] = lambda: sqlite3.connect(db)
                 ns['_sqlite_columns'] = lambda table: ['id', 'note']
                 ns['use_supabase_write_backend'] = lambda: False
+                ns['get_npdb_read_backend'] = lambda:'local'
+                ns['pd']=__import__('pandas')
                 load(ns, '_sqlite_upsert_row', '_sqlite_delete_row')
                 row_id = ns['_sqlite_upsert_row']('compounds', {'note':'synthetic'})
                 ns['_sqlite_upsert_row']('compounds', {'id':row_id, 'note':'changed'})
@@ -95,14 +97,17 @@ class BackendSecurityBoundaryTests(unittest.TestCase):
                 with self.subTest(role=role, name=name), self.assertRaises(PermissionError): ns[name](*args)
 
     def test_signing_requires_current_identity_and_private_bucket_scope(self):
-        ns = self.fixture('viewer')
+        ns = self.fixture('owner')
         calls = []
         ns['_supabase_request'] = lambda *a, **k: calls.append((a,k)) or {'signedURL':'/object/sign/structures/test.png?token=synthetic'}
         load(ns, 'signed_supabase_storage_url')
         url = ns['signed_supabase_storage_url']('structures', 'test.png')
         self.assertIn('/object/sign/', url)
         self.assertEqual(calls[0][1]['body']['expiresIn'], 300)
-        with self.assertRaises(PermissionError): ns['signed_supabase_storage_url']('backups', 'private.zip')
+        # Non-owner cannot mint capabilities even for a scientific bucket.
+        viewer=self.fixture('viewer');viewer['_supabase_request']=lambda *a,**k:self.fail('unreviewed signing reached')
+        load(viewer,'signed_supabase_storage_url')
+        with self.assertRaises(PermissionError):viewer['signed_supabase_storage_url']('structures','test.png')
         ns['load_approved_users'] = lambda: []
         with self.assertRaises(PermissionError): ns['signed_supabase_storage_url']('structures', 'test.png')
         self.assertEqual(len(calls),1)

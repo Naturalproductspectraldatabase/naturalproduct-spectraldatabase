@@ -1,4 +1,4 @@
-"""Synthetic-first #43 policy primitive. NOT wired into app.py yet.
+"""Synthetic-first #43 policy primitive, used by the application field adapter.
 
 Identity provider and evidence manifest are trusted server inputs, never request
 role/classification claims. This module does not implement Storage/RLS or project
@@ -52,6 +52,7 @@ class Evidence:
     verifier_role: str = ''
     disclosure_restrictions: tuple = ()
     asset_sha256: str = ''
+    verified_at: str = ''
 
 
 class FieldPolicy:

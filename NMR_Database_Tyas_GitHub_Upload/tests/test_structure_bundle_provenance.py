@@ -29,7 +29,8 @@ def extract_function(name, dependencies):
         raise AssertionError(f"Expected one app function: {name}")
     function = matches[0]
     function.decorator_list = []
-    namespace = dict(dependencies)
+    from authorization_fixture import bind_authorization
+    namespace = bind_authorization(dict(dependencies), role="owner")
     exec(compile(ast.Module(body=[function], type_ignores=[]), str(APP), "exec"), namespace)
     return namespace[name]
 

@@ -6,6 +6,7 @@ Streamlit application, secrets, network, production DB or research records.
 import ast
 from pathlib import Path
 import unittest
+from authorization_fixture import bind_authorization
 
 import pandas as pd
 
@@ -18,7 +19,8 @@ def compile_function(name, ns):
     if not funcs:
         raise AssertionError("Application function missing: " + name)
     fn = funcs[-1]
-    fn.decorator_list = []
+    # Preserve actual outer authorization and projection on public wrappers.
+    fn.decorator_list = [d for d in fn.decorator_list if isinstance(d,ast.Name) and d.id == "authorized_read"]
     exec(compile(ast.Module(body=[fn], type_ignores=[]), str(APP), "exec"), ns)
     return ns[name]
 
@@ -29,21 +31,25 @@ class PreciseGpsRoleTests(unittest.TestCase):
         self.source = pd.DataFrame([
             {"id": 1, "gps_coordinates": "SYNTHETIC-SECRET-COORDS", "trivial_name": "Synthetic compound"}
         ])
-        self.ns = {
+        self.ns = bind_authorization(role="viewer")
+        self.ns.update({
             "current_backend_role": lambda: self.role,
             "SOURCE_NORMALIZATION_CACHE_VERSION": "test-only",
             "get_db_signature": lambda: "test-signature",
             "pd": pd,
-        }
+        })
         compile_function("display_precise_gps", self.ns)
         compile_function("redact_private_gps_for_current_user", self.ns)
 
     def test_fail_closed_and_privileged_visibility(self):
         render = self.ns["display_precise_gps"]
-        for role in ("", "viewer", "approved-viewer", "revoked", "unknown"):
+        for role in ("", "revoked", "unknown"):
+            self.role=role
+            with self.assertRaises(PermissionError):render("SYNTHETIC-SECRET-COORDS")
+        for role in ("viewer", "approved-viewer", "editor"):
             self.role = role
             self.assertEqual(render("SYNTHETIC-SECRET-COORDS"), "")
-        for role in ("owner", "owner_editor", "admin", "editor"):
+        for role in ("owner", "owner_editor", "admin"):
             self.role = role
             self.assertEqual(render("SYNTHETIC-SECRET-COORDS"), "SYNTHETIC-SECRET-COORDS")
 
@@ -52,7 +58,7 @@ class PreciseGpsRoleTests(unittest.TestCase):
         self.role = "owner"
         self.assertEqual(guard(self.source).loc[0, "gps_coordinates"], "SYNTHETIC-SECRET-COORDS")
         self.role = "viewer"
-        self.assertEqual(guard(self.source).loc[0, "gps_coordinates"], "")
+        self.assertIsNone(guard(self.source).loc[0, "gps_coordinates"])
         self.assertEqual(self.source.loc[0, "gps_coordinates"], "SYNTHETIC-SECRET-COORDS")
         self.role = "owner"
         self.assertEqual(guard(self.source).loc[0, "gps_coordinates"], "SYNTHETIC-SECRET-COORDS")
@@ -70,10 +76,10 @@ class PreciseGpsRoleTests(unittest.TestCase):
                 wrapped = compile_function(public, ns)
                 self.role = "viewer"
                 masked = wrapped(1) if public == "load_compound_row" else wrapped()
-                self.assertEqual(masked.loc[0, "gps_coordinates"], "")
+                self.assertIsNone(masked.loc[0, "gps_coordinates"])
                 self.role = "editor"
                 visible = wrapped(1) if public == "load_compound_row" else wrapped()
-                self.assertEqual(visible.loc[0, "gps_coordinates"], "SYNTHETIC-SECRET-COORDS")
+                self.assertIsNone(visible.loc[0, "gps_coordinates"])
 
     def test_specimen_cached_wrappers_are_masked(self):
         for public, private in (
@@ -86,7 +92,7 @@ class PreciseGpsRoleTests(unittest.TestCase):
                 wrapped = compile_function(public, ns)
                 self.role = "viewer"
                 masked = wrapped(1) if public == "load_specimen_row" else wrapped()
-                self.assertEqual(masked.loc[0, "gps_coordinates"], "")
+                self.assertIsNone(masked.loc[0, "gps_coordinates"])
                 self.role = "owner"
                 visible = wrapped(1) if public == "load_specimen_row" else wrapped()
                 self.assertEqual(visible.loc[0, "gps_coordinates"], "SYNTHETIC-SECRET-COORDS")
@@ -96,7 +102,7 @@ class PreciseGpsRoleTests(unittest.TestCase):
         self.role = "viewer"
         csv = export(self.source)
         self.assertIn("GPS Coordinates", csv.columns)
-        self.assertEqual(csv.loc[0, "GPS Coordinates"], "")
+        self.assertIsNone(csv.loc[0, "GPS Coordinates"])
         self.role = "owner"
         self.assertEqual(export(self.source).loc[0, "GPS Coordinates"], "SYNTHETIC-SECRET-COORDS")
 

@@ -1,7 +1,7 @@
 name: NPDB field policy primitives and frozen authorization audit
 on:
   push:
-    branches: [fix/npdb-field-location-policy-20261105, qa/npdb-reliability-preflight-20261105]
+    branches: [fix/npdb-field-location-policy-20261105, qa/npdb-reliability-preflight-20261105, fix/npdb-field-policy-integration-20261105]
 permissions:
   contents: read
 jobs:
@@ -19,11 +19,14 @@ jobs:
           set -eu
           git init .
           git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
-          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          git config remote.origin.promisor true
+          git config remote.origin.partialclonefilter blob:none
+          git fetch --no-tags --filter=blob:none --depth=1 origin "$GITHUB_SHA"
           test "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA"
-          git fetch --no-tags --depth=1 origin 9d81a72e397897fe1614ca98adfec254cb4f1c4f
+          git fetch --no-tags --filter=blob:none --depth=1 origin 9d81a72e397897fe1614ca98adfec254cb4f1c4f
           mkdir -p NMR_Database_Tyas_GitHub_Upload/scripts NMR_Database_Tyas_GitHub_Upload/tests
           git show "$GITHUB_SHA:NMR_Database_Tyas_GitHub_Upload/scripts/npdb_location_policy.py" > NMR_Database_Tyas_GitHub_Upload/scripts/npdb_location_policy.py
+          git show "$GITHUB_SHA:NMR_Database_Tyas_GitHub_Upload/scripts/npdb_field_access.py" > NMR_Database_Tyas_GitHub_Upload/scripts/npdb_field_access.py
           git show "$GITHUB_SHA:NMR_Database_Tyas_GitHub_Upload/scripts/npdb_cache_authorization_baseline.py" > NMR_Database_Tyas_GitHub_Upload/scripts/npdb_cache_authorization_baseline.py
           git show "$GITHUB_SHA:NMR_Database_Tyas_GitHub_Upload/tests/test_location_policy_contract.py" > NMR_Database_Tyas_GitHub_Upload/tests/test_location_policy_contract.py
           git show "$GITHUB_SHA:NMR_Database_Tyas_GitHub_Upload/scripts/app.py" > NMR_Database_Tyas_GitHub_Upload/scripts/app.py

@@ -12,6 +12,7 @@ import ast
 import copy
 from datetime import UTC, datetime
 import inspect
+from functools import wraps
 from pathlib import Path
 import unittest
 from authorization_fixture import bind_authorization
@@ -28,7 +29,7 @@ def isolated_function(name, namespace):
     never uses the real Supabase client or real credentials.
     """
     if "require_backend_permission" not in namespace:
-        for key, value in bind_authorization().items():
+        for key, value in bind_authorization(role="viewer" if namespace.get("_viewer_fixture") else "owner").items():
             namespace.setdefault(key, value)
     tree = ast.parse(APP_PATH.read_text(encoding="utf-8"), filename=str(APP_PATH))
     matches = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name]
@@ -48,6 +49,7 @@ class FakeStreamlitCache:
             cache = {}
             signature = inspect.signature(func)
 
+            @wraps(func)
             def wrapped(*positional, **named):
                 bound = signature.bind(*positional, **named)
                 bound.apply_defaults()
@@ -72,6 +74,7 @@ class SourceAndCacheRegressionTests(unittest.TestCase):
         snapshot_rows = pd.DataFrame([{"id": 101, "trivial_name": "old snapshot", "source_category": "", "gps_coordinates": "SYNTHETIC-GPS-SNAPSHOT"}])
         live_rows = pd.DataFrame([{"id": 101, "trivial_name": "fresh cloud", "source_category": "Sponge", "gps_coordinates": "SYNTHETIC-GPS-CLOUD"}])
         namespace = {
+            "_viewer_fixture":True,
             "st": FakeStreamlitCache(),
             "DATA_CACHE_TTL_SECONDS": 60,
             "SOURCE_NORMALIZATION_CACHE_VERSION": "v1",
@@ -96,20 +99,20 @@ class SourceAndCacheRegressionTests(unittest.TestCase):
         isolated_function("_load_all_compounds_cached", ns)
         load_all = isolated_function("load_all_compounds", ns)
         self.assertEqual(load_all().iloc[0]["trivial_name"], "old snapshot")
-        self.assertEqual(load_all().iloc[0]["gps_coordinates"], "")
+        self.assertIsNone(load_all().iloc[0]["gps_coordinates"])
         state["backend"] = "supabase"
         self.assertEqual(load_all().iloc[0]["trivial_name"], "fresh cloud")
-        self.assertEqual(load_all().iloc[0]["gps_coordinates"], "")
+        self.assertIsNone(load_all().iloc[0]["gps_coordinates"])
 
     def test_c1_record_cache_refreshes_after_snapshot_to_cloud_transition(self):
         state, ns = self.make_namespace()
         isolated_function("_load_compound_row_cached", ns)
         load_one = isolated_function("load_compound_row", ns)
         self.assertEqual(load_one(101).iloc[0]["trivial_name"], "old snapshot")
-        self.assertEqual(load_one(101).iloc[0]["gps_coordinates"], "")
+        self.assertIsNone(load_one(101).iloc[0]["gps_coordinates"])
         state["backend"] = "supabase"
         self.assertEqual(load_one(101).iloc[0]["trivial_name"], "fresh cloud")
-        self.assertEqual(load_one(101).iloc[0]["gps_coordinates"], "")
+        self.assertIsNone(load_one(101).iloc[0]["gps_coordinates"])
 
     def test_isolated_harness_uses_dummy_records_only(self):
         state, ns = self.make_namespace()
@@ -138,6 +141,7 @@ class ColumnProbeRegressionTests(unittest.TestCase):
             return []
 
         ns = {
+            "_viewer_fixture":True,
             "st": FakeStreamlitCache(),
             "use_supabase_backend": lambda: True,
             "_supabase_request": fake_request,

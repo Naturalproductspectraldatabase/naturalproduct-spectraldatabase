@@ -25,6 +25,7 @@ import pandas as pd
 
 APP = Path(__file__).resolve().parents[1] / "scripts" / "app.py"
 sys.path.insert(0, str(APP.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 SOURCE = APP.read_text(encoding="utf-8")
 TREE = ast.parse(SOURCE)
 HAVE_RDKIT = importlib.util.find_spec("rdkit") is not None
@@ -43,7 +44,8 @@ def live(name, deps):
     assert nodes, name
     node = nodes[-1]
     node.decorator_list = []
-    namespace = dict(deps)
+    from authorization_fixture import bind_authorization
+    namespace = bind_authorization(dict(deps), role="owner")
     exec(compile(ast.Module(body=[node], type_ignores=[]), str(APP), "exec"), namespace)
     return namespace[name]
 

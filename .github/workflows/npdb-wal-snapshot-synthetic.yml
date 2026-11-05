@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [fix/npdb-backend-capabilities-20261103, qa/npdb-integrated-preflight-20261103, fix/npdb-nmr-bioactivity-disclosure-20261103, fix/npdb-stereo-aware-structure-search-20261103, qa/npdb-security-candidate-20261105]
   push:
-    branches: [fix/npdb-wal-safe-local-snapshot-20261103, qa/npdb-cumulative-integration-20261105, fix/npdb-field-location-policy-20261105, qa/npdb-reliability-preflight-20261105]
+    branches: [fix/npdb-wal-safe-local-snapshot-20261103, qa/npdb-cumulative-integration-20261105, fix/npdb-field-location-policy-20261105, qa/npdb-reliability-preflight-20261105, fix/npdb-field-policy-integration-20261105]
   workflow_dispatch:
 
 permissions:
@@ -20,15 +20,17 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12"]
     steps:
-      - name: Checkout exact branch revision without submodule expansion
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Fetch exact source only; exclude repository datasets and backup files
         run: |
+          set -eu
           git init .
           git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
-          AUTH="$(printf 'x-access-token:%s' "${GH_TOKEN}" | base64 -w 0)"
-          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${AUTH}" fetch --no-tags --depth=1 origin "${GITHUB_REF}"
-          git -c advice.detachedHead=false checkout --detach FETCH_HEAD
+          git config remote.origin.promisor true
+          git config remote.origin.partialclonefilter blob:none
+          git fetch --no-tags --filter=blob:none --depth=1 origin "$GITHUB_SHA"
+          test "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA"
+          git show "$GITHUB_SHA:.github/scripts/extract_synthetic_source.py" > "$RUNNER_TEMP/npdb-extract-source.py"
+          python3 "$RUNNER_TEMP/npdb-extract-source.py" "$GITHUB_SHA"
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}

@@ -1,5 +1,8 @@
 """Actual attachment readers with isolated accounts/files and fake HTTPS only."""
 import io
+import hashlib
+from dataclasses import asdict
+
 from pathlib import Path
 import tempfile
 import unittest
@@ -7,6 +10,7 @@ from urllib.parse import urlparse
 from PIL import Image
 from authorization_fixture import bind_authorization
 from test_asset_reader_integration import reader_namespace, load
+from npdb_location_policy import Evidence, value_digest, PUBLISHED_VERIFIED
 
 
 class AttachmentReadAuthorizationTests(unittest.TestCase):
@@ -18,6 +22,16 @@ class AttachmentReadAuthorizationTests(unittest.TestCase):
         output=io.BytesIO();Image.new('RGB',(8,8),'white').save(output,format='PNG')
         path=root/'synthetic.png';path.write_bytes(output.getvalue())
         ns=reader_namespace(project)
+        # Explicit synthetic owner review, not publication inferred from the path.
+        raw={1:dict(id=1,updated_at='synthetic-r1',structure_image_path=str(path)),
+             2:dict(id=2,updated_at='synthetic-r1',structure_image_path='https://synthetic.invalid/x.png')}
+        facts=[asdict(Evidence(table='compounds',record_id=str(rid),field='structure_image_path',
+            record_revision='synthetic-r1',value_sha256=value_digest(row['structure_image_path']),
+            classification=PUBLISHED_VERIFIED,verification_status='VERIFIED',source_reference='Synthetic fixture source',
+            source_locator='Synthetic figure',verified_by='Synthetic owner',verifier_role='owner',asset_sha256=hashlib.sha256(output.getvalue()).hexdigest())) for rid,row in raw.items()]
+        ns['get_secret_object']=lambda *a:dict(version=1,entries=facts)
+        ns['field_policy_raw_record']=lambda table,rid,**kw:raw[int(rid)]
+
         auth=bind_authorization(role=role,authenticated=authenticated)
         ns['require_backend_permission']=auth['require_backend_permission']
         calls=[]
@@ -34,6 +48,14 @@ class AttachmentReadAuthorizationTests(unittest.TestCase):
             self.assertEqual(ns['read_scientific_asset'](path,'structure'),data)
             self.assertEqual(ns['_asset_bytes_from_source'](str(path),'structure')[0],data)
             self.assertEqual(ns['read_remote_scientific_asset']('https://synthetic.invalid/x.png')[0],data)
+
+    def test_unreviewed_attachment_denied_for_editor_and_viewer_before_io(self):
+        from npdb_asset_paths import AssetAccessError
+        for role in ('editor','viewer'):
+            ns,auth,path,data,calls=self.fixture(role)
+            ns['get_secret_object']=lambda *a:None
+            ns['read_local_asset']=lambda *a,**k:self.fail('unreviewed bytes opened')
+            with self.assertRaises(AssetAccessError):ns['read_scientific_asset'](path,'structure')
 
     def test_anonymous_read_refused_before_local_open_or_remote_resolution(self):
         ns,auth,path,data,calls=self.fixture(authenticated=False)

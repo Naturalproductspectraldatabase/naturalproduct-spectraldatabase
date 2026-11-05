@@ -35,6 +35,8 @@ if str(SCRIPT_DIR) not in sys.path:
 from npdb_browser_qa import display_class_term, display_source_term, category_counts, compound_open_label, approved_recovery_route
 from npdb_asset_paths import AssetAccessError, read_local_asset, validate_asset_content, write_local_asset, validate_https_asset_url, read_https_asset
 from npdb_sqlite_snapshot import verified_sqlite_snapshot_bytes
+from npdb_location_policy import FieldPolicy, Identity, value_digest
+from npdb_field_access import Disclosure, READ_DEPTH, ASSET_IO, evidence_from_config, is_protected, canonical, context as field_context, SealedPayload, verify_payload, parse_asset_token
 
 try:
     from PIL import Image, ImageOps
@@ -1051,40 +1053,188 @@ def is_backend_owner():
     return current_backend_role() in {"owner", "owner_editor", "admin"}
 
 
-def display_precise_gps(value):
-    """Fail closed for viewer/unauthenticated roles; never mutate stored coordinates."""
-    return value if current_backend_role() in {"owner", "owner_editor", "admin", "editor"} else ""
+def field_policy_revision():
+    return hashlib.sha256(json.dumps(get_secret_object("NPDB_FIELD_PROVENANCE"),sort_keys=True,default=str).encode()).hexdigest()
+
+
+def current_disclosure():
+    def identity():
+        require_backend_permission("read")
+        role, revision = configured_session_identity()
+        return Identity("owner" if is_backend_owner() else ("viewer" if role == "approved-viewer" else role), revision)
+    return Disclosure(FieldPolicy(identity, evidence_from_config(get_secret_object("NPDB_FIELD_PROVENANCE"))))
+
+
+def policy_frame(frame, table="", *, source=None, contexts=None):
+    return current_disclosure().frame(frame, table, source=source, contexts=contexts)
+
+
+def policy_record(record, table=""):
+    return current_disclosure().record(dict(record), field_context(dict(record), table))
+
+
+_FIELD_READ_CAPABILITY = object()
+
+
+def field_policy_raw_record(table, record_id, *, _capability=None):
+    """Internal provenance validation only; never return this row to a UI/API.
+
+    Fixed table allowlist + parameterized id; authenticated and no cache. Raw data
+    is needed to compare field value/revision without granting a caller disclosure.
+    """
+    require_backend_permission("read", table)
+    if _capability is not _FIELD_READ_CAPABILITY:
+        require_backend_permission("admin")
+    identity = configured_session_identity()
+    token = READ_DEPTH.set(READ_DEPTH.get() + 1)
+    try:
+        backend = get_npdb_read_backend()
+        if backend == "supabase":
+            rows = _supabase_request("GET", f"/rest/v1/{table}", query={"select":"*", "id":f"eq.{int(record_id)}", "limit":1}) or []
+            result = rows[0] if rows else {}
+        elif backend == "snapshot":
+            frame = _snapshot_dataframe(table)
+            rows = frame[pd.to_numeric(frame["id"],errors="coerce") == int(record_id)]
+            result = rows.iloc[0].to_dict() if not rows.empty else {}
+        else:
+            conn = get_connection()
+            try:
+                frame = pd.read_sql_query(f"SELECT * FROM {table} WHERE id = ?", conn, params=(int(record_id),))
+                result = frame.iloc[0].to_dict() if not frame.empty else {}
+            finally:
+                conn.close()
+    finally:
+        READ_DEPTH.reset(token)
+    require_backend_permission("read")
+    if configured_session_identity() != identity:
+        raise PermissionError("Request authorization changed; please retry.")
+    return result
+
+
+def resolve_reviewed_asset_source(source, *, _capability=None):
+    """Internal-only resolver; never expose a private path/URL to a non-owner."""
+    require_backend_permission("read")
+    if _capability is not _FIELD_READ_CAPABILITY:
+        require_backend_permission("admin")
+    token=parse_asset_token(source)
+    if not token:
+        if str(source).startswith("npdbasset:"):
+            raise AssetAccessError("Invalid reviewed attachment reference.")
+        return source
+    table,record_id,field,digest=token
+    raw=field_policy_raw_record(table,record_id,_capability=_FIELD_READ_CAPABILITY)
+    value=raw.get(field)
+    identity,epoch,fact=asset_policy_approval(value)
+    if fact is None and not is_backend_owner():
+        raise AssetAccessError("Attachment requires authorized provenance review.")
+    if fact and (fact.field!=field or fact.record_id!=record_id or fact.asset_sha256!=digest):
+        raise AssetAccessError("Attachment approval changed.")
+    return value
+
+
+def asset_policy_approval(source):
+    disclosure = current_disclosure()
+    identity = disclosure.policy.identity()
+    epoch = field_policy_revision()
+    if identity.role == "owner":
+        return identity, epoch, None
+    # A path by itself is never evidence. Verify source, live row revision and
+    # reviewed content digest; DOI/filename/extension is not a disclosure grant.
+    matches = []
+    source_digest = value_digest(str(source))
+    for entries in disclosure.policy._evidence.values():
+        for fact in entries:
+            if fact.field not in {"structure_image_path","image_path","file_path"} or not fact.asset_sha256:
+                continue
+            if fact.value_sha256 != source_digest:
+                continue
+            row = field_policy_raw_record(fact.table, fact.record_id, _capability=_FIELD_READ_CAPABILITY)
+            if str(row.get(fact.field,"")) != str(source):
+                continue
+            verified = disclosure.policy.evidence_for(fact.table,fact.record_id,fact.field,row.get(fact.field),field_context(row,fact.table)["revision"])
+            if disclosure.policy._published(verified):
+                matches.append(verified)
+    if len(matches) != 1:
+        raise AssetAccessError("Attachment requires authorized provenance review.")
+    return identity, epoch, matches[0]
+
+
+def finish_asset_policy(approval, data):
+    identity, epoch, fact = approval
+    current_disclosure().policy._unchanged_identity(identity)
+    if epoch != field_policy_revision() or (fact and not hmac.compare_digest(hashlib.sha256(data).hexdigest(),fact.asset_sha256)):
+        raise AssetAccessError("Attachment requires authorized provenance review.")
+    return data
+
+
+def preserve_unseen_fields(table, record_id, row):
+    """Drop editor changes to withheld existing fields; preserve stored originals."""
+    require_backend_permission("curate", table, row)
+    # UI references are locators, never stored scientific source paths.
+    row = {field:value for field,value in row.items() if not parse_asset_token(value)}
+    if is_backend_owner():
+        return dict(row)
+    if not any(is_protected(field,value) for field,value in row.items()):
+        return dict(row)
+    original = field_policy_raw_record(table, record_id, _capability=_FIELD_READ_CAPABILITY)
+    if not original:
+        return dict(row)
+    disclosure = current_disclosure()
+    ctx = field_context(original,table)
+    return {field:value for field,value in row.items()
+            if not is_protected(field,value) or disclosure.visible(canonical(field),original.get(field),ctx)}
+
+
+def display_precise_gps(value, record=None, table="compounds"):
+    # Callers receive a projected field. Re-evaluating a bare value cannot infer
+    # publication status; source-aware projection MUST precede this formatter.
+    require_backend_permission("read")
+    if record is not None:
+        return policy_record(record, table).get("gps_coordinates")
+    return value if is_backend_owner() else ""
 
 
 def redact_private_gps_for_current_user(frame):
-    """Role-specific COPY after cached reads, to prevent cross-session cache reuse leaks."""
-    import re
-    safe = frame.copy()
-    if current_backend_role() not in {"owner", "owner_editor", "admin", "editor"}:
-        def gps_label(value):
-            return re.sub(r"[^a-z0-9]", "", str(value).lower()) == "gpscoordinates"
-        for column in safe.columns:
-            if gps_label(column):
-                safe[column] = ""
-        if {"Field", "Value"}.issubset(safe.columns):
-            safe.loc[safe["Field"].map(gps_label), "Value"] = ""
-    return safe
+    """Compatibility name: full field projection, never GPS-only editor bypass."""
+    return policy_frame(frame)
 
 
 def redact_gps_payload(value, aliases=()):
-    """Redact structured JSON results using canonical fields and select aliases."""
-    import re
-    if current_backend_role() in {"owner", "owner_editor", "admin", "editor"}:
-        return value
-    labels = {"gpscoordinates"} | {re.sub(r"[^a-z0-9]", "", key.lower()) for key in aliases}
-    def clean(item):
-        if isinstance(item, dict):
-            return {key: "" if re.sub(r"[^a-z0-9]", "", str(key).lower()) in labels else clean(val)
-                    for key, val in item.items()}
-        if isinstance(item, list):
-            return [clean(val) for val in item]
-        return item
-    return clean(value)
+    mapping = {name: "gps_coordinates" for name in aliases}
+    return current_disclosure().payload(value, aliases=mapping)
+
+
+def project_authorized_result(name, result, args, kwargs):
+    table = ""
+    if "specimen" in name:
+        table = "specimen_compounds" if "links" in name else "specimen_1h_extracts" if "extract" in name else "specimens"
+    elif "proton" in name:
+        table = "proton_nmr"
+    elif "carbon" in name:
+        table = "carbon_nmr"
+    elif "spectr" in name:
+        table = "spectra_files"
+    elif "bioactivity" in name:
+        table = "bioactivity_records"
+    elif "compound" in name or name == "load_search_index":
+        table = "compounds"
+    if name in {"supabase_select_df", "_snapshot_dataframe"}:
+        table = args[0] if args else kwargs.get("table", "")
+    aliases = {}
+    if name == "_sqlite_dataframe":
+        query = str(args[0] if args else kwargs.get("query", ""))
+        match = re.search(r"\bFROM\s+(\w+)", query, re.I)
+        table = match.group(1) if match else ""
+        for original, alias in re.findall(r'(?:\w+\.)?(\w+)\s+AS\s+["\[]?([\w ]+?)["\]]?(?=\s*,|\s+FROM)',query,re.I):
+            aliases[alias] = original
+    if name.startswith("export_") and hasattr(result,"columns") and args:
+        source = args[0]
+        if isinstance(source,list):
+            source = pd.DataFrame(source)
+        if hasattr(source,"columns"):
+            return current_disclosure().frame(result,table,source=source,aliases=aliases)
+    return current_disclosure().payload(result, table, aliases)
+
 
 
 def require_backend_permission(action, table=None, row=None):
@@ -1117,10 +1267,32 @@ def authorized_read(reader):
     def read(*args, **kwargs):
         require_backend_permission("read")
         identity = configured_session_identity()
-        result = reader(*args, **kwargs)
+        policy_revision = field_policy_revision()
+        token = READ_DEPTH.set(READ_DEPTH.get() + 1)
+        try:
+            result = reader(*args, **kwargs)
+        finally:
+            READ_DEPTH.reset(token)
         require_backend_permission("read")
         if configured_session_identity() != identity:
             raise PermissionError("The request identity changed; please retry.")
+        # Cache bodies may share RAW trusted data internally. Every externally
+        # callable wrapper, including compatibility/cache helpers, projects a copy
+        # AFTER cache lookup. ContextVar prevents a viewer filling the owner cache
+        # with a role-filtered inner query and isolates concurrent request contexts.
+        if READ_DEPTH.get() == 0:
+            result = project_authorized_result(reader.__name__, result, args, kwargs)
+        require_backend_permission("read")
+        if configured_session_identity() != identity:
+            raise PermissionError("The request identity changed; please retry.")
+        if field_policy_revision() != policy_revision:
+            raise PermissionError("Disclosure policy changed; please retry.")
+        if Image is not None and isinstance(result, Image.Image):
+            result._npdb_render_lease = SealedPayload(pil_image_to_png_bytes(result),identity,policy_revision)
+        if isinstance(result,bytes):
+            result = SealedPayload(result, identity, policy_revision)
+        elif isinstance(result,tuple) and result and isinstance(result[0],bytes):
+            result = (SealedPayload(result[0], identity, policy_revision), *result[1:])
         return result
     # CachedFunc exposes clear on its class, so wraps' __dict__ copy is insufficient.
     if hasattr(reader, "clear"):
@@ -5238,6 +5410,7 @@ def build_structure_candidate_index(structure_records: tuple):
     return candidates
 
 
+@authorized_read
 def search_by_structure(
     compounds_df: pd.DataFrame,
     query_smiles: str,
@@ -5380,6 +5553,7 @@ def export_structure_search_results(results: list[dict]) -> pd.DataFrame:
 
 
 def render_structure_search_results(results: list[dict], search_type: str, limit: int = 10):
+    results = [policy_record(item, "compounds") for item in results]
     if not results:
         st.info("No compounds matched the current structure query.")
         return
@@ -5547,6 +5721,8 @@ def is_supabase_storage_reference(value) -> bool:
 
 
 def is_generated_structure_reference(value) -> bool:
+    if parse_asset_token(value):
+        value = resolve_reviewed_asset_source(value,_capability=_FIELD_READ_CAPABILITY)
     reference = parse_supabase_storage_reference(value)
     if not reference:
         return False
@@ -5564,6 +5740,8 @@ def validate_storage_asset_reference(bucket, object_path):
 
 def signed_supabase_storage_url(bucket: str, object_path: str, expires_in: int = 3600) -> str:
     require_backend_permission("read")
+    if not is_backend_owner() and not ASSET_IO.get():
+        raise PermissionError("Direct Storage signing is owner-only; use a reviewed attachment reader.")
     if bucket not in {"structures", "spectra", "specimens"}:
         require_backend_permission("admin")
     validate_storage_asset_reference(bucket, object_path)
@@ -5600,6 +5778,9 @@ def signed_supabase_storage_url(bucket: str, object_path: str, expires_in: int =
 
 
 def display_asset_url(value) -> str:
+    require_backend_permission("read")
+    if not is_backend_owner() and not ASSET_IO.get():
+        return ""
     text = maybe_blank(value)
     reference = parse_supabase_storage_reference(text)
     if not reference:
@@ -5649,6 +5830,10 @@ LOCAL_SPECTRUM_SUFFIXES = LOCAL_IMAGE_SUFFIXES | frozenset({
 @authorized_read
 def read_scientific_asset(source, kind="attachment"):
     require_backend_permission("read")
+    source = resolve_reviewed_asset_source(source,_capability=_FIELD_READ_CAPABILITY)
+    approval = asset_policy_approval(source)
+    if is_external_url(source) or is_supabase_storage_reference(source):
+        return read_remote_scientific_asset(source)[0]
     roots = {"structure": (STRUCTURES_DIR,), "spectrum": (SPECTRA_DIR,),
              "specimen": (SPECIMENS_DIR,),
              "attachment": (STRUCTURES_DIR, SPECTRA_DIR, SPECIMENS_DIR)}
@@ -5656,13 +5841,19 @@ def read_scientific_asset(source, kind="attachment"):
     data = read_local_asset(source, project=PROJECT_DIR, roots=roots[kind],
                             max_bytes=LOCAL_ASSET_MAX_BYTES, allowed_suffixes=suffixes)
     validate_asset_content(data, Path(source).suffix)
-    return data
+    return finish_asset_policy(approval, data)
 
 
 @authorized_read
 def read_remote_scientific_asset(source, *, image_only=False):
     require_backend_permission("read")
-    url = display_asset_url(source)
+    source = resolve_reviewed_asset_source(source,_capability=_FIELD_READ_CAPABILITY)
+    approval = asset_policy_approval(source)
+    token = ASSET_IO.set(True)
+    try:
+        url = display_asset_url(source)
+    finally:
+        ASSET_IO.reset(token)
     hosts = {"pubchem.ncbi.nlm.nih.gov", "cactus.nci.nih.gov", "drive.google.com",
              "docs.google.com", "drive.usercontent.google.com", urlparse(get_supabase_url()).hostname}
     data = read_https_asset(url, allowed_hosts=hosts, max_bytes=LOCAL_ASSET_MAX_BYTES)
@@ -5677,7 +5868,7 @@ def read_remote_scientific_asset(source, *, image_only=False):
     if suffix not in suffixes:
         raise AssetAccessError("Asset type is not permitted.")
     validate_asset_content(data, suffix)
-    return data, suffix
+    return finish_asset_policy(approval,data), suffix
 
 
 def local_asset_available(source, kind="attachment"):
@@ -5767,11 +5958,15 @@ def filter_similarity_results(results, class_filter="All", source_filter="All", 
 
     return filtered
 
+@authorized_read
 def dataframe_to_csv_bytes(df: pd.DataFrame) -> bytes:
     return redact_private_gps_for_current_user(df).to_csv(index=False).encode("utf-8")
 
 
+@authorized_read
 def dataframe_to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Data") -> bytes:
+    if not is_backend_owner() and sheet_name not in {"Data","Metadata","1H_NMR","13C_NMR","Bioactivity","Spectra_Files","Name Search","13C Search","1H Search","Combined Search"}:
+        sheet_name = "Data"
     if Alignment is None and Font is None and PatternFill is None:
         raise ModuleNotFoundError("openpyxl is not available")
 
@@ -5822,12 +6017,14 @@ def download_dataframe_button(label: str, df: pd.DataFrame, file_name: str, key:
         payload = dataframe_to_excel_bytes(df, sheet_name=sheet_name)
         resolved_name = file_name if file_name.lower().endswith(".xlsx") else f"{Path(file_name).stem}.xlsx"
         mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    except PermissionError:
+        raise
     except Exception:
         payload = add_credit_to_text_bytes(dataframe_to_csv_bytes(df))
         resolved_name = f"{Path(file_name).stem}.csv"
         mime = "text/csv"
 
-    st.download_button(
+    guarded_download_button(
         label=label,
         data=payload,
         file_name=resolved_name,
@@ -5836,10 +6033,49 @@ def download_dataframe_button(label: str, df: pd.DataFrame, file_name: str, key:
     )
 
 
+def guarded_scientific_image(data, *, generated=False, **kwargs):
+    """Revalidate just before media registration; issued HTTP URLs remain a gate."""
+    require_backend_permission("read")
+    identity = configured_session_identity()
+    epoch = field_policy_revision()
+    if not generated:
+        lease = data if isinstance(data,bytes) else getattr(data,"_npdb_render_lease",None)
+        if not verify_payload(lease,identity,epoch):
+            raise PermissionError("Regenerate this preview for the current session and policy.")
+        if Image is not None and isinstance(data,Image.Image) and bytes(lease) != pil_image_to_png_bytes(data):
+            raise PermissionError("Preview content changed; regenerate it.")
+    require_backend_permission("read")
+    if configured_session_identity()!=identity or field_policy_revision()!=epoch:
+        raise PermissionError("Preview authorization changed; please retry.")
+    return st.image(data,**kwargs)
+
+
+def guarded_download_button(*, data, file_name, **kwargs):
+    """Check BEFORE publication side effect; post-call auth cannot retract URLs.
+
+    Native Streamlit media URLs remain bearer capabilities after issuance. This
+    guard does NOT claim HTTP retrieval revocation or recipient binding.
+    """
+    require_backend_permission("read")
+    identity = configured_session_identity()
+    policy_revision = field_policy_revision()
+    if not verify_payload(data, identity, policy_revision):
+        raise PermissionError("Download must be regenerated for the current identity and disclosure policy.")
+    if not is_backend_owner():
+        file_name = "NPDB_export" + (Path(file_name).suffix.lower() if Path(file_name).suffix.lower() in {".csv",".xlsx",".zip",".txt",".pdf",".jdx",".dx"} else ".bin")
+    # No serializer, network call, or arbitrary callback between this final check
+    # and widget registration. Actual retrieval limitations remain a release gate.
+    require_backend_permission("read")
+    if configured_session_identity() != identity or field_policy_revision() != policy_revision:
+        raise PermissionError("Download authorization changed; generate it again.")
+    return st.download_button(data=data, file_name=file_name, **kwargs)
+
+
 def add_credit_to_text_bytes(payload: bytes) -> bytes:
     text = payload.decode("utf-8")
     text = text.rstrip() + f"\n\n{OWNER_CREDIT}\n"
-    return text.encode("utf-8")
+    output = text.encode("utf-8")
+    return SealedPayload(output, payload.identity, payload.policy_revision) if isinstance(payload, SealedPayload) else output
 
 
 def render_app_credit_footer():
@@ -6002,6 +6238,7 @@ def first_structure_identifier(smiles: str = "", inchi: str = "", inchikey: str 
     return ""
 
 
+@authorized_read
 def load_standardized_structure_image(image_path: Path, size=STRUCTURE_DETAIL_IMAGE_SIZE, fallback_smiles: str = ""):
     if Image is None or image_path is None:
         return None
@@ -6015,6 +6252,7 @@ def load_standardized_structure_image(image_path: Path, size=STRUCTURE_DETAIL_IM
         return None
 
 
+@authorized_read
 def load_external_structure_png_bytes(source_text: str, size=STRUCTURE_DETAIL_IMAGE_SIZE, fallback_smiles: str = "", renderer_version: str = STRUCTURE_RENDERER_VERSION) -> bytes:
     _ = renderer_version
     if Image is None:
@@ -6030,6 +6268,7 @@ def load_external_structure_png_bytes(source_text: str, size=STRUCTURE_DETAIL_IM
         return b""
 
 
+@authorized_read
 def load_standardized_structure_source(source_value, size=STRUCTURE_DETAIL_IMAGE_SIZE, fallback_smiles: str = ""):
     if Image is None or source_value is None:
         return None
@@ -6064,7 +6303,7 @@ def render_structure_preview(smiles_text: str, caption: str | None = None, empty
     if not ensure_rdkit_loaded():
         fallback_url = structure_smiles_image_url(smiles_value)
         if fallback_url:
-            st.image(fallback_url, caption=caption or "Rendered from SMILES", width="stretch")
+            guarded_scientific_image(fallback_url, generated=True, caption=caption or "Rendered from SMILES", width="stretch")
         elif empty_message:
             st.info("Structure preview becomes available when RDKit drawing support is active.")
         return
@@ -6073,18 +6312,18 @@ def render_structure_preview(smiles_text: str, caption: str | None = None, empty
         if mol is None:
             fallback_url = structure_smiles_image_url(smiles_value)
             if fallback_url:
-                st.image(fallback_url, caption=caption or "Rendered from SMILES", width="stretch")
+                guarded_scientific_image(fallback_url, generated=True, caption=caption or "Rendered from SMILES", width="stretch")
             elif empty_message:
                 st.info("Stored structure could not be rendered from the available structure string.")
             return
         image = render_rdkit_structure_image(mol, size=size)
         if image is None:
             raise RuntimeError("Structure renderer returned no image.")
-        st.image(image, caption=caption, width="stretch")
+        guarded_scientific_image(image, generated=True, caption=caption, width="stretch")
     except Exception:
         fallback_url = structure_smiles_image_url(smiles_value)
         if fallback_url:
-            st.image(fallback_url, caption=caption or "Rendered from SMILES", width="stretch")
+            guarded_scientific_image(fallback_url, generated=True, caption=caption or "Rendered from SMILES", width="stretch")
         elif empty_message:
             st.info("Structure preview could not be rendered for this record.")
 
@@ -6134,6 +6373,9 @@ def supabase_count_rows(table: str, filters: dict | None = None) -> int:
     query.update(_supabase_filter_query(filters))
     base = get_supabase_url().rstrip("/")
     url = f"{base}/rest/v1/{table}?{urlencode(query, doseq=True, safe=',().:*+-')}"
+    require_backend_permission("read")
+    if configured_session_identity() != request_identity or field_policy_revision() != request_policy_revision:
+        raise PermissionError("Request authorization changed; please retry.")
     request = urllib.request.Request(
         url,
         method="GET",
@@ -6643,6 +6885,9 @@ def build_backup_bundle_bytes() -> tuple[bytes, str]:
     output = io.BytesIO()
     with zipfile.ZipFile(output, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("manifest.json", json.dumps(manifest, indent=2))
+        archive.writestr("field_provenance.json", field_provenance_export(compound_row,"compounds"))
+        if "specimens" in related:
+            archive.writestr("specimen_field_provenance.json", field_provenance_export(related["specimens"],"specimens"))
         for table_name, df in tables.items():
             archive.writestr(f"tables/{table_name}.csv", df.to_csv(index=False))
         if use_local_read_backend() and DB_PATH.exists():
@@ -7006,7 +7251,7 @@ def render_batch_import_workspace():
             template_path = TEMPLATES_DIR / filename
 
             render_helper_card("Template guide", helper_text)
-            st.download_button(
+            guarded_download_button(
                 label=f"Download {filename}",
                 data=dataframe_to_csv_bytes(template_df),
                 file_name=filename,
@@ -7053,7 +7298,7 @@ def render_batch_import_workspace():
                 if errors:
                     note_df = import_errors_dataframe(errors)
                     st.dataframe(note_df, width="stretch", hide_index=True)
-                    st.download_button(
+                    guarded_download_button(
                         label="Download import issue report",
                         data=dataframe_to_csv_bytes(note_df),
                         file_name=f"{Path(filename).stem}_import_issue_report.csv",
@@ -7073,6 +7318,7 @@ def render_kv(title, value):
     )
 
 def render_compound_card(row, show_preview: bool = True, prefer_fast_asset: bool = False):
+    row = policy_record(row, "compounds")
     title = html_text(row["trivial_name"])
     formula = html_text(row["molecular_formula"])
     compound_class = html_text(display_class_term(row["compound_class"], get_secret_object("NPDB_COMPOUND_CLASS_DISPLAY_ALIASES")))
@@ -7102,7 +7348,7 @@ def render_compound_card(row, show_preview: bool = True, prefer_fast_asset: bool
                     fallback_smiles=first_structure_identifier(row.get("smiles"), row.get("inchi"), row.get("inchikey")),
                 )
                 if standardized_image is not None:
-                    st.image(standardized_image, width="stretch")
+                    guarded_scientific_image(standardized_image, width="stretch")
                     if is_generated_structure_reference(source_value):
                         st.caption("Computed from SMILES (unverified).")
                 else:
@@ -7114,13 +7360,13 @@ def render_compound_card(row, show_preview: bool = True, prefer_fast_asset: bool
                     size=STRUCTURE_THUMBNAIL_IMAGE_SIZE,
                 )
                 if structure_png:
-                    st.image(structure_png, width="stretch")
+                    guarded_scientific_image(structure_png, generated=True, width="stretch")
                 else:
                     structure_url = structure_smiles_image_url(
                         first_structure_identifier(row.get("smiles"), row.get("inchi"), row.get("inchikey"))
                     )
                     if structure_url:
-                        st.image(structure_url, width="stretch")
+                        guarded_scientific_image(structure_url, generated=True, width="stretch")
     with info_col:
         st.markdown(
             f"""
@@ -8683,6 +8929,7 @@ def sort_similarity_results(results, score_key="score"):
     )
 
 
+@authorized_read
 def search_similarity_13c(query_peaks, tolerance):
     results = []
     search_index = load_search_index(get_db_signature())
@@ -8706,6 +8953,7 @@ def search_similarity_13c(query_peaks, tolerance):
     return sort_similarity_results(results)
 
 
+@authorized_read
 def search_similarity_1h(query_peaks, tolerance):
     results = []
     search_index = load_search_index(get_db_signature())
@@ -8729,6 +8977,7 @@ def search_similarity_1h(query_peaks, tolerance):
     return sort_similarity_results(results)
 
 
+@authorized_read
 def search_similarity_combined(query_protons, proton_tol, query_carbons, carbon_tol):
     results = []
     search_index = load_search_index(get_db_signature())
@@ -8845,6 +9094,7 @@ def search_preview_results(result_df: pd.DataFrame) -> pd.DataFrame:
     ]
     available_columns = [column for column in preview_columns if column in result_df.columns]
     preview_df = result_df[available_columns].copy() if available_columns else result_df.copy()
+    preview_df = policy_frame(preview_df, contexts=current_disclosure().contexts(result_df, "compounds"))
     return export_name_results(preview_df)
 
 
@@ -8928,6 +9178,10 @@ def export_similarity_results_combined(results: list) -> pd.DataFrame:
 
 @authorized_read
 def build_compound_summary_text(compound_row, proton_df, carbon_df, spectra_df):
+    compound_row = policy_frame(compound_row, "compounds")
+    proton_df = policy_frame(proton_df, "proton_nmr")
+    carbon_df = policy_frame(carbon_df, "carbon_nmr")
+    spectra_df = policy_frame(spectra_df, "spectra_files")
     row = compound_row.iloc[0]
     bioactivity_df = load_bioactivity_data(int(row["id"]))
 
@@ -8949,7 +9203,7 @@ Source Organism: {clean_text(row.get('source_organism'))}
 Source Summary: {clean_text(source_summary_from_record(row))}
 Sample Code: {clean_text(row['sample_code'])}
 Collection Location: {clean_text(row['collection_location'])}
-GPS Coordinates: {clean_text(display_precise_gps(row['gps_coordinates']))}
+GPS Coordinates: {clean_text(display_precise_gps(row['gps_coordinates'], row))}
 Depth (m): {clean_text(row['depth_m'])}
 
 UV Data: {clean_text(row['uv_data'])}
@@ -8995,6 +9249,8 @@ def _asset_bytes_from_source(source_value: str, kind="attachment") -> tuple[byte
     source_text = maybe_blank(source_value)
     if not source_text:
         return b"", ""
+    if parse_asset_token(source_text):
+        source_text = str(resolve_reviewed_asset_source(source_text,_capability=_FIELD_READ_CAPABILITY))
     try:
         if is_external_url(source_text) or is_supabase_storage_reference(source_text):
             return read_remote_scientific_asset(source_text, image_only=(kind == "structure"))
@@ -9020,14 +9276,17 @@ def _compound_structure_asset(row_data) -> tuple[bytes, str]:
     return b"", ""
 
 
+@authorized_read
 def _dataframes_to_record_workbook(sheets: dict[str, pd.DataFrame]) -> bytes:
     if Alignment is None and Font is None and PatternFill is None:
         raise ModuleNotFoundError("openpyxl is not available")
 
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        for raw_name, df in sheets.items():
-            sheet_name = raw_name[:31]
+        for number, (raw_name, df) in enumerate(sheets.items(),start=1):
+            sheet_name = str(raw_name)[:31]
+            if not is_backend_owner() and raw_name not in {"Data","Metadata","1H_NMR","13C_NMR","Spectra_Files","Bioactivity","specimens","specimen_compounds","specimen_1h_extracts"}:
+                sheet_name = f"Data_{number}"
             export_df = redact_private_gps_for_current_user(df)
             export_df.to_excel(writer, sheet_name=sheet_name, index=False)
             worksheet = writer.book[sheet_name]
@@ -9063,6 +9322,7 @@ def _select_existing_columns(df: pd.DataFrame, columns: list[str]) -> pd.DataFra
 
 
 def _important_metadata_dataframe(row_data) -> pd.DataFrame:
+    row_data = policy_record(row_data, "compounds")
     fields = [
         ("Compound ID", row_data.get("id")),
         ("Trivial Name", row_data.get("trivial_name")),
@@ -9079,7 +9339,7 @@ def _important_metadata_dataframe(row_data) -> pd.DataFrame:
         ("Source Summary", source_summary_from_record(row_data)),
         ("Sample Code", row_data.get("sample_code")),
         ("Collection Location", row_data.get("collection_location")),
-        ("GPS Coordinates", display_precise_gps(row_data.get("gps_coordinates"))),
+        ("GPS Coordinates", display_precise_gps(row_data.get("gps_coordinates"), row_data)),
         ("Depth (m)", row_data.get("depth_m")),
         ("UV Data", row_data.get("uv_data")),
         ("FTIR Data", row_data.get("ftir_data")),
@@ -9099,9 +9359,8 @@ def _important_metadata_dataframe(row_data) -> pd.DataFrame:
         ("Structure Image Link", row_data.get("structure_image_path")),
         ("Note", row_data.get("note")),
     ]
-    return pd.DataFrame(
-        [{"Field": label, "Value": clean_text(value)} for label, value in fields]
-    )
+    output = pd.DataFrame([{ "Field": label, "Value": value} for label, value in fields])
+    return policy_frame(output, contexts=[field_context(dict(row_data), "compounds")] * len(output))
 
 
 def _important_bioactivity_dataframe(bioactivity_df: pd.DataFrame) -> pd.DataFrame:
@@ -9139,7 +9398,59 @@ def _important_bioactivity_dataframe(bioactivity_df: pd.DataFrame) -> pd.DataFra
 
 
 @authorized_read
+def field_provenance_export(frame, table):
+    """Export explicit review facts, never infer source approval from a record DOI."""
+    disclosure = current_disclosure()
+    identity = disclosure.policy.identity()
+    entries = []
+    for record, ctx in zip(frame.to_dict("records"), disclosure.contexts(frame,table)):
+        for label,value in record.items():
+            field = canonical(label)
+            if not is_protected(field,value) and (table,ctx.get("id",""),field) not in disclosure.policy._evidence:
+                continue
+            original = ctx.get("values",{}).get(field,value)
+            fact = disclosure.fact(field,original,ctx)
+            visible = identity.role == "owner" or disclosure.visible(field,original,ctx)
+            if not visible:
+                continue
+            entries.append({"table":table,"record_id":ctx.get("id",""),"field":field,
+                "record_revision":ctx.get("revision",""),
+                "classification":fact.classification if fact else "UNKNOWN_UNVERIFIED",
+                "verification_status":fact.verification_status if fact else "",
+                "source_reference":fact.source_reference if fact else "",
+                "source_locator":fact.source_locator if fact else "",
+                "verified_by":fact.verified_by if fact and identity.role == "owner" else "",
+                "verified_at":fact.verified_at if fact and identity.role == "owner" else "",
+                "disclosure_restrictions":list(fact.disclosure_restrictions) if fact else []})
+    disclosure.policy._unchanged_identity(identity)
+    return json.dumps({"scope":"field_value_revision_only_not_global_curation","entries":entries},ensure_ascii=False,indent=2).encode("utf-8")
+
+
+@authorized_read
+def record_related_specimen_tables(compound_id):
+    links = load_specimen_compound_links()
+    if links.empty or "compound_id" not in links:
+        return {}
+    links = links[pd.to_numeric(links["compound_id"],errors="coerce") == int(compound_id)].copy()
+    specimen_ids = set(pd.to_numeric(links["specimen_id"],errors="coerce").dropna().astype(int))
+    specimens = load_all_specimens(get_db_signature())
+    if not specimens.empty:
+        specimens = specimens[pd.to_numeric(specimens["id"],errors="coerce").isin(specimen_ids)].copy()
+    extracts = load_specimen_extracts(db_signature=get_db_signature())
+    if not extracts.empty:
+        extracts = extracts[pd.to_numeric(extracts["specimen_id"],errors="coerce").isin(specimen_ids)].copy()
+    return {"specimens":policy_frame(specimens,"specimens"),
+            "specimen_compounds":policy_frame(links,"specimen_compounds"),
+            "specimen_1h_extracts":policy_frame(extracts,"specimen_1h_extracts")}
+
+
+@authorized_read
 def build_compound_record_bundle(compound_row, proton_df, carbon_df, spectra_df, bioactivity_df) -> tuple[bytes, str]:
+    compound_row = policy_frame(compound_row, "compounds")
+    proton_df = policy_frame(proton_df, "proton_nmr")
+    carbon_df = policy_frame(carbon_df, "carbon_nmr")
+    spectra_df = policy_frame(spectra_df, "spectra_files")
+    bioactivity_df = policy_frame(bioactivity_df, "bioactivity_records")
     row_data = compound_row.iloc[0]
     compound_id = int(row_data["id"])
     record_name = _archive_safe_name(clean_text(row_data["trivial_name"]), fallback=f"compound_{compound_id}")
@@ -9172,6 +9483,8 @@ def build_compound_record_bundle(compound_row, proton_df, carbon_df, spectra_df,
     structure_bytes, structure_suffix = _compound_structure_asset(row_data)
     has_registered_structure = bool(maybe_blank(row_data.get("structure_image_path")))
     source_reference = maybe_blank(row_data.get("structure_image_path"))
+    if parse_asset_token(source_reference):
+        source_reference = resolve_reviewed_asset_source(source_reference,_capability=_FIELD_READ_CAPABILITY)
     generated_ref = bool(source_reference and is_generated_structure_reference(source_reference))
     structure_asset_origin_class = (
         "generated_storage_unverified" if generated_ref else
@@ -9188,6 +9501,10 @@ def build_compound_record_bundle(compound_row, proton_df, carbon_df, spectra_df,
         "not_registered"
     )
 
+    proton_export_df = policy_frame(proton_export_df, contexts=current_disclosure().contexts(proton_df, "proton_nmr"))
+    carbon_export_df = policy_frame(carbon_export_df, contexts=current_disclosure().contexts(carbon_df, "carbon_nmr"))
+    spectra_export_df = policy_frame(spectra_export_df, contexts=current_disclosure().contexts(spectra_df, "spectra_files"))
+    bioactivity_export_df = policy_frame(bioactivity_export_df, contexts=current_disclosure().contexts(bioactivity_df, "bioactivity_records"))
     workbook_sheets = {
         "Metadata": metadata_df,
         "1H_NMR": proton_export_df,
@@ -9195,6 +9512,9 @@ def build_compound_record_bundle(compound_row, proton_df, carbon_df, spectra_df,
         "Spectra_Files": spectra_export_df,
         "Bioactivity": bioactivity_export_df,
     }
+
+    related = record_related_specimen_tables(compound_id)
+    workbook_sheets.update(related)
 
     manifest = {
         "project": "NPDB: Natural Products Spectral Database",
@@ -9207,8 +9527,10 @@ def build_compound_record_bundle(compound_row, proton_df, carbon_df, spectra_df,
             "carbon_nmr_rows": int(len(carbon_df)),
             "spectra_file_rows": int(len(spectra_df)),
             "bioactivity_rows": int(len(bioactivity_df)),
+            "linked_specimen_rows": int(len(related.get("specimens", []))),
+            "specimen_compound_link_rows": int(len(related.get("specimen_compounds", []))),
         },
-        "spectra_policy": "Spectra image/raw files are listed as cloud links only and are not embedded in this download package.",
+        "spectra_policy": "Spectra files are listed as record references, not embedded. Non-owner references are opaque app locators, not browser-direct Storage links.",
         "structure_asset_status": structure_asset_status,
         "structure_asset_origin_class": structure_asset_origin_class,
         "structure_asset_sha256": hashlib.sha256(structure_bytes).hexdigest() if structure_bytes else None,
@@ -9224,11 +9546,16 @@ def build_compound_record_bundle(compound_row, proton_df, carbon_df, spectra_df,
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("README.txt", build_compound_summary_text(compound_row, proton_df, carbon_df, spectra_df))
         archive.writestr("manifest.json", json.dumps(manifest, indent=2))
+        archive.writestr("field_provenance.json", field_provenance_export(compound_row,"compounds"))
+        if "specimens" in related:
+            archive.writestr("specimen_field_provenance.json", field_provenance_export(related["specimens"],"specimens"))
         archive.writestr("tables/compound_metadata.csv", metadata_df.to_csv(index=False))
         archive.writestr("tables/1H_NMR_chemical_shifts.csv", proton_export_df.to_csv(index=False))
         archive.writestr("tables/13C_NMR_chemical_shifts.csv", carbon_export_df.to_csv(index=False))
         archive.writestr("tables/spectra_files.csv", spectra_export_df.to_csv(index=False))
         archive.writestr("tables/bioactivity_records.csv", bioactivity_export_df.to_csv(index=False))
+        for table, frame in related.items():
+            archive.writestr(f"tables/{table}.csv", dataframe_to_csv_bytes(frame))
         try:
             archive.writestr("NPDB_full_record.xlsx", _dataframes_to_record_workbook(workbook_sheets))
         except Exception:
@@ -9395,17 +9722,6 @@ def render_spectra_section(compound_id):
                         for warning_message in file_warnings:
                             st.caption(warning_message)
 
-                if is_external_url(file_path_value) or is_supabase_storage_reference(file_path_value):
-                    preview_rendered = False
-                    if can_preview_external_image(file_path_value, spectrum_type):
-                        preview_url = google_drive_preview_url(file_path_value) if is_google_drive_url(file_path_value) else display_asset_url(file_path_value)
-                        if preview_url:
-                            st.image(preview_url, caption=f"{spectrum_type} preview", width="stretch")
-                            preview_rendered = True
-                    if not preview_rendered:
-                        render_external_link_card("Remote file", display_asset_url(file_path_value), None)
-                    continue
-
                 render_registered_file_preview(file_path_value, spectrum_type=spectrum_type,
                                                key_prefix=f"spectrum_{file_id}", kind="spectrum")
 
@@ -9436,20 +9752,16 @@ def render_registered_file_preview(file_path_value, caption: str = "", spectrum_
         return
 
     if is_external_url(path_text) or is_supabase_storage_reference(path_text):
-        preview_rendered = False
-        if can_preview_external_image(path_text, spectrum_type):
-            preview_url = google_drive_preview_url(path_text) if is_google_drive_url(path_text) else browser_displayable_asset_url(path_text)
-            if preview_url:
-                st.image(preview_url, caption=caption or None, width="stretch")
-                preview_rendered = True
-        if not preview_rendered:
-            display_url = browser_displayable_asset_url(path_text)
-            if display_url:
-                render_external_link_card(caption or "Remote file", display_url, None)
-            else:
-                st.info("Cloud file is registered, but preview is unavailable while cloud storage is unreachable.")
-                if is_owner_editor():
-                    st.caption(path_text)
+        try:
+            file_bytes, suffix = read_remote_scientific_asset(path_text)
+        except (AssetAccessError, PermissionError, OSError, ValueError, TypeError):
+            st.info("Attachment unavailable or awaiting provenance review.")
+            return
+        if suffix in LOCAL_IMAGE_SUFFIXES:
+            guarded_scientific_image(file_bytes, caption=caption or "Reviewed scientific attachment", width="stretch")
+        else:
+            guarded_download_button(label="Download reviewed attachment", data=file_bytes,
+                                    file_name="NPDB_attachment" + suffix, key=key_prefix)
         return
 
     try:
@@ -9457,17 +9769,19 @@ def render_registered_file_preview(file_path_value, caption: str = "", spectrum_
     except (AssetAccessError, OSError, ValueError, TypeError):
         st.warning("Local asset is unavailable or not permitted. Ask a curator to review its registered location.")
         return
-    name = Path(path_text).name
-    suffix = Path(name).suffix.lower()
+    private_source = resolve_reviewed_asset_source(path_text,_capability=_FIELD_READ_CAPABILITY)
+    suffix = Path(urlparse(str(private_source)).path).suffix.lower()
+    name = Path(path_text).name if is_backend_owner() else "NPDB_attachment" + suffix
     if suffix in LOCAL_IMAGE_SUFFIXES:
-        st.image(file_bytes, caption=caption or name, width="stretch")
+        guarded_scientific_image(file_bytes, caption=caption or name, width="stretch")
         return
     mime = "application/pdf" if suffix == ".pdf" else "application/octet-stream"
-    st.download_button(label=f"Download {name}", data=file_bytes, file_name=name, mime=mime,
+    guarded_download_button(label=f"Download {name}", data=file_bytes, file_name=name, mime=mime,
                        key=f"download_{slugify_value(key_prefix)}_{hashlib.sha256(path_text.encode()).hexdigest()[:16]}")
 
 
 def render_compound_structure_from_row(row_data, caption: str = "Structure", size=STRUCTURE_THUMBNAIL_IMAGE_SIZE):
+    row_data = policy_record(row_data, "compounds")
     source_value = maybe_blank(row_data.get("structure_image_path"))
     fallback_structure = first_structure_identifier(row_data.get("smiles"), row_data.get("inchi"), row_data.get("inchikey"))
     if source_value:
@@ -9477,7 +9791,7 @@ def render_compound_structure_from_row(row_data, caption: str = "Structure", siz
             fallback_smiles=fallback_structure,
         )
         if standardized_image is not None:
-            st.image(standardized_image, caption=caption, width="stretch")
+            guarded_scientific_image(standardized_image, caption=caption, width="stretch")
             if is_generated_structure_reference(source_value):
                 st.caption("Unverified SMILES depiction — chemical identity has not been curator-verified.")
             return
@@ -9491,11 +9805,11 @@ def render_compound_structure_from_row(row_data, caption: str = "Structure", siz
         st.caption("No curated image registered; depiction below is generated from unverified structure text.")
         structure_png = structure_smiles_png_bytes(fallback_structure, size=size)
         if structure_png:
-            st.image(structure_png, caption=caption, width="stretch")
+            guarded_scientific_image(structure_png, generated=True, caption=caption, width="stretch")
             return
         structure_url = structure_smiles_image_url(fallback_structure)
         if structure_url:
-            st.image(structure_url, caption=caption, width="stretch")
+            guarded_scientific_image(structure_url, generated=True, caption=caption, width="stretch")
             return
     st.info("No structure image available.")
 
@@ -9539,7 +9853,7 @@ def show_compound_detail(compound_id):
             spectra_df_raw,
             bioactivity_df_raw,
         )
-        st.download_button(
+        guarded_download_button(
             label="Download Full Record",
             data=bundle_bytes,
             file_name=bundle_name,
@@ -9606,7 +9920,7 @@ def show_compound_detail(compound_id):
         render_kv("Source Summary", source_summary_from_record(row_data))
         render_kv("Sample Code", row_data["sample_code"])
         render_kv("Collection Location", row_data["collection_location"])
-        render_kv("GPS Coordinates", display_precise_gps(row_data["gps_coordinates"]))
+        render_kv("GPS Coordinates", display_precise_gps(row_data["gps_coordinates"], row_data))
         render_kv("Depth (m)", row_data["depth_m"])
         render_kv("Data Source", row_data["data_source"])
         render_kv("Curation Status", clean_text(normalize_curation_status(row_data.get("curation_status"))).title())
@@ -9630,7 +9944,7 @@ def show_compound_detail(compound_id):
                 fallback_smiles=first_structure_identifier(row_data.get("smiles"), row_data.get("inchi"), row_data.get("inchikey")),
             )
             if standardized_image is not None:
-                st.image(standardized_image, width="stretch")
+                guarded_scientific_image(standardized_image, width="stretch")
                 if is_generated_structure_reference(structure_path):
                     st.caption("This depiction was generated from SMILES; its structure is not yet curator-verified.")
             else:
@@ -9703,6 +10017,7 @@ def show_compound_detail(compound_id):
     st.markdown('</div>', unsafe_allow_html=True)
 
 def render_best_match_summary(item, mode_label):
+    item = policy_record(item, "compounds")
     source_summary = html_text(source_summary_from_record(item))
     st.markdown("### Best Match Summary")
     st.markdown(
@@ -11161,10 +11476,12 @@ def show_compound_pages():
                         value=maybe_blank(row.get("source_organism")),
                         key=f"edit_source_organism_{edit_compound_id}",
                     )
-                    sample_code = st.text_input("Sample Code", value=maybe_blank(row["sample_code"]), key=f"edit_sample_code_{edit_compound_id}")
-                    collection_location = st.text_input("Collection Location", value=maybe_blank(row["collection_location"]), key=f"edit_collection_location_{edit_compound_id}")
-                    gps_coordinates = st.text_input("GPS Coordinates", value=maybe_blank(row["gps_coordinates"]), key=f"edit_gps_coordinates_{edit_compound_id}")
-                    depth_m_text = st.text_input("Depth (m)", value=maybe_blank(row["depth_m"]), key=f"edit_depth_m_{edit_compound_id}")
+                    if not is_backend_owner():
+                        st.caption("Metadata withheld pending field-level provenance review remains unchanged when you save.")
+                    sample_code = st.text_input("Sample Code", value=maybe_blank(row["sample_code"]), key=f"edit_sample_code_{edit_compound_id}", disabled=(not is_backend_owner() and row.get("sample_code") is None))
+                    collection_location = st.text_input("Collection Location", value=maybe_blank(row["collection_location"]), key=f"edit_collection_location_{edit_compound_id}", disabled=(not is_backend_owner() and row.get("collection_location") is None))
+                    gps_coordinates = st.text_input("GPS Coordinates", value=maybe_blank(row["gps_coordinates"]), key=f"edit_gps_coordinates_{edit_compound_id}", disabled=(not is_backend_owner() and row.get("gps_coordinates") is None))
+                    depth_m_text = st.text_input("Depth (m)", value=maybe_blank(row["depth_m"]), key=f"edit_depth_m_{edit_compound_id}", disabled=(not is_backend_owner() and row.get("depth_m") is None))
 
                 with col2:
                     uv_data = st.text_input("UV Data", value=maybe_blank(row["uv_data"]), key=f"edit_uv_data_{edit_compound_id}")
@@ -12618,6 +12935,9 @@ def snapshot_csv_available(table: str = "compounds") -> bool:
 
 
 def _select_existing_columns(df: pd.DataFrame, columns: str | list[str] | None) -> pd.DataFrame:
+    # This final legacy definition is also used by record exports. Padding must
+    # not mutate a held/cache-derived input or invalidate its signed context.
+    df = df.copy(deep=True)
     if df.empty or not columns:
         return df
     if isinstance(columns, str):
@@ -12634,6 +12954,7 @@ def _select_existing_columns(df: pd.DataFrame, columns: str | list[str] | None) 
 
 @authorized_read
 def _snapshot_dataframe(table: str, columns: str | list[str] | None = None) -> pd.DataFrame:
+    require_backend_permission("read", table)
     path = CSV_SNAPSHOT_DIR / f"{table}.csv"
     if not path.exists():
         return pd.DataFrame()
@@ -12865,6 +13186,9 @@ def _supabase_headers(write: bool = False, json_body: bool = True, extra: dict |
 
 
 def _supabase_request(method: str, path: str, query: dict | None = None, body=None, write: bool = False, json_body: bool = True, extra_headers: dict | None = None, return_json: bool = True, timeout: int = 60):
+    require_backend_permission("read" if method.upper() in {"GET","HEAD"} else "read")
+    request_identity = configured_session_identity()
+    request_policy_revision = field_policy_revision()
     forbidden_headers = {"authorization", "apikey", "host", "x-http-method-override", "x-method-override"}
     if any(str(key).lower() in forbidden_headers for key in (extra_headers or {})):
         raise PermissionError("Request header override is not permitted.")
@@ -12881,6 +13205,8 @@ def _supabase_request(method: str, path: str, query: dict | None = None, body=No
     if method.upper() in {"GET", "HEAD"}:
         require_backend_permission("read")
         if path.startswith("/storage/v1/object/"):
+            if not is_backend_owner() and not ASSET_IO.get():
+                raise PermissionError("Use a reviewed attachment reader.")
             remainder = path.removeprefix("/storage/v1/object/")
             for prefix in ("authenticated/", "public/", "sign/"):
                 if remainder.startswith(prefix):
@@ -12901,6 +13227,8 @@ def _supabase_request(method: str, path: str, query: dict | None = None, body=No
             require_backend_permission("admin")
     if method.upper() not in {"GET", "HEAD"}:
         if path.startswith("/storage/v1/object/sign/"):
+            if not is_backend_owner() and not ASSET_IO.get():
+                raise PermissionError("Direct Storage signing is owner-only.")
             if method.upper() != "POST":
                 raise PermissionError("Storage signing requires a POST request.")
             require_backend_permission("read")
@@ -12920,6 +13248,11 @@ def _supabase_request(method: str, path: str, query: dict | None = None, body=No
                 if method.upper() not in {"POST", "PATCH", "DELETE"} or isinstance(body, list):
                     raise PermissionError("This write request is not permitted.")
                 require_backend_permission("delete" if method.upper() == "DELETE" else "curate", table, body if isinstance(body, dict) else None)
+                if method.upper() == "PATCH" and not is_backend_owner():
+                    record_filter = str((query or {}).get("id", ""))
+                    if not re.fullmatch(r"eq\.[0-9]+",record_filter):
+                        raise PermissionError("Editor updates require an explicit record identity.")
+                    body = preserve_unseen_fields(table,int(record_filter[3:]),body or {})
         else:
             require_backend_permission("admin")
     if write and not use_supabase_write_backend():
@@ -12934,6 +13267,9 @@ def _supabase_request(method: str, path: str, query: dict | None = None, body=No
     payload = None
     if body is not None:
         payload = json.dumps(body).encode("utf-8") if json_body else body
+    require_backend_permission("read")
+    if configured_session_identity() != request_identity or field_policy_revision() != request_policy_revision:
+        raise PermissionError("Request authorization changed; please retry.")
     request = urllib.request.Request(
         url,
         data=payload,
@@ -12943,15 +13279,20 @@ def _supabase_request(method: str, path: str, query: dict | None = None, body=No
     try:
         with urllib.request.urlopen(request, timeout=timeout, context=_supabase_ssl_context()) as response:
             raw = response.read()
+            require_backend_permission("read")
+            if configured_session_identity() != request_identity or field_policy_revision() != request_policy_revision:
+                raise PermissionError("Request authorization changed; please retry.")
             if not return_json:
                 return raw
             if not raw:
                 return None
             parsed_response = json.loads(raw.decode("utf-8"))
-            if method.upper() in {"GET", "HEAD"} and path.startswith("/rest/v1/"):
-                alias_pairs = re.findall(r'(?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))\s*:\s*gps_coordinates\b', str((query or {}).get("select", "")))
-                aliases = [quoted or plain for quoted, plain in alias_pairs]
-                return redact_gps_payload(parsed_response, aliases)
+            if path.startswith("/rest/v1/"):
+                if READ_DEPTH.get() == 0:
+                    select = str((query or {}).get("select", ""))
+                    aliases = {alias: original for alias, original in re.findall(r'"?([A-Za-z_][A-Za-z0-9_]*)"?\s*:\s*([A-Za-z_][A-Za-z0-9_]*)',select)}
+                    return current_disclosure().payload(parsed_response, path.removeprefix("/rest/v1/"), aliases)
+
             return parsed_response
     except urllib.error.HTTPError as exc:
         raise RuntimeError(f"Supabase request failed (HTTP {exc.code}).") from None
@@ -13158,6 +13499,8 @@ def search_compound_select_columns() -> str:
 
 def supabase_insert_row(table: str, row: dict):
     require_backend_permission("curate", table, row)
+    if any(parse_asset_token(v) for v in row.values()):
+        raise ValueError("Upload/select an authorized source asset before creating a record.")
     payload = {k: _json_ready(v) for k, v in row.items() if k and v is not None}
     try:
         response = _supabase_insert_request(table, payload)
@@ -13174,7 +13517,10 @@ def supabase_insert_row(table: str, row: dict):
 
 def supabase_update_row(table: str, row_id: int, row: dict, *, expected_updated_at=None):
     require_backend_permission("curate", table, row)
+    row = preserve_unseen_fields(table, row_id, row)
     payload = {k: _json_ready(v) for k, v in row.items() if k and k != "id"}
+    if not payload:
+        return {}
     query = {"id": f"eq.{row_id}", "select": "id,updated_at" if table == "compounds" else "id"}
     if expected_updated_at is not None:
         revision = maybe_blank(expected_updated_at)
@@ -13231,10 +13577,28 @@ def supabase_upload_bytes(bucket: str, object_path: str, data: bytes, content_ty
 
 @authorized_read
 def _sqlite_dataframe(query: str, params: tuple | list | None = None) -> pd.DataFrame:
+    # Arbitrary SQL is not a viewer/editor API. Typed protected loaders execute
+    # as nested read scopes, then the outer wrapper projects their result.
+    if READ_DEPTH.get() <= 1 and not is_backend_owner():
+        require_backend_permission("admin")
     if not DB_PATH.exists():
         return pd.DataFrame()
     conn = get_connection()
     try:
+        conn.execute("PRAGMA query_only = ON")
+        allowed_tables = {"compounds","proton_nmr","carbon_nmr","spectra_files","bioactivity_records",
+                          "specimens","specimen_compounds","specimen_1h_extracts"}
+        if is_backend_owner():
+            allowed_tables.add("audit_events")
+        def authorize(action, first, second, database, trigger):
+            if action == sqlite3.SQLITE_READ:
+                return sqlite3.SQLITE_OK if first in allowed_tables else sqlite3.SQLITE_DENY
+            if action in {sqlite3.SQLITE_SELECT, sqlite3.SQLITE_RECURSIVE}:
+                return sqlite3.SQLITE_OK
+            if action == sqlite3.SQLITE_FUNCTION and str(second or first).casefold() in {"count","max","min","sum","avg","trim","coalesce","lower","upper","round","length","abs","ifnull"}:
+                return sqlite3.SQLITE_OK
+            return sqlite3.SQLITE_DENY
+        conn.set_authorizer(authorize)
         return pd.read_sql_query(query, conn, params=params)
     finally:
         conn.close()
@@ -13252,6 +13616,8 @@ def _sqlite_columns(table: str) -> list[str]:
 
 def _sqlite_upsert_row(table: str, row: dict) -> int | None:
     require_backend_permission("curate", table, row)
+    if row.get("id") is None and any(parse_asset_token(v) for v in row.values()):
+        raise ValueError("Upload/select an authorized source asset before creating a record.")
     columns = [column for column in row.keys() if column in _sqlite_columns(table)]
     if not columns:
         return None
@@ -13265,7 +13631,11 @@ def _sqlite_upsert_row(table: str, row: dict) -> int | None:
         else:
             exists = False
         if exists:
+            row = preserve_unseen_fields(table, row_id, row)
+            columns = [column for column in columns if column in row]
             set_columns = [column for column in columns if column != "id"]
+            if not set_columns:
+                return int(row_id)
             assignments = ", ".join(f"{column} = ?" for column in set_columns)
             values = [row.get(column) for column in set_columns] + [row_id]
             cursor.execute(f"UPDATE {table} SET {assignments} WHERE id = ?", values)
@@ -13416,7 +13786,7 @@ def _load_all_compounds_cached(source_normalization_version: str, db_signature):
 
 @authorized_read
 def load_all_compounds(source_normalization_version: str = SOURCE_NORMALIZATION_CACHE_VERSION):
-    return redact_private_gps_for_current_user(_load_all_compounds_cached(source_normalization_version, get_db_signature()))
+    return _load_all_compounds_cached(source_normalization_version, get_db_signature())
 
 
 try:
@@ -13445,7 +13815,7 @@ def _load_dashboard_compounds_cached(source_normalization_version: str, db_signa
 
 @authorized_read
 def load_dashboard_compounds(source_normalization_version: str = SOURCE_NORMALIZATION_CACHE_VERSION):
-    return redact_private_gps_for_current_user(_load_dashboard_compounds_cached(source_normalization_version, get_db_signature()))
+    return _load_dashboard_compounds_cached(source_normalization_version, get_db_signature())
 
 
 try:
@@ -13475,7 +13845,7 @@ def _load_search_compounds_cached(source_normalization_version: str, db_signatur
 
 @authorized_read
 def load_search_compounds(source_normalization_version: str = SOURCE_NORMALIZATION_CACHE_VERSION):
-    return redact_private_gps_for_current_user(_load_search_compounds_cached(source_normalization_version, get_db_signature()))
+    return _load_search_compounds_cached(source_normalization_version, get_db_signature())
 
 
 try:
@@ -13523,7 +13893,7 @@ def _load_compound_row_cached(compound_id, source_normalization_version: str, db
 
 @authorized_read
 def load_compound_row(compound_id, source_normalization_version: str = SOURCE_NORMALIZATION_CACHE_VERSION):
-    return redact_private_gps_for_current_user(_load_compound_row_cached(compound_id, source_normalization_version, get_db_signature()))
+    return _load_compound_row_cached(compound_id, source_normalization_version, get_db_signature())
 
 
 try:
@@ -13759,7 +14129,7 @@ def _load_all_specimens_cached(db_signature=None):
 
 @authorized_read
 def load_all_specimens(db_signature=None):
-    return redact_private_gps_for_current_user(_load_all_specimens_cached(db_signature))
+    return _load_all_specimens_cached(db_signature)
 
 
 try:
@@ -13788,7 +14158,7 @@ def _load_specimen_row_cached(specimen_id, db_signature=None):
 
 @authorized_read
 def load_specimen_row(specimen_id, db_signature=None):
-    return redact_private_gps_for_current_user(_load_specimen_row_cached(specimen_id, db_signature))
+    return _load_specimen_row_cached(specimen_id, db_signature)
 
 
 try:
@@ -13875,6 +14245,8 @@ def confirm_compound_fields_persisted(compound_id: int, expected_fields: dict[st
     stored_row = compound_df.iloc[0]
     mismatches = []
     for field, expected_value in expected_fields.items():
+        if not is_backend_owner() and is_protected(field, expected_value):
+            continue
         if field not in stored_row.index:
             continue
         if not _readback_value_matches(stored_row.get(field), expected_value):
@@ -13980,6 +14352,7 @@ def load_search_index(db_signature: float):
                 "compound_id": compound_id,
                 "trivial_name": row.get("trivial_name"),
                 "sample_code": row.get("sample_code"),
+                "updated_at": row.get("updated_at"),
                 "molecular_formula": row.get("molecular_formula"),
                 "source_category": row.get("source_category"),
                 "source_organism": row.get("source_organism"),
@@ -14070,7 +14443,7 @@ def insert_compound_record(trivial_name, iupac_name, molecular_formula, compound
 def update_compound_record(compound_id, trivial_name, iupac_name, molecular_formula, compound_class, compound_subclass, smiles, inchi, inchikey, source_category, source_organism, source_material, sample_code, collection_location, gps_coordinates, depth_m, uv_data, ftir_data, cd_data, optical_rotation, melting_point, crystallization_method, structure_image_path, journal_name, article_title, publication_year, volume, issue, pages, doi, ccdc_number, molecular_weight, hrms_data, data_source, curation_status, note, *, original_row=None):
     ensure_write_target_ready()
     structure_image_path = maybe_blank(structure_image_path)
-    if not structure_image_path:
+    if not structure_image_path and is_backend_owner():
         structure_image_path = _auto_structure_image_path(compound_id, smiles=smiles, inchi=inchi, inchikey=inchikey)
     row = {
         "id": compound_id,
@@ -14716,15 +15089,6 @@ def _render_specimen_image(image_path: str, caption: str = "Specimen"):
     if not path_text:
         st.info("No specimen image registered.")
         return
-    if is_external_url(path_text) or is_supabase_storage_reference(path_text):
-        display_url = browser_displayable_asset_url(path_text)
-        if display_url:
-            st.image(display_url, caption=caption, width="stretch")
-            return
-        st.info("Cloud specimen image is registered, but preview is unavailable while cloud storage is unreachable.")
-        if is_owner_editor():
-            st.caption(path_text)
-        return
     render_registered_file_preview(path_text, caption=caption, kind="specimen", key_prefix="specimen")
 
 
@@ -14818,7 +15182,7 @@ def show_specimen_library_pages():
                             ("Habitat", specimen.get("habitat")),
                             ("Sampling date", specimen.get("sampling_date")),
                             ("Depth", specimen.get("depth_m")),
-                            ("GPS", display_precise_gps(specimen.get("gps_coordinates"))),
+                            ("GPS", display_precise_gps(specimen.get("gps_coordinates"), specimen, "specimens")),
                         ]
                         for label, value in detail_bits:
                             if maybe_blank(value):

@@ -21,7 +21,11 @@ APP = Path(__file__).resolve().parents[1] / "scripts" / "app.py"
 
 
 def isolated(name, namespace):
+    from authorization_fixture import bind_authorization
+    for k,v in bind_authorization(role="owner").items():namespace.setdefault(k,v)
     tree = ast.parse(APP.read_text(encoding="utf-8"), filename=str(APP))
+    guard=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=="guarded_scientific_image"][-1]
+    exec(compile(ast.Module(body=[guard],type_ignores=[]),str(APP),"exec"),namespace)
     nodes = [x for x in tree.body if isinstance(x, ast.FunctionDef) and x.name == name]
     if not nodes:
         raise AssertionError(f"Function {name} not found in app.py")
@@ -170,6 +174,13 @@ class StructureImageIntegrityTests(unittest.TestCase):
             "is_generated_structure_reference": lambda x: "generated/" in x,
         })
         render = isolated("render_compound_structure_from_row", ns)
+        # The stub replaces a normalization helper; supply its real current
+        # generation receipt rather than bypassing the final media guard.
+        def generated(*args,**kwargs):
+            image=Image.new("RGB",(90,90),"white")
+            image._npdb_render_lease=ns['SealedPayload'](img_png_bytes(image),ns['configured_session_identity'](),ns['field_policy_revision']())
+            return image
+        ns['load_standardized_structure_source']=generated
         render({"structure_image_path": "storage://structures/generated/dummy.png", "smiles": "CCO"})
         self.assertEqual(len(ns["st"].images), 1)
         self.assertTrue(any("unverified" in x.lower() for x in ns["st"].captions))

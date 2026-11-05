@@ -9,6 +9,7 @@ import tempfile
 import types
 import unittest
 import zipfile
+from urllib.parse import urlparse
 
 from PIL import Image
 from authorization_fixture import bind_authorization
@@ -23,8 +24,18 @@ def load(ns, *names):
     # account tests explicitly bind their own real permission context.
     auth=bind_authorization()
     ns.setdefault("require_backend_permission", auth["require_backend_permission"])
-    ns.setdefault("configured_session_identity", lambda: ns["require_backend_permission"].__globals__.get("configured_session_identity",auth["configured_session_identity"])())
+    ns["configured_session_identity"] = lambda: ns["require_backend_permission"].__globals__.get("configured_session_identity",auth["configured_session_identity"])()
     ns.setdefault("wraps",wraps)
+    for key,value in auth.items():
+        ns.setdefault(key,value)
+    # Helpers must share this test's actual authorization namespace; binding a
+    # second owner's policy would defeat the cross-session tests.
+    for helper in ('field_policy_revision','current_disclosure','policy_frame','policy_record','project_authorized_result','resolve_reviewed_asset_source','asset_policy_approval','finish_asset_policy','guarded_download_button','guarded_scientific_image'):
+        node=[n for n in ast.parse(APP.read_text()).body if isinstance(n,ast.FunctionDef) and n.name==helper][-1]
+        exec(compile(ast.Module(body=[node],type_ignores=[]),str(APP),'exec'),ns)
+
+    ns["current_backend_role"]=lambda:ns["require_backend_permission"].__globals__["current_backend_role"]()
+    ns["is_backend_owner"]=lambda:ns["require_backend_permission"].__globals__["is_backend_owner"]()
     tree = ast.parse(APP.read_text())
     for name in ("authorized_read", *names):
         node = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name][-1]
@@ -32,7 +43,7 @@ def load(ns, *names):
 
 
 def reader_namespace(project):
-    ns = dict(Path=Path, PROJECT_DIR=project, STRUCTURES_DIR=project/'data/structures',
+    ns = dict(Path=Path, urlparse=urlparse, PROJECT_DIR=project, STRUCTURES_DIR=project/'data/structures',
               SPECTRA_DIR=project/'data/spectra', SPECIMENS_DIR=project/'data/specimens',
               read_local_asset=read_local_asset, validate_asset_content=validate_asset_content,
               AssetAccessError=AssetAccessError, LOCAL_ASSET_MAX_BYTES=1024*1024,
