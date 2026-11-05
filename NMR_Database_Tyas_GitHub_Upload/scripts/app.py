@@ -9033,6 +9033,7 @@ def search_preview_results(result_df: pd.DataFrame) -> pd.DataFrame:
     ]
     available_columns = [column for column in preview_columns if column in result_df.columns]
     preview_df = result_df[available_columns].copy() if available_columns else result_df.copy()
+    preview_df = policy_frame(preview_df, contexts=current_disclosure().contexts(result_df, "compounds"))
     return export_name_results(preview_df)
 
 

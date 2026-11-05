@@ -146,6 +146,9 @@ class SuccessfulFieldExports(unittest.TestCase):
             if alteration=='forged':
                 frame.attrs['_npdb_field_context_v1']={'signature':'fake','contexts':[context(record,'compounds')]}
                 config['entries']=[]
+            if alteration=='forged':
+                with self.assertRaises(PermissionError):ns['dataframe_to_csv_bytes'](frame)
+                continue
             text=ns['dataframe_to_csv_bytes'](frame).decode()
             self.assertNotIn(PUBLIC,text);self.assertNotIn(PRIVATE,text)
 
@@ -324,6 +327,14 @@ class SuccessfulFieldExports(unittest.TestCase):
             self.assertEqual(int(links.iloc[0]['specimen_id']),int(specimens.iloc[0]['id']))
             self.assertNotIn(PRIVATE,archive.read('tables/specimens.csv').decode())
             self.assertIn('Synthetic taxon',archive.read('tables/specimens.csv').decode())
+
+    def test_reprojection_is_idempotent_on_partial_child_frames(self):
+        ns,_,_=fixture('viewer')
+        frame=pd.DataFrame([dict(id=51,compound_id=501,delta_ppm=1.23,multiplicity='t',assignment='H1',note=PRIVATE)])
+        first=ns['policy_frame'](frame,'proton_nmr')
+        second=ns['policy_frame'](first,'proton_nmr')
+        self.assertEqual(first.to_dict(),second.to_dict())
+        self.assertEqual(second.iloc[0]['delta_ppm'],1.23)
 
     def test_owner_review_requires_individually_enumerated_verified_evidence(self):
         _,record,_=fixture()
