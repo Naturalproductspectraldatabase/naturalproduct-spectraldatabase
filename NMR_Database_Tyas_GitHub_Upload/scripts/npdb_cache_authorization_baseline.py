@@ -4,6 +4,7 @@ Success means vulnerabilities reproduced, NOT authorization acceptance. No app
 startup/network/research data. Frozen source and actual auth functions are used.
 """
 import ast
+import os
 from contextlib import closing
 import hashlib
 import json
@@ -19,8 +20,11 @@ import streamlit as real_st
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'tests'))
 from authorization_fixture import bind_authorization
-APP = ROOT/'scripts/app.py'
-assert hashlib.sha256(APP.read_bytes()).hexdigest() == '7ab220ecbd8588e6ad08691003a59892a8eb0416cd108d50ea6b766d0c83aa33'
+APP = Path(os.environ.get('NPDB_AUDIT_APP',str(ROOT/'scripts/app.py')))
+EXPECT = os.environ.get('NPDB_AUDIT_EXPECT','baseline')
+assert EXPECT in ('baseline','denial')
+if EXPECT=='baseline':
+    assert hashlib.sha256(APP.read_bytes()).hexdigest() == '7ab220ecbd8588e6ad08691003a59892a8eb0416cd108d50ea6b766d0c83aa33'
 TREE=ast.parse(APP.read_text())
 
 
@@ -92,5 +96,7 @@ if __name__=='__main__':
                 print('NPDB_AUTH_BASELINE '+json.dumps(row),flush=True)
     reproduced=sum(row['actual']=='RETURNED_ROWS' and row.get('row_count')==1 for row in rows)
     print('NPDB_AUTH_BASELINE_SUMMARY '+json.dumps(dict(candidate='9d81a72e397897fe1614ca98adfec254cb4f1c4f',
-          trials=len(rows),unauthorized_returns=reproduced,meaning='REPRODUCTION_ONLY_NOT_SECURITY_PASS',release='BLOCKED')))
-    sys.exit(0 if len(rows)==24 and reproduced==24 else 1)
+          trials=len(rows),unauthorized_returns=reproduced,expected=EXPECT,app_sha256=hashlib.sha256(APP.read_bytes()).hexdigest(),
+          meaning='REPRODUCTION_ONLY_NOT_SECURITY_PASS' if EXPECT=='baseline' else 'CANDIDATE_BOUNDARY_CHECK',release='BLOCKED')))
+    denied=sum(row['actual']=='DENIED' for row in rows)
+    sys.exit(0 if len(rows)==24 and ((EXPECT=='baseline' and reproduced==24) or (EXPECT=='denial' and denied==24)) else 1)
