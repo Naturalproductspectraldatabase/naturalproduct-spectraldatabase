@@ -1,7 +1,7 @@
 name: NPDB isolated browser feasibility and synthetic QA
 on:
   push:
-    branches: [qa/npdb-reliability-preflight-20261105]
+    branches: [qa/npdb-reliability-preflight-20261105, fix/npdb-field-policy-integration-20261105]
 permissions:
   contents: read
 concurrency:

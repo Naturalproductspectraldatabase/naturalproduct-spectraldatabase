@@ -25,6 +25,14 @@ def load(ns, *names):
     ns.setdefault("require_backend_permission", auth["require_backend_permission"])
     ns.setdefault("configured_session_identity", lambda: ns["require_backend_permission"].__globals__.get("configured_session_identity",auth["configured_session_identity"])())
     ns.setdefault("wraps",wraps)
+    for key,value in auth.items():
+        ns.setdefault(key,value)
+    # Helpers must share this test's actual authorization namespace; binding a
+    # second owner's policy would defeat the cross-session tests.
+    for helper in ('current_backend_role','is_backend_owner','field_policy_revision','current_disclosure','policy_frame','policy_record','project_authorized_result','asset_policy_approval','finish_asset_policy','guarded_download_button'):
+        node=[n for n in ast.parse(APP.read_text()).body if isinstance(n,ast.FunctionDef) and n.name==helper][-1]
+        exec(compile(ast.Module(body=[node],type_ignores=[]),str(APP),'exec'),ns)
+
     tree = ast.parse(APP.read_text())
     for name in ("authorized_read", *names):
         node = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name][-1]
