@@ -60,7 +60,7 @@ def run_case(name,args,state):
             return sqlite3.connect(db)
         ns=bind_authorization(role='owner')
         ns['st'].cache_data=real_st.cache_data
-        ns.update(__name__='npdb_synthetic_baseline',pd=pd,DB_PATH=db,
+        ns.update(__name__='npdb_synthetic_baseline',pd=pd,sqlite3=sqlite3,DB_PATH=db,
                   get_connection=connection,get_npdb_read_backend=lambda:'local',
                   get_db_signature=lambda:('synthetic',str(db)),
                   compound_select_columns=lambda:'id,trivial_name,gps_coordinates,collection_location',

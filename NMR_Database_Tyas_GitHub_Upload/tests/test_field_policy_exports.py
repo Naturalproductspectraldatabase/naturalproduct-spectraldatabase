@@ -257,8 +257,7 @@ class SuccessfulFieldExports(unittest.TestCase):
             ns['st'].session_state['npdb_credential_revision']=ns['configured_session_identity']()[1]
             public=ns['load_all_compounds']();self.assertEqual(len(calls),before)
             self.assertIn(PUBLIC,str(public.to_dict()));self.assertNotIn(PRIVATE,str(public.to_dict())+str(public.attrs))
-            alias=ns['_sqlite_dataframe']('SELECT id,updated_at,sample_code AS smiles,gps_coordinates FROM compounds')
-            self.assertNotIn(PRIVATE,str(alias.to_dict()));self.assertIn(PUBLIC,str(alias.to_dict()))
+            with self.assertRaises(PermissionError):ns['_sqlite_dataframe']('SELECT id,updated_at,sample_code AS smiles,gps_coordinates FROM compounds')
             # Cross-session projection never mutates owner-held objects or raw cache.
             self.assertIn(PRIVATE,str(held.to_dict()))
 
@@ -336,6 +335,22 @@ class SuccessfulFieldExports(unittest.TestCase):
         self.assertEqual(first.to_dict(),second.to_dict())
         self.assertEqual(second.iloc[0]['delta_ppm'],1.23)
 
+    def test_raw_sql_read_cannot_mutate_or_open_unrelated_tables(self):
+        ns,record,_=fixture('owner')
+        with tempfile.TemporaryDirectory() as directory:
+            db=Path(directory)/'synthetic.sqlite'
+            with sqlite3.connect(db) as connection:
+                pd.DataFrame([record]).to_sql('compounds',connection,index=False)
+                connection.execute('CREATE TABLE private_config(smiles TEXT)')
+                connection.execute('INSERT INTO private_config VALUES(?)',(PRIVATE,))
+            ns.update(DB_PATH=db,get_connection=lambda:sqlite3.connect(db),get_npdb_read_backend=lambda:'local')
+            load(ns,'_sqlite_dataframe','_snapshot_dataframe')
+            for query in ('DELETE FROM compounds','UPDATE compounds SET note=1','SELECT smiles FROM private_config',"ATTACH DATABASE ':memory:' AS elsewhere"):
+                with self.subTest(query=query),self.assertRaises((pd.errors.DatabaseError,sqlite3.DatabaseError)):
+                    ns['_sqlite_dataframe'](query)
+            with sqlite3.connect(db) as connection:self.assertEqual(connection.execute('SELECT count(*) FROM compounds').fetchone()[0],1)
+            with self.assertRaises(PermissionError):ns['_snapshot_dataframe']('../private_config')
+
     def test_owner_review_requires_individually_enumerated_verified_evidence(self):
         _,record,_=fixture()
         packet=prepare('compounds',[record]);self.assertTrue(all(e['classification']=='UNKNOWN_UNVERIFIED' for e in packet['entries']))
@@ -347,3 +362,7 @@ class SuccessfulFieldExports(unittest.TestCase):
             bad=dict(decision);bad.pop(field)
             with self.subTest(field=field),self.assertRaises((ValueError,KeyError)):approve(packet,[bad])
         with self.assertRaises(ValueError):approve(packet,[decision,decision])
+        import copy
+        changed=copy.deepcopy(packet)
+        next(e for e in changed['entries'] if e['candidate_id']==gps['candidate_id'])['record_id']='999'
+        with self.assertRaises(ValueError):approve(changed,[decision])

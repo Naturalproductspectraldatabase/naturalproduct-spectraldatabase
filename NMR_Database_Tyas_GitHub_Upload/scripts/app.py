@@ -1120,11 +1120,12 @@ def asset_policy_approval(source):
     # A path by itself is never evidence. Verify source, live row revision and
     # reviewed content digest; DOI/filename/extension is not a disclosure grant.
     matches = []
+    source_digest = value_digest(str(source))
     for entries in disclosure.policy._evidence.values():
         for fact in entries:
             if fact.field not in {"structure_image_path","image_path","file_path"} or not fact.asset_sha256:
                 continue
-            if fact.value_sha256 != value_digest(str(source)):
+            if fact.value_sha256 != source_digest:
                 continue
             row = field_policy_raw_record(fact.table, fact.record_id, _capability=_FIELD_READ_CAPABILITY)
             if str(row.get(fact.field,"")) != str(source):
@@ -5384,6 +5385,7 @@ def build_structure_candidate_index(structure_records: tuple):
     return candidates
 
 
+@authorized_read
 def search_by_structure(
     compounds_df: pd.DataFrame,
     query_smiles: str,
@@ -8871,6 +8873,7 @@ def sort_similarity_results(results, score_key="score"):
     )
 
 
+@authorized_read
 def search_similarity_13c(query_peaks, tolerance):
     results = []
     search_index = load_search_index(get_db_signature())
@@ -8894,6 +8897,7 @@ def search_similarity_13c(query_peaks, tolerance):
     return sort_similarity_results(results)
 
 
+@authorized_read
 def search_similarity_1h(query_peaks, tolerance):
     results = []
     search_index = load_search_index(get_db_signature())
@@ -8917,6 +8921,7 @@ def search_similarity_1h(query_peaks, tolerance):
     return sort_similarity_results(results)
 
 
+@authorized_read
 def search_similarity_combined(query_protons, proton_tol, query_carbons, carbon_tol):
     results = []
     search_index = load_search_index(get_db_signature())
@@ -11376,10 +11381,12 @@ def show_compound_pages():
                         value=maybe_blank(row.get("source_organism")),
                         key=f"edit_source_organism_{edit_compound_id}",
                     )
-                    sample_code = st.text_input("Sample Code", value=maybe_blank(row["sample_code"]), key=f"edit_sample_code_{edit_compound_id}")
-                    collection_location = st.text_input("Collection Location", value=maybe_blank(row["collection_location"]), key=f"edit_collection_location_{edit_compound_id}")
-                    gps_coordinates = st.text_input("GPS Coordinates", value=maybe_blank(row["gps_coordinates"]), key=f"edit_gps_coordinates_{edit_compound_id}")
-                    depth_m_text = st.text_input("Depth (m)", value=maybe_blank(row["depth_m"]), key=f"edit_depth_m_{edit_compound_id}")
+                    if not is_backend_owner():
+                        st.caption("Metadata withheld pending field-level provenance review remains unchanged when you save.")
+                    sample_code = st.text_input("Sample Code", value=maybe_blank(row["sample_code"]), key=f"edit_sample_code_{edit_compound_id}", disabled=(not is_backend_owner() and row.get("sample_code") is None))
+                    collection_location = st.text_input("Collection Location", value=maybe_blank(row["collection_location"]), key=f"edit_collection_location_{edit_compound_id}", disabled=(not is_backend_owner() and row.get("collection_location") is None))
+                    gps_coordinates = st.text_input("GPS Coordinates", value=maybe_blank(row["gps_coordinates"]), key=f"edit_gps_coordinates_{edit_compound_id}", disabled=(not is_backend_owner() and row.get("gps_coordinates") is None))
+                    depth_m_text = st.text_input("Depth (m)", value=maybe_blank(row["depth_m"]), key=f"edit_depth_m_{edit_compound_id}", disabled=(not is_backend_owner() and row.get("depth_m") is None))
 
                 with col2:
                     uv_data = st.text_input("UV Data", value=maybe_blank(row["uv_data"]), key=f"edit_uv_data_{edit_compound_id}")
@@ -12849,6 +12856,7 @@ def _select_existing_columns(df: pd.DataFrame, columns: str | list[str] | None) 
 
 @authorized_read
 def _snapshot_dataframe(table: str, columns: str | list[str] | None = None) -> pd.DataFrame:
+    require_backend_permission("read", table)
     path = CSV_SNAPSHOT_DIR / f"{table}.csv"
     if not path.exists():
         return pd.DataFrame()
@@ -13469,10 +13477,28 @@ def supabase_upload_bytes(bucket: str, object_path: str, data: bytes, content_ty
 
 @authorized_read
 def _sqlite_dataframe(query: str, params: tuple | list | None = None) -> pd.DataFrame:
+    # Arbitrary SQL is not a viewer/editor API. Typed protected loaders execute
+    # as nested read scopes, then the outer wrapper projects their result.
+    if READ_DEPTH.get() <= 1 and not is_backend_owner():
+        require_backend_permission("admin")
     if not DB_PATH.exists():
         return pd.DataFrame()
     conn = get_connection()
     try:
+        conn.execute("PRAGMA query_only = ON")
+        allowed_tables = {"compounds","proton_nmr","carbon_nmr","spectra_files","bioactivity_records",
+                          "specimens","specimen_compounds","specimen_1h_extracts"}
+        if is_backend_owner():
+            allowed_tables.add("audit_events")
+        def authorize(action, first, second, database, trigger):
+            if action == sqlite3.SQLITE_READ:
+                return sqlite3.SQLITE_OK if first in allowed_tables else sqlite3.SQLITE_DENY
+            if action in {sqlite3.SQLITE_SELECT, sqlite3.SQLITE_RECURSIVE}:
+                return sqlite3.SQLITE_OK
+            if action == sqlite3.SQLITE_FUNCTION and str(second or first).casefold() in {"count","max","min","sum","avg","trim","coalesce","lower","upper","round","length","abs","ifnull"}:
+                return sqlite3.SQLITE_OK
+            return sqlite3.SQLITE_DENY
+        conn.set_authorizer(authorize)
         return pd.read_sql_query(query, conn, params=params)
     finally:
         conn.close()

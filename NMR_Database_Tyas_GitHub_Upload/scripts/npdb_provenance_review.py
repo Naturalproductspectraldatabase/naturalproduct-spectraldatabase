@@ -39,6 +39,9 @@ def approve(packet, decisions):
         if candidate_id in seen or candidate_id not in candidates:
             raise ValueError('Unknown or duplicate enumerated decision')
         seen.add(candidate_id);candidate=candidates[candidate_id]
+        original={k:v for k,v in candidate.items() if k!='candidate_id'}
+        if candidate_id!=hashlib.sha256(json.dumps(original,sort_keys=True).encode()).hexdigest():
+            raise ValueError('Candidate identity, revision or value was changed after preparation')
         if not candidate['record_revision'] or candidate['value_sha256']!=value_digest(candidate['value']):
             raise ValueError('Missing revision or changed candidate value')
         classification=decision['classification']

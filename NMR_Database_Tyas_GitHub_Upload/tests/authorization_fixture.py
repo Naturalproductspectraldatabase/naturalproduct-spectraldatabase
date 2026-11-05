@@ -5,6 +5,7 @@ import hmac
 import json
 import re
 import sys
+import sqlite3
 from functools import wraps
 from pathlib import Path
 from types import SimpleNamespace
@@ -27,7 +28,7 @@ def bind_authorization(ns=None, role='owner', username=None, authenticated=True)
     sys.path.insert(0,str(APP.parent))
     from npdb_field_access import Disclosure, READ_DEPTH, ASSET_IO, SealedPayload, verify_payload, evidence_from_config, is_protected, canonical, context
     from npdb_location_policy import FieldPolicy, Identity, value_digest
-    ns.update(hashlib=hashlib,hmac=hmac,json=json,wraps=wraps,re=re,
+    ns.update(hashlib=hashlib,hmac=hmac,json=json,wraps=wraps,re=re,sqlite3=sqlite3,
               Disclosure=Disclosure,READ_DEPTH=READ_DEPTH,ASSET_IO=ASSET_IO,SealedPayload=SealedPayload,verify_payload=verify_payload,
               evidence_from_config=evidence_from_config,is_protected=is_protected,canonical=canonical,
               field_context=context,FieldPolicy=FieldPolicy,Identity=Identity,value_digest=value_digest)

@@ -263,6 +263,8 @@ class Disclosure:
             return self.record(value,context(value,table),aliases)
         if isinstance(value,list):
             return [self.payload(v,table,aliases) for v in value]
+        if isinstance(value,tuple):
+            return tuple(self.payload(v,table,aliases) for v in value)
         return value
 
 
