@@ -5,7 +5,7 @@ import subprocess
 import sys
 
 PREFIX = 'NMR_Database_Tyas_GitHub_Upload/'
-ROOTS = ('.github/scripts/', PREFIX+'scripts/', PREFIX+'tests/', PREFIX+'supabase/')
+ROOTS = ('.github/scripts/', PREFIX+'scripts/', PREFIX+'tests/', PREFIX+'supabase/', PREFIX+'docs/proposed_migrations/')
 
 
 def allowed(name):

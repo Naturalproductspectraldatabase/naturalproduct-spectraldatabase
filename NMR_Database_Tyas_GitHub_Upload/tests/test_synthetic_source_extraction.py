@@ -13,12 +13,14 @@ class SyntheticSourceExtraction(unittest.TestCase):
         for name in ('requirements.txt','NMR_Database_Tyas_GitHub_Upload/requirements.txt',
                      'NMR_Database_Tyas_GitHub_Upload/scripts/app.py',
                      'NMR_Database_Tyas_GitHub_Upload/tests/security_schema_gate.sql',
+                     'NMR_Database_Tyas_GitHub_Upload/docs/proposed_migrations/curation_default_imported.up.sql',
                      'NMR_Database_Tyas_GitHub_Upload/scripts/npdb_synthetic_postgres_restore.sh'):
             self.assertTrue(module.allowed(name),name)
         for name in ('NMR_Database_Tyas_GitHub_Upload/database/nmr.db',
                      'NMR_Database_Tyas_GitHub_Upload/database/backups/private.sql',
                      'NMR_Database_Tyas_GitHub_Upload/data/structures/private.png',
                      'NMR_Database_Tyas_GitHub_Upload/tests/private.csv',
+                     'NMR_Database_Tyas_GitHub_Upload/docs/private.sql',
                      'NMR_Database_Tyas_GitHub_Upload/.streamlit/secrets.toml',
                      '../private.py','/etc/private.py',
                      'NMR_Database_Tyas_GitHub_Upload/scripts/../../private.py'):
