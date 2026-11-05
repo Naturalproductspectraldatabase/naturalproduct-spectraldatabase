@@ -19,7 +19,9 @@ jobs:
           test "$GITHUB_REPOSITORY" = "Naturalproductspectraldatabase/naturalproduct-spectraldatabase"
           git init .
           git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
-          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          git config remote.origin.promisor true
+          git config remote.origin.partialclonefilter blob:none
+          git fetch --no-tags --filter=blob:none --depth=1 origin "$GITHUB_SHA"
           test "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA"
           echo "Infrastructure SHA: $GITHUB_SHA"
       - name: Construct code-only context from frozen candidate
@@ -27,7 +29,7 @@ jobs:
           CANDIDATE: ${{ github.sha }}
         run: |
           set -eu
-          git fetch --no-tags --depth=1 origin "$CANDIDATE"
+          git fetch --no-tags --filter=blob:none --depth=1 origin "$CANDIDATE"
           test "$(git rev-parse FETCH_HEAD)" = "$CANDIDATE"
           mkdir -p "$RUNNER_TEMP/npdb-browser-build/app"
           python3 - <<'PY'
