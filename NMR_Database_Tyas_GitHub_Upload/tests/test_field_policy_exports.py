@@ -119,6 +119,7 @@ class SuccessfulFieldExports(unittest.TestCase):
                 gps=next(e for e in provenance['entries'] if e['field']=='gps_coordinates')
                 self.assertEqual(gps['classification'],'PUBLISHED_VERIFIED')
                 self.assertEqual(gps['source_locator'],'Synthetic table row 1')
+                self.assertEqual(bool(gps['verified_by']),role=='owner')
                 self.assertEqual(PRIVATE in text,role=='owner')
                 self.assertIn('1.23',text);self.assertIn('18.7',text);self.assertIn('501',text)
                 if 'NPDB_full_record.xlsx' in archive.namelist():

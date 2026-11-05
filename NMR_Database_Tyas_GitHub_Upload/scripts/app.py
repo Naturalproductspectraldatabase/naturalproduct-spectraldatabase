@@ -9366,8 +9366,8 @@ def field_provenance_export(frame, table):
                 "verification_status":fact.verification_status if fact else "",
                 "source_reference":fact.source_reference if fact else "",
                 "source_locator":fact.source_locator if fact else "",
-                "verified_by":fact.verified_by if fact else "",
-                "verified_at":fact.verified_at if fact else "",
+                "verified_by":fact.verified_by if fact and identity.role == "owner" else "",
+                "verified_at":fact.verified_at if fact and identity.role == "owner" else "",
                 "disclosure_restrictions":list(fact.disclosure_restrictions) if fact else []})
     disclosure.policy._unchanged_identity(identity)
     return json.dumps({"scope":"field_value_revision_only_not_global_curation","entries":entries},ensure_ascii=False,indent=2).encode("utf-8")
