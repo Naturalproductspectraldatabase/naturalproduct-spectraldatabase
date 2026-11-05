@@ -9,6 +9,7 @@ import socket
 import subprocess
 import sys
 import time
+import traceback
 import urllib.request
 
 from playwright.sync_api import sync_playwright
@@ -381,5 +382,8 @@ if __name__=='__main__':
     try:
         sys.exit(main())
     except Exception as exc:
-        emit('runner_fatal','FAIL',error_type=type(exc).__name__)
+        frames=[{'file':Path(f.filename).name,'line':f.lineno,'function':f.name}
+                for f in traceback.extract_tb(exc.__traceback__)
+                if Path(f.filename).name in ('browser_qa.py','fixture.py','app.py')]
+        emit('runner_fatal','FAIL',error_type=type(exc).__name__,source_frames=frames)
         sys.exit(2)

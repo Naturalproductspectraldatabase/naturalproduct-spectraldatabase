@@ -28,7 +28,8 @@ def prepare(root, dark=False):
     tree = ast.parse(source.read_text())
     def connect():
         return sqlite3.connect(root/'database/nmr.db')
-    env = {'get_connection': connect}
+    # No Streamlit caches exist during disposable fixture creation. App source stays untouched.
+    env = {'get_connection': connect, 'invalidate_cached_views': lambda: None}
     for name in ('ensure_columns_with_cursor', 'ensure_database_schema'):
         node = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name][-1]
         exec(compile(ast.Module(body=[node], type_ignores=[]), str(source), 'exec'), env)
