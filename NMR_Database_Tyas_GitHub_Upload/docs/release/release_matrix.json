@@ -1,0 +1,17 @@
+{
+  "release": "BLOCKED",
+  "independent_acceptance": false,
+  "gates": [
+    {"id":"P0-AUTH","priority":"P0","owner":"Work independent security reviewer","status":"UNTESTED","requirement":"Current integrated read/write/cache/session/export/attachment authorization","evidence":"Prior #65 evidence is source-specific; new candidate CI required"},
+    {"id":"P0-FIELDS","priority":"P0","owner":"Codex implementation + owner provenance review","status":"FAIL","requirement":"Issue43 field policy on all reads/exports/attachments","evidence":"Primitive only; full enforcement incomplete"},
+    {"id":"P0-RESTORE","priority":"P0","owner":"Owner + Work","status":"UNTESTED","requirement":"Genuine isolated DB/Auth/roles/Storage restore and readback","evidence":"Offsite backups reported verified; sole confirmed Drive copy; no restore performed"},
+    {"id":"P0-SCIENCE","priority":"P0","owner":"Claude + owner","status":"FAIL","requirement":"JCAMP/stereo/scientific interpretation acceptance","evidence":"16 existing expected failures; newer science artifact not adopted"},
+    {"id":"P0-JOURNEYS","priority":"P0","owner":"Codex + Work","status":"UNTESTED","requirement":"Every runtime menu/function/control relationship executable E2E","evidence":"Source declarations inventoried; dynamic/runtime coverage incomplete"},
+    {"id":"P0-A11Y","priority":"P0","owner":"Claude Code + Work","status":"FAIL","requirement":"Readable keyboard-accessible responsive core journeys","evidence":"Frozen63 Chromium layout/focus/contrast failures; current candidate not accepted"},
+    {"id":"P0-CONCURRENCY","priority":"P0","owner":"Codex + Work","status":"UNTESTED","requirement":"Concurrent role isolation,CAS,duplicate races,5/10-user bounded measured load","evidence":"Existing synthetic CAS/WAL tests do not establish simultaneous-user acceptance"},
+    {"id":"P0-DEPLOYED-POLICIES","priority":"P0","owner":"Owner + Work private review","status":"UNTESTED","requirement":"Independent deployed REST/RLS/Storage/RPC privileges","evidence":"No production policy/grant access or changes authorized here"},
+    {"id":"P0-OWNER-RELEASE","priority":"P0","owner":"Owner","status":"UNTESTED","requirement":"Explicit final release authorization","evidence":"No approval issued"},
+    {"id":"P1-CURATION","priority":"P1","owner":"Owner + scientific reviewer","status":"UNTESTED","requirement":"Provenance,vocabulary,license/citation/help workflow decisions","evidence":"No policy inferred"},
+    {"id":"P2-NPMRD","priority":"P2","owner":"Work + Claude","status":"UNTESTED","requirement":"Optional authorized import pilot","evidence":"0 accepted; source403; not a release blocker for existing records"}
+  ]
+}
