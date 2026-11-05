@@ -29,10 +29,12 @@ def load(ns, *names):
         ns.setdefault(key,value)
     # Helpers must share this test's actual authorization namespace; binding a
     # second owner's policy would defeat the cross-session tests.
-    for helper in ('current_backend_role','is_backend_owner','field_policy_revision','current_disclosure','policy_frame','policy_record','project_authorized_result','asset_policy_approval','finish_asset_policy','guarded_download_button'):
+    for helper in ('field_policy_revision','current_disclosure','policy_frame','policy_record','project_authorized_result','asset_policy_approval','finish_asset_policy','guarded_download_button'):
         node=[n for n in ast.parse(APP.read_text()).body if isinstance(n,ast.FunctionDef) and n.name==helper][-1]
         exec(compile(ast.Module(body=[node],type_ignores=[]),str(APP),'exec'),ns)
 
+    ns["current_backend_role"]=lambda:ns["require_backend_permission"].__globals__["current_backend_role"]()
+    ns["is_backend_owner"]=lambda:ns["require_backend_permission"].__globals__["is_backend_owner"]()
     tree = ast.parse(APP.read_text())
     for name in ("authorized_read", *names):
         node = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name][-1]

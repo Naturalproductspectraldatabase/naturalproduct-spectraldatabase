@@ -69,7 +69,7 @@ identity_relationship stereochemical_relationship stereo_relationship
 '''.splitlines() if v}
 # Tokenize schema's identifier lines, keep human labels as explicit whole labels.
 SCIENTIFIC |= {key(v) for v in '''id compound_id specimen_id proton_id carbon_id trivial_name iupac_name molecular_formula molecular_weight smiles inchi inchikey compound_class compound_subclass source_category source_organism scientific_name specimen_type curation_status created_at updated_at journal_name article_title publication_year volume issue pages doi ccdc_number data_source uv_data ftir_data cd_data optical_rotation melting_point crystallization_method hrms_data spectrum_type delta_ppm multiplicity j_value proton_count carbon_type assignment solvent instrument_mhz acquisition_date activity_label target_name target_category assay_type potency_type potency_relation potency_value potency_unit outcome assay_medium selectivity assay_source extract_type extract_label rank score total_score match_count total_query db_peak_count query_coverage db_coverage avg_difference proton_match_count proton_total_query proton_query_coverage proton_score carbon_match_count carbon_total_query carbon_query_coverage carbon_score atom_number atom_label carbon_number proton_number query_peaks matched_peaks db_peaks missing_peaks matched_pairs query_coverage_percent db_coverage_percent difference delta formula name count Category Count Percentage'''.split()}
-SCIENTIFIC |= {key(v) for v in ('Compound ID','Trivial Name','IUPAC Name','Molecular Formula','Molecular Weight','Compound Class','Compound Subclass','Source Category','Source Organism','Curation Status','Journal Name','Article Title','Publication Year','Data Source','CCDC','Bioactivity ID','Spectra File ID','Spectrum Type','Target Category','Assay Type','Unit Status','Assay Medium','Assay Source','Matched Peaks','Query Peaks','DB Peaks','Query Coverage (%)','DB Coverage (%)','Average Difference','Heuristic NMR Rank (0–100)','1H Matched Peaks','1H Query Peaks','1H Query Coverage (%)','1H Heuristic Rank (0–100)','13C Matched Peaks','13C Query Peaks','13C Query Coverage (%)','13C Heuristic Rank (0–100)','Combined Heuristic Rank (0–100)','Similarity (%)','Structure Relationship','proton_peaks','carbon_peaks','mol','fp','fingerprint','UV Data','FTIR Data','CD / ECD Data','Optical Rotation','Melting Point','HRMS Data')}
+SCIENTIFIC |= {key(v) for v in ('compounds','proton_nmr','carbon_nmr','spectra_files','bioactivity_records','specimens','specimen_compounds','specimen_1h_extracts','Compound ID','Trivial Name','IUPAC Name','Molecular Formula','Molecular Weight','Compound Class','Compound Subclass','Source Category','Source Organism','Curation Status','Journal Name','Article Title','Publication Year','Data Source','CCDC','Bioactivity ID','Spectra File ID','Spectrum Type','Target Category','Assay Type','Unit Status','Assay Medium','Assay Source','Matched Peaks','Query Peaks','DB Peaks','Query Coverage (%)','DB Coverage (%)','Average Difference','Heuristic NMR Rank (0–100)','1H Matched Peaks','1H Query Peaks','1H Query Coverage (%)','1H Heuristic Rank (0–100)','13C Matched Peaks','13C Query Peaks','13C Query Coverage (%)','13C Heuristic Rank (0–100)','Combined Heuristic Rank (0–100)','Similarity (%)','Structure Relationship','proton_peaks','carbon_peaks','mol','fp','fingerprint','UV Data','FTIR Data','CD / ECD Data','Optical Rotation','Melting Point','HRMS Data')}
 OPAQUE = {key(v) for v in ('note','description','habitat','traits','color','texture','evidence_note','reference_note','observed_features','source_material','source_summary','specimen_name','file_path','image_path','structure_image_path','extract_label')}
 
 
@@ -114,11 +114,32 @@ def infer_table(record):
     return 'compounds' if fields & {'smiles','molecularformula','compoundclass','compoundid','trivialname'} else ''
 
 
+# Legacy child tables have no updated_at. Bind approvals to the complete base
+# row, excluding joined display columns. Partial rows cannot claim this revision.
+REVISION_FIELDS = {
+    'spectra_files': 'id compound_id spectrum_type file_path note'.split(),
+    'proton_nmr': 'id compound_id delta_ppm multiplicity j_value proton_count assignment solvent instrument_mhz note'.split(),
+    'carbon_nmr': 'id compound_id delta_ppm carbon_type assignment solvent instrument_mhz note'.split(),
+    'bioactivity_records': 'id compound_id activity_label target_name target_category assay_type potency_type potency_relation potency_value potency_unit outcome assay_medium selectivity assay_source note'.split(),
+    'specimen_compounds': 'id specimen_id compound_id evidence_note reference_note created_at'.split(),
+}
+
+
+def record_revision(record, table):
+    revision = record.get('updated_at')
+    if revision is not None and str(revision).strip():
+        return str(revision)
+    fields = REVISION_FIELDS.get(table,())
+    if fields and all(field in record for field in fields):
+        return 'row-sha256:' + value_digest({f:plain(record[f]) for f in fields})
+    return ''
+
+
 def context(record, table=''):
     normalized = {key(k): v for k, v in record.items()}
     return {'table': table or infer_table(record),
             'id': str(normalized.get('id', normalized.get('compoundid', ''))),
-            'revision': str(normalized.get('updatedat') or ''),
+            'revision': record_revision(record, table or infer_table(record)),
             'values': {canonical(k): plain(v) for k, v in record.items()}}
 
 
@@ -132,6 +153,8 @@ class Disclosure:
 
     def visible(self, field, value, ctx):
         fact = self.policy.evidence_for(ctx.get('table',''), ctx.get('id',''), field, value, ctx.get('revision',''))
+        if field in {"file_path","structure_image_path","image_path"} and (not fact or not re.fullmatch(r"[0-9a-f]{64}",fact.asset_sha256)):
+            return False
         return self.policy._published(fact)
 
     def record(self, record, ctx=None, aliases=None):

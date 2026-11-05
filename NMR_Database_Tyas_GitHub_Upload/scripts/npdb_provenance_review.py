@@ -11,7 +11,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from npdb_field_access import is_protected
+from npdb_field_access import is_protected, record_revision
 from npdb_location_policy import Evidence, CLASSIFICATIONS, PUBLISHED_VERIFIED, UNKNOWN_UNVERIFIED, value_digest
 
 
@@ -22,7 +22,7 @@ def prepare(table, records):
             if not is_protected(field,value):
                 continue
             item=dict(table=table,record_id=str(record['id']),field=field,
-                      record_revision=str(record.get('updated_at') or ''),value_sha256=value_digest(value),
+                      record_revision=record_revision(record,table),value_sha256=value_digest(value),
                       classification=UNKNOWN_UNVERIFIED,value=value)
             item['candidate_id']=hashlib.sha256(json.dumps(item,sort_keys=True).encode()).hexdigest()
             entries.append(item)
@@ -57,7 +57,7 @@ def approve(packet, decisions):
         facts.append(asdict(Evidence(**{k:candidate[k] for k in ('table','record_id','field','record_revision','value_sha256')},
             classification=classification, verification_status=decision.get('verification_status',''),
             source_reference=decision.get('source_reference',''),source_locator=decision.get('source_locator',''),
-            verified_by=decision.get('verified_by',''),verifier_role='owner',
+            verified_by=decision.get('verified_by',''),verified_at=decision.get('verified_at',''),verifier_role='owner',
             disclosure_restrictions=tuple(decision.get('disclosure_restrictions',())),asset_sha256=decision.get('asset_sha256',''))))
     return dict(version=1,entries=facts)
 

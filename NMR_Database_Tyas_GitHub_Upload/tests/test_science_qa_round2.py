@@ -43,7 +43,8 @@ def live(name, deps):
     assert nodes, name
     node = nodes[-1]
     node.decorator_list = []
-    namespace = dict(deps)
+    from authorization_fixture import bind_authorization
+    namespace = bind_authorization(dict(deps), role="owner")
     exec(compile(ast.Module(body=[node], type_ignores=[]), str(APP), "exec"), namespace)
     return namespace[name]
 

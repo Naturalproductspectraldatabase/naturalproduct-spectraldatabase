@@ -52,6 +52,7 @@ class Evidence:
     verifier_role: str = ''
     disclosure_restrictions: tuple = ()
     asset_sha256: str = ''
+    verified_at: str = ''
 
 
 class FieldPolicy:

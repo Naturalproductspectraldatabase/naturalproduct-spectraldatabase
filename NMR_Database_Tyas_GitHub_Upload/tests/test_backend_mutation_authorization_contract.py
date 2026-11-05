@@ -121,7 +121,7 @@ class MutatingBackendAuthorizationContract(unittest.TestCase):
     def test_approved_editor_can_insert_and_update_but_not_delete(self):
         ctx, calls = _synthetic_backend("editor")
         ctx["supabase_insert_row"]("compounds", {"trivial_name": "SYNTHETIC"})
-        ctx["supabase_update_row"]("compounds", 12345, {"note": "TEST"})
+        ctx["supabase_update_row"]("compounds", 12345, {"trivial_name": "TEST"})
         self.assertEqual([x[0] for x in calls], ["POST", "PATCH"])
         with self.assertRaises((PermissionError, RuntimeError)):
             ctx["supabase_delete_row"]("compounds", 12345)
@@ -130,7 +130,7 @@ class MutatingBackendAuthorizationContract(unittest.TestCase):
     def test_approved_owner_can_access_owner_actions(self):
         ctx, calls = _synthetic_backend("owner")
         ctx["supabase_insert_row"]("compounds", {"trivial_name": "SYNTHETIC"})
-        ctx["supabase_update_row"]("compounds", 12345, {"note": "TEST"})
+        ctx["supabase_update_row"]("compounds", 12345, {"trivial_name": "TEST"})
         ctx["supabase_delete_row"]("compounds", 12345)
         self.assertEqual([x[0] for x in calls], ["POST", "PATCH", "DELETE"])
 

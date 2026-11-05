@@ -195,6 +195,96 @@ class SuccessfulFieldExports(unittest.TestCase):
             with self.assertRaises(PermissionError):future.result(timeout=10)
         self.assertFalse(captured);self.assertEqual(READ_DEPTH.get(),0)
 
+    def test_owner_produced_frame_is_reprojected_before_successful_viewer_registration(self):
+        owner,record,_=fixture('owner');viewer,_,_=fixture('viewer')
+        held=owner['export_name_results'](pd.DataFrame([record]));captured=[]
+        viewer['st'].download_button=lambda **kw:captured.append(kw)
+        viewer['download_dataframe_button']('Export',held,PRIVATE+'.xlsx','viewer-export')
+        self.assertEqual(len(captured),1)
+        self.assertNotIn(PRIVATE,captured[0]['file_name'])
+        text=text_in_workbook(captured[0]['data']) if captured[0]['mime']!='text/csv' else captured[0]['data'].decode()
+        self.assertIn(PUBLIC,text);self.assertNotIn(PRIVATE,text)
+
+    def test_similarity_structure_and_bioactivity_export_families(self):
+        ns,record,_=fixture('viewer')
+        item={**record,'compound_id':501,'structure_score':100,'structure_match_type':'Synthetic',
+              'matched_smiles':'CCO','score':95,'match_count':1,'total_query':1,'db_peak_count':1,
+              'query_coverage':1,'db_coverage':1,'avg_difference':0,
+              'proton_match_count':1,'proton_total_query':1,'proton_query_coverage':1,'proton_score':95,
+              'carbon_match_count':1,'carbon_total_query':1,'carbon_query_coverage':1,'carbon_score':95,'total_score':95}
+        for name in ('export_structure_search_results','export_similarity_results_1h','export_similarity_results_13c','export_similarity_results_combined'):
+            output=ns[name]([item]);text=ns['dataframe_to_csv_bytes'](output).decode()
+            self.assertNotIn(PRIVATE,text);self.assertIn('SYNTHETIC-ETHANOL',text)
+        bio=pd.DataFrame([dict(id=81,compound_id=501,trivial_name='SYNTHETIC-ETHANOL',activity_label='Synthetic',potency_value=2.1,potency_unit='uM',note=PRIVATE)])
+        text=ns['dataframe_to_csv_bytes'](ns['export_bioactivity_results'](bio)).decode()
+        self.assertNotIn(PRIVATE,text);self.assertIn('uM',text)
+
+    def test_each_location_field_has_independent_classification_all_roles(self):
+        fields=('gps_coordinates','collection_location','depth_m','sample_code','sampling_date','collector')
+        for role in ('owner','viewer','editor'):
+            for classification in ('PUBLISHED_VERIFIED','INTERNAL_UNPUBLISHED','SENSITIVE_RESTRICTED','UNKNOWN_UNVERIFIED'):
+                ns,record,config=fixture(role);config['entries']=[]
+                for field in fields:
+                    record[field]=PUBLIC+'-'+field
+                    config['entries'].append(asdict(Evidence(table='compounds',record_id='501',field=field,
+                        record_revision=record['updated_at'],value_sha256=value_digest(record[field]),classification=classification,
+                        verification_status='VERIFIED',source_reference='Synthetic source',source_locator='Synthetic table',verified_by='Synthetic owner',verifier_role='owner')))
+                projected=ns['policy_frame'](pd.DataFrame([record]))
+                for field in fields:
+                    with self.subTest(role=role,classification=classification,field=field):
+                        self.assertEqual(projected.iloc[0][field],record[field] if role=='owner' or classification=='PUBLISHED_VERIFIED' else None)
+
+    @unittest.skipUnless(__import__('importlib').util.find_spec('streamlit'),'Streamlit not installed')
+    def test_actual_sqlite_shared_streamlit_cache_owner_then_viewer_and_alias_read(self):
+        import streamlit
+        ns,record,config=fixture('owner')
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'synthetic.sqlite';calls=[]
+            with sqlite3.connect(path) as connection:pd.DataFrame([record]).to_sql('compounds',connection,index=False)
+            def connection():calls.append(1);return sqlite3.connect(path)
+            ns.update(DB_PATH=path,get_connection=connection,get_npdb_read_backend=lambda:'local',
+                compound_select_columns=lambda:'*',get_db_signature=lambda:'synthetic-'+directory,
+                enrich_compounds_dataframe=lambda frame:frame.copy(),SOURCE_NORMALIZATION_CACHE_VERSION='synthetic',DATA_CACHE_TTL_SECONDS=60)
+            ns['st'].cache_data=streamlit.cache_data
+            load(ns,'_sqlite_dataframe','_load_all_compounds_cached','load_all_compounds')
+            ns['_load_all_compounds_cached'].clear();held=ns['load_all_compounds']()
+            self.assertIn(PRIVATE,str(held.to_dict()))
+            before=len(calls)
+            ns['load_approved_users']()[0]['role']='viewer';ns['st'].session_state['npdb_role']='viewer'
+            ns['st'].session_state['npdb_credential_revision']=ns['configured_session_identity']()[1]
+            public=ns['load_all_compounds']();self.assertEqual(len(calls),before)
+            self.assertIn(PUBLIC,str(public.to_dict()));self.assertNotIn(PRIVATE,str(public.to_dict())+str(public.attrs))
+            alias=ns['_sqlite_dataframe']('SELECT id,updated_at,sample_code AS smiles,gps_coordinates FROM compounds')
+            self.assertNotIn(PRIVATE,str(alias.to_dict()));self.assertIn(PUBLIC,str(alias.to_dict()))
+            # Cross-session projection never mutates owner-held objects or raw cache.
+            self.assertIn(PRIVATE,str(held.to_dict()))
+
+    def test_actual_asset_review_digest_metadata_replacement_and_private_raw_helper(self):
+        from PIL import Image
+        from PIL.PngImagePlugin import PngInfo
+        from npdb_asset_paths import AssetAccessError,read_local_asset,validate_asset_content
+        ns,record,config=fixture('viewer')
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);assets=root/'data/structures';assets.mkdir(parents=True)
+            path=assets/'synthetic.png';Image.new('RGB',(8,8),'white').save(path)
+            record['structure_image_path']='data/structures/synthetic.png'
+            db=root/'synthetic.sqlite'
+            with sqlite3.connect(db) as connection:pd.DataFrame([record]).to_sql('compounds',connection,index=False)
+            ns.update(get_connection=lambda:sqlite3.connect(db),get_npdb_read_backend=lambda:'local',
+                PROJECT_DIR=root,STRUCTURES_DIR=assets,SPECTRA_DIR=root/'data/spectra',SPECIMENS_DIR=root/'data/specimens',
+                LOCAL_IMAGE_SUFFIXES={'.png'},LOCAL_SPECTRUM_SUFFIXES={'.png'},LOCAL_ASSET_MAX_BYTES=1024*1024,
+                read_local_asset=read_local_asset,validate_asset_content=validate_asset_content,AssetAccessError=AssetAccessError)
+            load(ns,'read_scientific_asset')
+            with self.assertRaises(AssetAccessError):ns['read_scientific_asset'](record['structure_image_path'],'structure')
+            with self.assertRaises(PermissionError):ns['field_policy_raw_record']('compounds',501)
+            config['entries'].append(asdict(Evidence(table='compounds',record_id='501',field='structure_image_path',record_revision=record['updated_at'],
+                value_sha256=value_digest(record['structure_image_path']),classification=PUBLISHED_VERIFIED,verification_status='VERIFIED',
+                source_reference='Synthetic source',source_locator='Synthetic figure',verified_by='Synthetic owner',verifier_role='owner',asset_sha256=hashlib.sha256(path.read_bytes()).hexdigest())))
+            self.assertEqual(ns['read_scientific_asset'](record['structure_image_path'],'structure'),path.read_bytes())
+            metadata=PngInfo();metadata.add_text('Description',PRIVATE)
+            Image.new('RGB',(8,8),'white').save(path,pnginfo=metadata)
+            with self.assertRaises(AssetAccessError):ns['read_scientific_asset'](record['structure_image_path'],'structure')
+
     def test_owner_review_requires_individually_enumerated_verified_evidence(self):
         _,record,_=fixture()
         packet=prepare('compounds',[record]);self.assertTrue(all(e['classification']=='UNKNOWN_UNVERIFIED' for e in packet['entries']))

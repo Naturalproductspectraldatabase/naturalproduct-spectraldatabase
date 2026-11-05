@@ -1085,24 +1085,30 @@ def field_policy_raw_record(table, record_id, *, _capability=None):
     require_backend_permission("read", table)
     if _capability is not _FIELD_READ_CAPABILITY:
         require_backend_permission("admin")
+    identity = configured_session_identity()
     token = READ_DEPTH.set(READ_DEPTH.get() + 1)
     try:
         backend = get_npdb_read_backend()
         if backend == "supabase":
             rows = _supabase_request("GET", f"/rest/v1/{table}", query={"select":"*", "id":f"eq.{int(record_id)}", "limit":1}) or []
-            return rows[0] if rows else {}
-        if backend == "snapshot":
+            result = rows[0] if rows else {}
+        elif backend == "snapshot":
             frame = _snapshot_dataframe(table)
             rows = frame[pd.to_numeric(frame["id"],errors="coerce") == int(record_id)]
-            return rows.iloc[0].to_dict() if not rows.empty else {}
-        conn = get_connection()
-        try:
-            frame = pd.read_sql_query(f"SELECT * FROM {table} WHERE id = ?", conn, params=(int(record_id),))
-            return frame.iloc[0].to_dict() if not frame.empty else {}
-        finally:
-            conn.close()
+            result = rows.iloc[0].to_dict() if not rows.empty else {}
+        else:
+            conn = get_connection()
+            try:
+                frame = pd.read_sql_query(f"SELECT * FROM {table} WHERE id = ?", conn, params=(int(record_id),))
+                result = frame.iloc[0].to_dict() if not frame.empty else {}
+            finally:
+                conn.close()
     finally:
         READ_DEPTH.reset(token)
+    require_backend_permission("read")
+    if configured_session_identity() != identity:
+        raise PermissionError("Request authorization changed; please retry.")
+    return result
 
 
 def asset_policy_approval(source):
@@ -1121,7 +1127,7 @@ def asset_policy_approval(source):
             row = field_policy_raw_record(fact.table, fact.record_id, _capability=_FIELD_READ_CAPABILITY)
             if str(row.get(fact.field,"")) != str(source):
                 continue
-            verified = disclosure.policy.evidence_for(fact.table,fact.record_id,fact.field,row.get(fact.field),row.get("updated_at"))
+            verified = disclosure.policy.evidence_for(fact.table,fact.record_id,fact.field,row.get(fact.field),field_context(row,fact.table)["revision"])
             if disclosure.policy._published(verified):
                 matches.append(verified)
     if len(matches) != 1:
@@ -1141,6 +1147,8 @@ def preserve_unseen_fields(table, record_id, row):
     """Drop editor changes to withheld existing fields; preserve stored originals."""
     require_backend_permission("curate", table, row)
     if is_backend_owner():
+        return dict(row)
+    if not any(is_protected(field,value) for field,value in row.items()):
         return dict(row)
     original = field_policy_raw_record(table, record_id, _capability=_FIELD_READ_CAPABILITY)
     if not original:
@@ -5516,6 +5524,7 @@ def export_structure_search_results(results: list[dict]) -> pd.DataFrame:
 
 
 def render_structure_search_results(results: list[dict], search_type: str, limit: int = 10):
+    results = [policy_record(item, "compounds") for item in results]
     if not results:
         st.info("No compounds matched the current structure query.")
         return
@@ -9873,6 +9882,7 @@ def show_compound_detail(compound_id):
     st.markdown('</div>', unsafe_allow_html=True)
 
 def render_best_match_summary(item, mode_label):
+    item = policy_record(item, "compounds")
     source_summary = html_text(source_summary_from_record(item))
     st.markdown("### Best Match Summary")
     st.markdown(
@@ -13363,6 +13373,8 @@ def supabase_update_row(table: str, row_id: int, row: dict, *, expected_updated_
     require_backend_permission("curate", table, row)
     row = preserve_unseen_fields(table, row_id, row)
     payload = {k: _json_ready(v) for k, v in row.items() if k and k != "id"}
+    if not payload:
+        return {}
     query = {"id": f"eq.{row_id}", "select": "id,updated_at" if table == "compounds" else "id"}
     if expected_updated_at is not None:
         revision = maybe_blank(expected_updated_at)
@@ -13456,6 +13468,8 @@ def _sqlite_upsert_row(table: str, row: dict) -> int | None:
             row = preserve_unseen_fields(table, row_id, row)
             columns = [column for column in columns if column in row]
             set_columns = [column for column in columns if column != "id"]
+            if not set_columns:
+                return int(row_id)
             assignments = ", ".join(f"{column} = ?" for column in set_columns)
             values = [row.get(column) for column in set_columns] + [row_id]
             cursor.execute(f"UPDATE {table} SET {assignments} WHERE id = ?", values)

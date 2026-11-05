@@ -33,10 +33,11 @@ def bind_authorization(ns=None, role='owner', username=None, authenticated=True)
               field_context=context,FieldPolicy=FieldPolicy,Identity=Identity)
     ns.setdefault('get_secret_object',lambda *keys:None)
     ns.setdefault('_FIELD_READ_CAPABILITY',object())
+    ns.setdefault('get_npdb_read_backend',lambda:'supabase' if ns.get('use_supabase_backend',lambda:False)() else 'local')
     tree = ast.parse(APP.read_text())
     for name in ('configured_session_identity', 'current_backend_role', 'is_backend_owner',
                  'require_backend_permission', 'field_policy_revision', 'current_disclosure', 'policy_frame', 'policy_record',
-                 'project_authorized_result', 'asset_policy_approval', 'finish_asset_policy', 'preserve_unseen_fields',
+                 'project_authorized_result', 'field_policy_raw_record', 'asset_policy_approval', 'finish_asset_policy', 'preserve_unseen_fields',
                  'guarded_download_button', 'authorized_read', 'is_owner_editor'):
         node = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name][-1]
         exec(compile(ast.Module(body=[node], type_ignores=[]), str(APP), 'exec'), ns)

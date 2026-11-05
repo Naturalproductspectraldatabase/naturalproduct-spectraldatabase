@@ -33,7 +33,7 @@ class PreflightBypassTests(unittest.TestCase):
     def test_revoked_owner_serialization_fails_closed(self):
         ns=self.fixture('owner');frame=pd.DataFrame([{'gps_coordinates':'SYNTHETIC_PRIVATE_MARKER'}])
         ns['load_approved_users']=lambda:[]
-        self.assertNotIn(b'SYNTHETIC_PRIVATE_MARKER',ns['dataframe_to_csv_bytes'](frame))
+        with self.assertRaises(PermissionError):ns['dataframe_to_csv_bytes'](frame)
 
     def test_raw_private_storage_and_admin_reads_stop_before_credentials(self):
         for role,method,path in [('viewer','GET','/storage/v1/object/authenticated/backups/private.zip'),

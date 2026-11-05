@@ -21,6 +21,8 @@ APP = Path(__file__).resolve().parents[1] / "scripts" / "app.py"
 
 
 def isolated(name, namespace):
+    from authorization_fixture import bind_authorization
+    for k,v in bind_authorization(role="owner").items():namespace.setdefault(k,v)
     tree = ast.parse(APP.read_text(encoding="utf-8"), filename=str(APP))
     nodes = [x for x in tree.body if isinstance(x, ast.FunctionDef) and x.name == name]
     if not nodes:
