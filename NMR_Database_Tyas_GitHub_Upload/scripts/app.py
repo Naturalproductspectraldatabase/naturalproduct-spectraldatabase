@@ -35,7 +35,7 @@ if str(SCRIPT_DIR) not in sys.path:
 from npdb_browser_qa import display_class_term, display_source_term, category_counts, compound_open_label, approved_recovery_route
 from npdb_asset_paths import AssetAccessError, read_local_asset, validate_asset_content, write_local_asset, validate_https_asset_url, read_https_asset
 from npdb_sqlite_snapshot import verified_sqlite_snapshot_bytes
-from npdb_location_policy import FieldPolicy, Identity
+from npdb_location_policy import FieldPolicy, Identity, value_digest
 from npdb_field_access import Disclosure, READ_DEPTH, ASSET_IO, evidence_from_config, is_protected, canonical, context as field_context, SealedPayload, verify_payload
 
 try:
@@ -1123,6 +1123,8 @@ def asset_policy_approval(source):
     for entries in disclosure.policy._evidence.values():
         for fact in entries:
             if fact.field not in {"structure_image_path","image_path","file_path"} or not fact.asset_sha256:
+                continue
+            if fact.value_sha256 != value_digest(str(source)):
                 continue
             row = field_policy_raw_record(fact.table, fact.record_id, _capability=_FIELD_READ_CAPABILITY)
             if str(row.get(fact.field,"")) != str(source):
@@ -6316,6 +6318,9 @@ def supabase_count_rows(table: str, filters: dict | None = None) -> int:
     query.update(_supabase_filter_query(filters))
     base = get_supabase_url().rstrip("/")
     url = f"{base}/rest/v1/{table}?{urlencode(query, doseq=True, safe=',().:*+-')}"
+    require_backend_permission("read")
+    if configured_session_identity() != request_identity or field_policy_revision() != request_policy_revision:
+        raise PermissionError("Request authorization changed; please retry.")
     request = urllib.request.Request(
         url,
         method="GET",
@@ -9381,6 +9386,10 @@ def build_compound_record_bundle(compound_row, proton_df, carbon_df, spectra_df,
         "not_registered"
     )
 
+    proton_export_df = policy_frame(proton_export_df, contexts=current_disclosure().contexts(proton_df, "proton_nmr"))
+    carbon_export_df = policy_frame(carbon_export_df, contexts=current_disclosure().contexts(carbon_df, "carbon_nmr"))
+    spectra_export_df = policy_frame(spectra_export_df, contexts=current_disclosure().contexts(spectra_df, "spectra_files"))
+    bioactivity_export_df = policy_frame(bioactivity_export_df, contexts=current_disclosure().contexts(bioactivity_df, "bioactivity_records"))
     workbook_sheets = {
         "Metadata": metadata_df,
         "1H_NMR": proton_export_df,
@@ -13126,6 +13135,9 @@ def _supabase_request(method: str, path: str, query: dict | None = None, body=No
     payload = None
     if body is not None:
         payload = json.dumps(body).encode("utf-8") if json_body else body
+    require_backend_permission("read")
+    if configured_session_identity() != request_identity or field_policy_revision() != request_policy_revision:
+        raise PermissionError("Request authorization changed; please retry.")
     request = urllib.request.Request(
         url,
         data=payload,
@@ -13143,7 +13155,7 @@ def _supabase_request(method: str, path: str, query: dict | None = None, body=No
             if not raw:
                 return None
             parsed_response = json.loads(raw.decode("utf-8"))
-            if method.upper() in {"GET", "HEAD"} and path.startswith("/rest/v1/"):
+            if path.startswith("/rest/v1/"):
                 if READ_DEPTH.get() == 0:
                     select = str((query or {}).get("select", ""))
                     aliases = {alias: original for alias, original in re.findall(r'"?([A-Za-z_][A-Za-z0-9_]*)"?\s*:\s*([A-Za-z_][A-Za-z0-9_]*)',select)}

@@ -285,6 +285,16 @@ class SuccessfulFieldExports(unittest.TestCase):
             Image.new('RGB',(8,8),'white').save(path,pnginfo=metadata)
             with self.assertRaises(AssetAccessError):ns['read_scientific_asset'](record['structure_image_path'],'structure')
 
+    def test_owner_receipt_cannot_relabel_private_cell_as_scientific_column(self):
+        owner,record,_=fixture('owner');viewer,_,_=fixture('viewer')
+        held=owner['policy_frame'](pd.DataFrame([record]))
+        forged=held[['sample_code']].rename(columns={'sample_code':'smiles'})
+        with self.assertRaises(PermissionError):viewer['dataframe_to_csv_bytes'](forged)
+        filtered=held[held['id']==501].copy()
+        self.assertNotIn(PRIVATE,viewer['dataframe_to_csv_bytes'](filtered).decode())
+        nested=viewer['current_disclosure']().payload({PRIVATE:PRIVATE,'nested':{PRIVATE:PRIVATE,'smiles':'CCO'}})
+        self.assertNotIn(PRIVATE,str(nested));self.assertIn('CCO',str(nested))
+
     def test_owner_review_requires_individually_enumerated_verified_evidence(self):
         _,record,_=fixture()
         packet=prepare('compounds',[record]);self.assertTrue(all(e['classification']=='UNKNOWN_UNVERIFIED' for e in packet['entries']))

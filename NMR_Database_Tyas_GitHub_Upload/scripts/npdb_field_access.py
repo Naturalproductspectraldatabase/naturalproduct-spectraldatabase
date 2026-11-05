@@ -61,7 +61,7 @@ rank score total_score match_count total_query db_peak_count query_coverage db_c
 proton_match_count proton_total_query proton_query_coverage proton_score
 carbon_match_count carbon_total_query carbon_query_coverage carbon_score
 atom_number atom_label carbon_number proton_number query_peaks matched_peaks db_peaks missing_peaks
-matched_pairs query_coverage_percent db_coverage_percent difference delta formula name count Category Percentage
+matched_pairs query_coverage_percent db_coverage_percent difference delta formula name count n total Category Percentage
 proton carbon structures spectra bioactivity compounds proton_nmr carbon_nmr spectra_files bioactivity_records specimens
 specimen_compounds specimen_1h_extracts proton_peaks carbon_peaks mol fp fingerprint matches
 structure_score structure_match_type matched_smiles identity_relationship stereochemical_relationship stereo_relationship
@@ -79,6 +79,8 @@ SCIENTIFIC |= {key(v) for v in (
     'UV Data','FTIR Data','CD / ECD Data','Optical Rotation','Melting Point','HRMS Data',
     'δH (ppm)','δC (ppm)','J (Hz)','J Value','Proton Count','Carbon Type','Instrument (MHz)',
 )}
+
+CONTAINERS = {'payload','nested','metadata','records','attachments','compound','specimen','provenance'}
 
 OPAQUE = {key(v) for v in ('note','description','habitat','traits','color','texture','evidence_note','reference_note','observed_features','source_material','source_summary','specimen_name','file_path','image_path','structure_image_path','extract_label')}
 
@@ -178,6 +180,9 @@ class Disclosure:
         vertical = 'Field' in record and 'Value' in record
         for label, value in record.items():
             field = canonical(record['Field'] if vertical and label == 'Value' else label, aliases)
+            known = key(field) in SCIENTIFIC or key(field) in OPAQUE or key(field) in {key(v) for v in ALIASES.values()} or key(field) in CONTAINERS
+            if not known:
+                continue
             if vertical and label == 'Field':
                 # A user-supplied metadata label can itself contain private text.
                 result[label] = record[label] if key(record[label]) in SCIENTIFIC or key(record[label]) in {key(x) for x in ALIASES.values()} or key(record[label]) in OPAQUE else 'Withheld field'
@@ -202,6 +207,18 @@ class Disclosure:
             proposed = receipt.get('contexts',[])
             if hmac.compare_digest(str(receipt.get('signature','')), _signature(records, proposed)):
                 contexts = proposed
+            else:
+                signed_rows = receipt.get('rows',[])
+                valid=[]
+                for record in records:
+                    matches=[r for r in signed_rows if isinstance(r,dict) and
+                             hmac.compare_digest(str(r.get('signature','')), _signature(record,r.get('context',{})))]
+                    if not matches:break
+                    valid.append(matches[0]['context'])
+                if len(valid)==len(records):
+                    contexts=valid
+                elif source is None and self.policy.identity().role!='owner':
+                    raise PermissionError('Transformed disclosure context must be regenerated at a trusted export boundary.')
         if contexts is None and source is not None:
             contexts = self.contexts(source, table)
             by_id = {c['id']: c for c in contexts if c['id']}
@@ -217,7 +234,12 @@ class Disclosure:
                     output[column] = output[column].astype(object)
                     output.iat[index, output.columns.get_loc(column)] = value
         contexts = [{**c, 'values': {f:v for f,v in c.get('values',{}).items() if self.visible(f,v,c)}} for c in contexts]
-        output.attrs = {_RECEIPT: {'contexts': deepcopy(contexts), 'signature': _signature(output.to_dict('records'),contexts)}}
+        if self.policy.identity().role!='owner':
+            # Keep only named schema/approved policy/container columns. Arbitrary
+            # unreviewed column labels must not become filenames or CSV headers.
+            keep=[c for c in output.columns if key(canonical(c,aliases)) in SCIENTIFIC or key(canonical(c,aliases)) in OPAQUE or key(canonical(c,aliases)) in {key(v) for v in ALIASES.values()} or key(c) in CONTAINERS or c in {'Field','Value'}]
+            output=output[keep].copy()
+        output.attrs = {_RECEIPT: {'contexts': deepcopy(contexts), 'signature': _signature(output.to_dict('records'),contexts), 'rows':[{'context':c,'signature':_signature(r,c)} for r,c in zip(output.to_dict('records'),contexts)]}}
         return output
 
     def contexts(self, frame, table=''):
@@ -225,6 +247,13 @@ class Disclosure:
         records = frame.to_dict('records')
         if isinstance(receipt,dict) and hmac.compare_digest(str(receipt.get('signature','')), _signature(records, receipt.get('contexts',[]))):
             return deepcopy(receipt['contexts'])
+        if isinstance(receipt,dict):
+            valid=[]
+            for record in records:
+                matches=[r for r in receipt.get('rows',[]) if isinstance(r,dict) and hmac.compare_digest(str(r.get('signature','')), _signature(record,r.get('context',{})))]
+                if not matches:break
+                valid.append(deepcopy(matches[0]['context']))
+            if len(valid)==len(records):return valid
         return [context(r,table) for r in records]
 
     def payload(self, value, table='', aliases=None):

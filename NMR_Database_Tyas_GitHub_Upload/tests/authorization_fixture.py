@@ -26,11 +26,11 @@ def bind_authorization(ns=None, role='owner', username=None, authenticated=True)
     ns.setdefault('normalize_login_slug', lambda x: ''.join(c for c in str(x or '').lower() if c.isalnum()))
     sys.path.insert(0,str(APP.parent))
     from npdb_field_access import Disclosure, READ_DEPTH, ASSET_IO, SealedPayload, verify_payload, evidence_from_config, is_protected, canonical, context
-    from npdb_location_policy import FieldPolicy, Identity
+    from npdb_location_policy import FieldPolicy, Identity, value_digest
     ns.update(hashlib=hashlib,hmac=hmac,json=json,wraps=wraps,re=re,
               Disclosure=Disclosure,READ_DEPTH=READ_DEPTH,ASSET_IO=ASSET_IO,SealedPayload=SealedPayload,verify_payload=verify_payload,
               evidence_from_config=evidence_from_config,is_protected=is_protected,canonical=canonical,
-              field_context=context,FieldPolicy=FieldPolicy,Identity=Identity)
+              field_context=context,FieldPolicy=FieldPolicy,Identity=Identity,value_digest=value_digest)
     ns.setdefault('get_secret_object',lambda *keys:None)
     ns.setdefault('_FIELD_READ_CAPABILITY',object())
     ns.setdefault('get_npdb_read_backend',lambda:'supabase' if ns.get('use_supabase_backend',lambda:False)() else 'local')
