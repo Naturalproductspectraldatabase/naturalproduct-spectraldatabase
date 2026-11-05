@@ -9,6 +9,7 @@ import tempfile
 import types
 import unittest
 import zipfile
+from urllib.parse import urlparse
 
 from PIL import Image
 from authorization_fixture import bind_authorization
@@ -23,7 +24,7 @@ def load(ns, *names):
     # account tests explicitly bind their own real permission context.
     auth=bind_authorization()
     ns.setdefault("require_backend_permission", auth["require_backend_permission"])
-    ns.setdefault("configured_session_identity", lambda: ns["require_backend_permission"].__globals__.get("configured_session_identity",auth["configured_session_identity"])())
+    ns["configured_session_identity"] = lambda: ns["require_backend_permission"].__globals__.get("configured_session_identity",auth["configured_session_identity"])()
     ns.setdefault("wraps",wraps)
     for key,value in auth.items():
         ns.setdefault(key,value)
@@ -42,7 +43,7 @@ def load(ns, *names):
 
 
 def reader_namespace(project):
-    ns = dict(Path=Path, PROJECT_DIR=project, STRUCTURES_DIR=project/'data/structures',
+    ns = dict(Path=Path, urlparse=urlparse, PROJECT_DIR=project, STRUCTURES_DIR=project/'data/structures',
               SPECTRA_DIR=project/'data/spectra', SPECIMENS_DIR=project/'data/specimens',
               read_local_asset=read_local_asset, validate_asset_content=validate_asset_content,
               AssetAccessError=AssetAccessError, LOCAL_ASSET_MAX_BYTES=1024*1024,
