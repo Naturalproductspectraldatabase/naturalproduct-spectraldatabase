@@ -216,6 +216,11 @@ class Disclosure:
             if not known:
                 if vertical and label == 'Value':result[label]=None
                 continue
+            explicit = (ctx.get('table',''),ctx.get('id',''),field) in self.policy._evidence
+            original = ctx.get('values',{}).get(field,value)
+            if explicit and not self.visible(field,original,ctx):
+                result[label] = 'withheld://provenance-review' if field=='structure_image_path' and value else None
+                continue
             if vertical and label == 'Field':
                 # A user-supplied metadata label can itself contain private text.
                 result[label] = record[label] if key(record[label]) in SCIENTIFIC or key(record[label]) in {key(x) for x in ALIASES.values()} or key(record[label]) in OPAQUE else 'Withheld field'

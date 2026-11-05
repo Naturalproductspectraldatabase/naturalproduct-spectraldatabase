@@ -422,6 +422,18 @@ class SuccessfulFieldExports(unittest.TestCase):
         ns['st'].session_state['npdb_credential_revision']=ns['configured_session_identity']()[1]
         with self.assertRaises(PermissionError):ns['guarded_scientific_image'](image)
 
+    def test_explicit_owner_restrictions_override_scientific_field_defaults(self):
+        for role in ('owner','editor','viewer'):
+            ns,record,config=fixture(role)
+            config['entries'].append(asdict(Evidence(table='compounds',record_id='501',field='trivial_name',record_revision=record['updated_at'],value_sha256=value_digest(record['trivial_name']),classification='SENSITIVE_RESTRICTED')))
+            output=ns['policy_frame'](pd.DataFrame([record]))
+            self.assertEqual(output.iloc[0]['trivial_name'],record['trivial_name'] if role=='owner' else None)
+            if role!='owner':
+                record['updated_at']='changed-revision'
+                self.assertIsNone(ns['policy_frame'](pd.DataFrame([record])).iloc[0]['trivial_name'])
+        packet=prepare('compounds',[record],fields=['trivial_name'])
+        self.assertEqual([e['field'] for e in packet['entries']],['trivial_name'])
+
     def test_owner_review_requires_individually_enumerated_verified_evidence(self):
         _,record,_=fixture()
         packet=prepare('compounds',[record]);self.assertTrue(all(e['classification']=='UNKNOWN_UNVERIFIED' for e in packet['entries']))

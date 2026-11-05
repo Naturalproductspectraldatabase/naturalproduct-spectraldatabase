@@ -15,11 +15,13 @@ from npdb_field_access import is_protected, record_revision
 from npdb_location_policy import Evidence, CLASSIFICATIONS, PUBLISHED_VERIFIED, UNKNOWN_UNVERIFIED, value_digest
 
 
-def prepare(table, records):
+def prepare(table, records, fields=None):
     entries=[]
     for record in records:
+        if fields and any(field not in record for field in fields):
+            raise ValueError("An explicitly selected field is absent from the record")
         for field,value in record.items():
-            if not is_protected(field,value):
+            if (fields is not None and field not in fields) or (fields is None and not is_protected(field,value)):
                 continue
             item=dict(table=table,record_id=str(record['id']),field=field,
                       record_revision=record_revision(record,table),value_sha256=value_digest(value),
@@ -76,12 +78,13 @@ def main():
     parser.add_argument('--input',type=Path,required=True)
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--table')
+    parser.add_argument('--fields',nargs='+',help='Explicit schema fields; defaults to protected metadata fields')
     parser.add_argument('--decisions',type=Path)
     args=parser.parse_args()
     data=json.loads(args.input.read_text())
     if args.operation=='prepare':
         if not args.table:parser.error('--table required')
-        result=prepare(args.table,data)
+        result=prepare(args.table,data,args.fields)
     else:
         if not args.decisions:parser.error('--decisions required')
         result=approve(data,json.loads(args.decisions.read_text()))
