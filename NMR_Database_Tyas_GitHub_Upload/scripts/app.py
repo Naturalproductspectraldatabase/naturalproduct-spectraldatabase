@@ -6834,6 +6834,9 @@ def build_backup_bundle_bytes() -> tuple[bytes, str]:
     output = io.BytesIO()
     with zipfile.ZipFile(output, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("manifest.json", json.dumps(manifest, indent=2))
+        archive.writestr("field_provenance.json", field_provenance_export(compound_row,"compounds"))
+        if "specimens" in related:
+            archive.writestr("specimen_field_provenance.json", field_provenance_export(related["specimens"],"specimens"))
         for table_name, df in tables.items():
             archive.writestr(f"tables/{table_name}.csv", df.to_csv(index=False))
         if use_local_read_backend() and DB_PATH.exists():
@@ -9342,6 +9345,35 @@ def _important_bioactivity_dataframe(bioactivity_df: pd.DataFrame) -> pd.DataFra
 
 
 @authorized_read
+def field_provenance_export(frame, table):
+    """Export explicit review facts, never infer source approval from a record DOI."""
+    disclosure = current_disclosure()
+    identity = disclosure.policy.identity()
+    entries = []
+    for record, ctx in zip(frame.to_dict("records"), disclosure.contexts(frame,table)):
+        for label,value in record.items():
+            field = canonical(label)
+            if not is_protected(field,value):
+                continue
+            original = ctx.get("values",{}).get(field,value)
+            fact = disclosure.policy.evidence_for(table,ctx.get("id",""),field,original,ctx.get("revision",""))
+            visible = identity.role == "owner" or disclosure.visible(field,original,ctx)
+            if not visible:
+                continue
+            entries.append({"table":table,"record_id":ctx.get("id",""),"field":field,
+                "record_revision":ctx.get("revision",""),
+                "classification":fact.classification if fact else "UNKNOWN_UNVERIFIED",
+                "verification_status":fact.verification_status if fact else "",
+                "source_reference":fact.source_reference if fact else "",
+                "source_locator":fact.source_locator if fact else "",
+                "verified_by":fact.verified_by if fact else "",
+                "verified_at":fact.verified_at if fact else "",
+                "disclosure_restrictions":list(fact.disclosure_restrictions) if fact else []})
+    disclosure.policy._unchanged_identity(identity)
+    return json.dumps({"scope":"field_value_revision_only_not_global_curation","entries":entries},ensure_ascii=False,indent=2).encode("utf-8")
+
+
+@authorized_read
 def record_related_specimen_tables(compound_id):
     links = load_specimen_compound_links()
     if links.empty or "compound_id" not in links:
@@ -9459,6 +9491,9 @@ def build_compound_record_bundle(compound_row, proton_df, carbon_df, spectra_df,
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("README.txt", build_compound_summary_text(compound_row, proton_df, carbon_df, spectra_df))
         archive.writestr("manifest.json", json.dumps(manifest, indent=2))
+        archive.writestr("field_provenance.json", field_provenance_export(compound_row,"compounds"))
+        if "specimens" in related:
+            archive.writestr("specimen_field_provenance.json", field_provenance_export(related["specimens"],"specimens"))
         archive.writestr("tables/compound_metadata.csv", metadata_df.to_csv(index=False))
         archive.writestr("tables/1H_NMR_chemical_shifts.csv", proton_export_df.to_csv(index=False))
         archive.writestr("tables/13C_NMR_chemical_shifts.csv", carbon_export_df.to_csv(index=False))

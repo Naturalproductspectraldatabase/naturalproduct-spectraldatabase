@@ -70,7 +70,7 @@ def fixture(role='viewer'):
         'download_dataframe_button','_archive_safe_name','_select_existing_columns',
         '_important_metadata_dataframe','disclose_potency_unit_status','_important_bioactivity_dataframe',
         '_dataframes_to_record_workbook','_compound_structure_asset','build_compound_summary_text',
-        'build_compound_record_bundle','export_name_results','export_bioactivity_results',
+        'field_provenance_export','build_compound_record_bundle','export_name_results','export_bioactivity_results',
         'export_structure_search_results','export_similarity_results_13c','export_similarity_results_1h','export_similarity_results_combined')
     return ns,record,config
 
@@ -115,6 +115,10 @@ class SuccessfulFieldExports(unittest.TestCase):
             with zipfile.ZipFile(io.BytesIO(blob)) as archive:
                 text='\n'.join(archive.read(n).decode() for n in archive.namelist() if not n.endswith('.xlsx'))
                 self.assertIn(PUBLIC,text)
+                provenance=json.loads(archive.read('field_provenance.json'))
+                gps=next(e for e in provenance['entries'] if e['field']=='gps_coordinates')
+                self.assertEqual(gps['classification'],'PUBLISHED_VERIFIED')
+                self.assertEqual(gps['source_locator'],'Synthetic table row 1')
                 self.assertEqual(PRIVATE in text,role=='owner')
                 self.assertIn('1.23',text);self.assertIn('18.7',text);self.assertIn('501',text)
                 if 'NPDB_full_record.xlsx' in archive.namelist():
