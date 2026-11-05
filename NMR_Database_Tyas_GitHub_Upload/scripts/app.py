@@ -1170,6 +1170,8 @@ def finish_asset_policy(approval, data):
 def preserve_unseen_fields(table, record_id, row):
     """Drop editor changes to withheld existing fields; preserve stored originals."""
     require_backend_permission("curate", table, row)
+    # UI references are locators, never stored scientific source paths.
+    row = {field:value for field,value in row.items() if not parse_asset_token(value)}
     if is_backend_owner():
         return dict(row)
     if not any(is_protected(field,value) for field,value in row.items()):
@@ -9225,6 +9227,8 @@ def _asset_bytes_from_source(source_value: str, kind="attachment") -> tuple[byte
     source_text = maybe_blank(source_value)
     if not source_text:
         return b"", ""
+    if parse_asset_token(source_text):
+        source_text = str(resolve_reviewed_asset_source(source_text,_capability=_FIELD_READ_CAPABILITY))
     try:
         if is_external_url(source_text) or is_supabase_storage_reference(source_text):
             return read_remote_scientific_asset(source_text, image_only=(kind == "structure"))
@@ -13473,6 +13477,8 @@ def search_compound_select_columns() -> str:
 
 def supabase_insert_row(table: str, row: dict):
     require_backend_permission("curate", table, row)
+    if any(parse_asset_token(v) for v in row.values()):
+        raise ValueError("Upload/select an authorized source asset before creating a record.")
     payload = {k: _json_ready(v) for k, v in row.items() if k and v is not None}
     try:
         response = _supabase_insert_request(table, payload)
@@ -13588,6 +13594,8 @@ def _sqlite_columns(table: str) -> list[str]:
 
 def _sqlite_upsert_row(table: str, row: dict) -> int | None:
     require_backend_permission("curate", table, row)
+    if row.get("id") is None and any(parse_asset_token(v) for v in row.values()):
+        raise ValueError("Upload/select an authorized source asset before creating a record.")
     columns = [column for column in row.keys() if column in _sqlite_columns(table)]
     if not columns:
         return None

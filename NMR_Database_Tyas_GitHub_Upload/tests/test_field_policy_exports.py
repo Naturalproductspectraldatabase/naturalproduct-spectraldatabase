@@ -294,6 +294,12 @@ class SuccessfulFieldExports(unittest.TestCase):
             self.assertNotIn('data/structures',str(projected.to_dict())+str(projected.attrs))
             self.assertEqual(ns['read_scientific_asset'](token,'structure'),path.read_bytes())
             with self.assertRaises(PermissionError):ns['resolve_reviewed_asset_source'](token)
+            ns['load_approved_users']()[0]['role']='editor';ns['st'].session_state['npdb_role']='editor'
+            ns['st'].session_state['npdb_credential_revision']=ns['configured_session_identity']()[1]
+            ns.update(_sqlite_columns=lambda table:list(record),use_supabase_write_backend=lambda:False,record_audit_event=lambda *a,**k:None)
+            load(ns,'_sqlite_upsert_row')
+            ns['_sqlite_upsert_row']('compounds',dict(id=501,trivial_name='Synthetic edited',structure_image_path=token))
+            with sqlite3.connect(db) as connection:self.assertEqual(connection.execute('SELECT structure_image_path FROM compounds WHERE id=501').fetchone()[0],record['structure_image_path'])
             metadata=PngInfo();metadata.add_text('Description',PRIVATE)
             Image.new('RGB',(8,8),'white').save(path,pnginfo=metadata)
             with self.assertRaises(AssetAccessError):ns['read_scientific_asset'](record['structure_image_path'],'structure')
