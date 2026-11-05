@@ -1116,7 +1116,12 @@ def authorized_read(reader):
     @wraps(reader)
     def read(*args, **kwargs):
         require_backend_permission("read")
-        return reader(*args, **kwargs)
+        identity = configured_session_identity()
+        result = reader(*args, **kwargs)
+        require_backend_permission("read")
+        if configured_session_identity() != identity:
+            raise PermissionError("The request identity changed; please retry.")
+        return result
     # CachedFunc exposes clear on its class, so wraps' __dict__ copy is insufficient.
     if hasattr(reader, "clear"):
         read.clear = reader.clear

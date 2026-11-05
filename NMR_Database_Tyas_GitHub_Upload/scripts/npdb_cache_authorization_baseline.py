@@ -109,8 +109,30 @@ if __name__=='__main__':
                 rows.append(row)
                 print('NPDB_AUTH_BASELINE '+json.dumps(row),flush=True)
     reproduced=sum(row['actual']=='RETURNED_ROWS' and row.get('row_count')==1 for row in rows)
-    print('NPDB_AUTH_BASELINE_SUMMARY '+json.dumps(dict(candidate='9d81a72e397897fe1614ca98adfec254cb4f1c4f',
+    print('NPDB_AUTH_BASELINE_SUMMARY '+json.dumps(dict(frozen_reference='9d81a72e397897fe1614ca98adfec254cb4f1c4f',tested_revision='9d81a72e397897fe1614ca98adfec254cb4f1c4f' if EXPECT=='baseline' else os.environ.get('GITHUB_SHA','WORKTREE'),
           trials=len(rows),unauthorized_returns=reproduced,expected=EXPECT,app_sha256=hashlib.sha256(APP.read_bytes()).hexdigest(),
           meaning='REPRODUCTION_ONLY_NOT_SECURITY_PASS' if EXPECT=='baseline' else 'CANDIDATE_BOUNDARY_CHECK',release='BLOCKED')))
+    if EXPECT=='denial':
+        mid_read_denials=0
+        for state in ('logout','revocation','rotation','valid_role_swap'):
+            ns=bind_authorization(role='owner')
+            def reader():
+                if state=='logout':ns['st'].session_state['npdb_authenticated']=False
+                elif state=='revocation':ns['load_approved_users']=lambda:[]
+                elif state=='rotation':ns['load_approved_users']()[0]['password_hash']='synthetic-rotated'
+                else:
+                    ns['load_approved_users']()[0]['role']='editor'
+                    ns['st'].session_state['npdb_role']='editor'
+                    ns['st'].session_state['npdb_credential_revision']=ns['configured_session_identity']()[1]
+                return 'SYNTHETIC-MUST-NOT-RETURN'
+            trial_denied=False
+            try:
+                ns['authorized_read'](reader)()
+            except PermissionError:
+                mid_read_denials+=1
+                trial_denied=True
+            print('NPDB_AUTH_MID_READ '+json.dumps(dict(state=state,security_status='PASS' if trial_denied else 'FAIL')))
+        print('NPDB_AUTH_MID_READ_SUMMARY '+json.dumps(dict(trials=4,denied=mid_read_denials)))
+        assert mid_read_denials==4
     denied=sum(row['actual']=='DENIED' for row in rows)
     sys.exit(0 if len(rows)==24 and ((EXPECT=='baseline' and reproduced==24) or (EXPECT=='denial' and denied==24)) else 1)
