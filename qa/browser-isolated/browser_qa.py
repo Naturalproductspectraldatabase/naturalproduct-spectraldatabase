@@ -221,9 +221,10 @@ LAYOUT_JS = '''() => {
  const sidebar=document.querySelector('[data-testid="stSidebar"]');
  const sb=box(sidebar), b=box(content), m=box(main), w=window.innerWidth;
  const shown=sb && sb.right>1 && sb.x<w && getComputedStyle(sidebar).visibility!=='hidden';
+ const fullyExpanded=shown && sb.x>=-1;
  const controls=[...main.querySelectorAll('button,input,textarea,select,[role="combobox"]')].filter(e=> {
   const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none';});
- return {viewport:w,sidebar:sb,main:m,content:b,sidebar_intersects_viewport:!!shown,
+ return {viewport:w,sidebar:sb,main:m,content:b,sidebar_intersects_viewport:!!shown,sidebar_fully_expanded:!!fullyExpanded,
   horizontal_overflow:Math.max(document.documentElement.scrollWidth-w,main.scrollWidth-main.clientWidth),
   clipped_controls:controls.filter(e=>{const r=e.getBoundingClientRect();return r.x < -2 || r.right>w+2;}).length,
   control_count:controls.length, blank_left_px:shown?0:Math.max(0,b.x+(parseFloat(getComputedStyle(content).paddingLeft)||0)),
@@ -232,7 +233,7 @@ LAYOUT_JS = '''() => {
 
 
 def sidebar_state(page, expanded):
-    current = page.evaluate(LAYOUT_JS)['sidebar_intersects_viewport']
+    current = page.evaluate(LAYOUT_JS)['sidebar_fully_expanded']
     if current != expanded:
         if expanded:
             toggle = page.locator('[data-testid="stSidebarCollapsedControl"], [data-testid="stExpandSidebarButton"], [data-testid="collapsedControl"]').filter(visible=True).first
@@ -246,7 +247,7 @@ def sidebar_state(page, expanded):
         page.wait_for_timeout(400)
     result = page.evaluate(LAYOUT_JS)
     result['requested_expanded'] = expanded
-    result['passed'] = (result['sidebar_intersects_viewport'] == expanded and
+    result['passed'] = ((result['sidebar_fully_expanded'] if expanded else not result['sidebar_intersects_viewport']) and
                         result['horizontal_overflow'] <= 1 and result['clipped_controls'] == 0 and
                         result['exception_count'] == 0 and
                         (expanded or result['blank_left_px'] <= max(96, result['viewport']*.12)))
