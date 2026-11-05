@@ -1,0 +1,49 @@
+name: NPDB field policy primitives and frozen authorization audit
+on:
+  push:
+    branches: [fix/npdb-field-location-policy-20261105]
+permissions:
+  contents: read
+jobs:
+  policy:
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11','3.12']
+    steps:
+      - name: Extract only source and synthetic tests, without legacy gitlink checkout
+        run: |
+          set -eu
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          test "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA"
+          git fetch --no-tags --depth=1 origin 9d81a72e397897fe1614ca98adfec254cb4f1c4f
+          mkdir -p NMR_Database_Tyas_GitHub_Upload/scripts NMR_Database_Tyas_GitHub_Upload/tests
+          git show "$GITHUB_SHA:NMR_Database_Tyas_GitHub_Upload/scripts/npdb_location_policy.py" > NMR_Database_Tyas_GitHub_Upload/scripts/npdb_location_policy.py
+          git show "$GITHUB_SHA:NMR_Database_Tyas_GitHub_Upload/scripts/npdb_cache_authorization_baseline.py" > NMR_Database_Tyas_GitHub_Upload/scripts/npdb_cache_authorization_baseline.py
+          git show "$GITHUB_SHA:NMR_Database_Tyas_GitHub_Upload/tests/test_location_policy_contract.py" > NMR_Database_Tyas_GitHub_Upload/tests/test_location_policy_contract.py
+          git show "$GITHUB_SHA:NMR_Database_Tyas_GitHub_Upload/scripts/app.py" > NMR_Database_Tyas_GitHub_Upload/scripts/app.py
+          git show 9d81a72e397897fe1614ca98adfec254cb4f1c4f:NMR_Database_Tyas_GitHub_Upload/scripts/app.py > "$RUNNER_TEMP/npdb-frozen-app.py"
+          git show "$GITHUB_SHA:NMR_Database_Tyas_GitHub_Upload/tests/authorization_fixture.py" > NMR_Database_Tyas_GitHub_Upload/tests/authorization_fixture.py
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install pinned synthetic-test dependencies
+        run: python -m pip install --disable-pip-version-check streamlit==1.66.1 pandas==2.2.3
+      - name: Run field-policy primitive contract (NOT application enforcement)
+        run: python -m unittest discover -s NMR_Database_Tyas_GitHub_Upload/tests -p test_location_policy_contract.py -v
+      - name: Reproduce frozen cache/read authorization FAILs (NOT security acceptance)
+        env:
+          STREAMLIT_BROWSER_GATHER_USAGE_STATS: 'false'
+          NPDB_AUDIT_APP: ${{ runner.temp }}/npdb-frozen-app.py
+          NPDB_AUDIT_EXPECT: baseline
+        run: python NMR_Database_Tyas_GitHub_Upload/scripts/npdb_cache_authorization_baseline.py
+      - name: Require current candidate to deny all 24 invalid-identity reads
+        env:
+          STREAMLIT_BROWSER_GATHER_USAGE_STATS: 'false'
+          NPDB_AUDIT_EXPECT: denial
+        run: python NMR_Database_Tyas_GitHub_Upload/scripts/npdb_cache_authorization_baseline.py

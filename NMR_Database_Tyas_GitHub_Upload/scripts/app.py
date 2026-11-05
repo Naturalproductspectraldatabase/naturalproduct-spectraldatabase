@@ -17,6 +17,7 @@ import urllib.error
 import urllib.request
 import zipfile
 from datetime import UTC, datetime
+from functools import wraps
 from pathlib import Path
 from urllib.parse import quote, unquote, urlencode, urlparse
 
@@ -1103,6 +1104,28 @@ def require_backend_permission(action, table=None, row=None):
             raise PermissionError("Record approval requires an owner account.")
         return
     raise PermissionError("This action is not permitted for this account.")
+
+
+def authorized_read(reader):
+    """Revalidate current server identity BEFORE every cache invocation/return.
+
+    Must be outside st.cache_data, whose hit bypasses the function body. Preserve
+    cached clear/introspection attributes. Field-level disclosure remains a
+    separate projection concern; this decorator grants no curation/admin rights.
+    """
+    @wraps(reader)
+    def read(*args, **kwargs):
+        require_backend_permission("read")
+        identity = configured_session_identity()
+        result = reader(*args, **kwargs)
+        require_backend_permission("read")
+        if configured_session_identity() != identity:
+            raise PermissionError("The request identity changed; please retry.")
+        return result
+    # CachedFunc exposes clear on its class, so wraps' __dict__ copy is insufficient.
+    if hasattr(reader, "clear"):
+        read.clear = reader.clear
+    return read
 
 
 def render_account_recovery_instructions():
@@ -6098,6 +6121,7 @@ def count_bioactivity_records(filtered_ids):
         conn.close()
 
 
+@authorized_read
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def supabase_count_rows(table: str, filters: dict | None = None) -> int:
     if not use_supabase_backend():
@@ -6131,6 +6155,7 @@ def supabase_count_rows(table: str, filters: dict | None = None) -> int:
     return len(rows)
 
 
+@authorized_read
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def count_database_totals(db_signature: float):
     backend = get_npdb_read_backend()
@@ -7111,6 +7136,7 @@ def render_compound_card(row, show_preview: bool = True, prefer_fast_asset: bool
 # =========================
 # Data loading
 # =========================
+@authorized_read
 @st.cache_data(show_spinner=False)
 def load_all_compounds():
     conn = get_connection()
@@ -7133,6 +7159,7 @@ def load_all_compounds():
     conn.close()
     return enrich_compounds_dataframe(df)
 
+@authorized_read
 @st.cache_data(show_spinner=False)
 def load_compound_row(compound_id):
     conn = get_connection()
@@ -7155,6 +7182,7 @@ def load_compound_row(compound_id):
     conn.close()
     return enrich_compounds_dataframe(df)
 
+@authorized_read
 @st.cache_data(show_spinner=False)
 def load_proton_data(compound_id):
     conn = get_connection()
@@ -7169,6 +7197,7 @@ def load_proton_data(compound_id):
     conn.close()
     return df
 
+@authorized_read
 @st.cache_data(show_spinner=False)
 def load_all_proton_data():
     conn = get_connection()
@@ -7184,6 +7213,7 @@ def load_all_proton_data():
     conn.close()
     return df
 
+@authorized_read
 @st.cache_data(show_spinner=False)
 def load_proton_row(proton_id):
     conn = get_connection()
@@ -7197,6 +7227,7 @@ def load_proton_row(proton_id):
     conn.close()
     return df
 
+@authorized_read
 @st.cache_data(show_spinner=False)
 def load_carbon_data(compound_id):
     conn = get_connection()
@@ -7211,6 +7242,7 @@ def load_carbon_data(compound_id):
     conn.close()
     return df
 
+@authorized_read
 @st.cache_data(show_spinner=False)
 def load_all_carbon_data():
     conn = get_connection()
@@ -7226,6 +7258,7 @@ def load_all_carbon_data():
     conn.close()
     return df
 
+@authorized_read
 @st.cache_data(show_spinner=False)
 def load_carbon_row(carbon_id):
     conn = get_connection()
@@ -7239,6 +7272,7 @@ def load_carbon_row(carbon_id):
     conn.close()
     return df
 
+@authorized_read
 @st.cache_data(show_spinner=False)
 def load_spectra_files(compound_id):
     conn = get_connection()
@@ -7252,6 +7286,7 @@ def load_spectra_files(compound_id):
     conn.close()
     return df
 
+@authorized_read
 @st.cache_data(show_spinner=False)
 def load_all_spectra_files():
     conn = get_connection()
@@ -7266,6 +7301,7 @@ def load_all_spectra_files():
     conn.close()
     return df
 
+@authorized_read
 @st.cache_data(show_spinner=False)
 def load_spectrum_file_row(file_id):
     conn = get_connection()
@@ -7279,6 +7315,7 @@ def load_spectrum_file_row(file_id):
     return df
 
 
+@authorized_read
 @st.cache_data(show_spinner=False)
 def load_bioactivity_data(compound_id):
     conn = get_connection()
@@ -7295,6 +7332,7 @@ def load_bioactivity_data(compound_id):
     return df
 
 
+@authorized_read
 @st.cache_data(show_spinner=False)
 def load_all_bioactivity_data():
     conn = get_connection()
@@ -7312,6 +7350,7 @@ def load_all_bioactivity_data():
     return df
 
 
+@authorized_read
 @st.cache_data(show_spinner=False)
 def load_bioactivity_row(bioactivity_id):
     conn = get_connection()
@@ -8528,6 +8567,7 @@ def get_db_signature():
     return DB_PATH.stat().st_mtime
 
 
+@authorized_read
 @st.cache_data(show_spinner=False)
 def load_search_index(db_signature: float):
     conn = get_connection()
@@ -12579,6 +12619,7 @@ def _select_existing_columns(df: pd.DataFrame, columns: str | list[str] | None) 
     return df[requested]
 
 
+@authorized_read
 def _snapshot_dataframe(table: str, columns: str | list[str] | None = None) -> pd.DataFrame:
     path = CSV_SNAPSHOT_DIR / f"{table}.csv"
     if not path.exists():
@@ -12922,6 +12963,7 @@ def _supabase_filter_query(filters: dict | None) -> dict:
     return query
 
 
+@authorized_read
 def supabase_select_df(table: str, columns: str = "*", filters: dict | None = None, order: str | None = None) -> pd.DataFrame:
     if not use_supabase_backend():
         return pd.DataFrame()
@@ -12977,6 +13019,7 @@ def is_duplicate_primary_key_error(exc: Exception) -> bool:
     return "23505" in message and ("duplicate key" in message or "_pkey" in message)
 
 
+@authorized_read
 @st.cache_data(show_spinner=False, ttl=60)
 def supabase_column_available(table: str, column: str) -> bool:
     if not use_supabase_backend():
@@ -13173,6 +13216,7 @@ def supabase_upload_bytes(bucket: str, object_path: str, data: bytes, content_ty
     return f"storage://{bucket}/{object_path}"
 
 
+@authorized_read
 def _sqlite_dataframe(query: str, params: tuple | list | None = None) -> pd.DataFrame:
     if not DB_PATH.exists():
         return pd.DataFrame()
@@ -13297,6 +13341,7 @@ def _merge_compound_names(df: pd.DataFrame) -> pd.DataFrame:
     return df.merge(compounds_df, on="compound_id", how="left")
 
 
+@authorized_read
 @st.cache_data(show_spinner=False, ttl=30)
 def supabase_compounds_signature() -> str:
     if not use_supabase_backend():
@@ -13337,6 +13382,7 @@ def get_db_signature():
     return "sqlite:" + hashlib.sha256(repr(stamps).encode()).hexdigest()
 
 
+@authorized_read
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def _load_all_compounds_cached(source_normalization_version: str, db_signature):
     _ = source_normalization_version
@@ -13355,6 +13401,7 @@ def _load_all_compounds_cached(source_normalization_version: str, db_signature):
     return enrich_compounds_dataframe(_sqlite_dataframe(f"SELECT {columns} FROM compounds ORDER BY id ASC"))
 
 
+@authorized_read
 def load_all_compounds(source_normalization_version: str = SOURCE_NORMALIZATION_CACHE_VERSION):
     return redact_private_gps_for_current_user(_load_all_compounds_cached(source_normalization_version, get_db_signature()))
 
@@ -13365,6 +13412,7 @@ except Exception:
     pass
 
 
+@authorized_read
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def _load_dashboard_compounds_cached(source_normalization_version: str, db_signature):
     _ = source_normalization_version
@@ -13382,6 +13430,7 @@ def _load_dashboard_compounds_cached(source_normalization_version: str, db_signa
     return enrich_compounds_dataframe(_sqlite_dataframe(f"SELECT {columns} FROM compounds ORDER BY updated_at DESC"))
 
 
+@authorized_read
 def load_dashboard_compounds(source_normalization_version: str = SOURCE_NORMALIZATION_CACHE_VERSION):
     return redact_private_gps_for_current_user(_load_dashboard_compounds_cached(source_normalization_version, get_db_signature()))
 
@@ -13392,6 +13441,7 @@ except Exception:
     pass
 
 
+@authorized_read
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def _load_search_compounds_cached(source_normalization_version: str, db_signature):
     _ = source_normalization_version
@@ -13410,6 +13460,7 @@ def _load_search_compounds_cached(source_normalization_version: str, db_signatur
     return enrich_compounds_dataframe(_sqlite_dataframe(f"SELECT {columns} FROM compounds ORDER BY id ASC"))
 
 
+@authorized_read
 def load_search_compounds(source_normalization_version: str = SOURCE_NORMALIZATION_CACHE_VERSION):
     return redact_private_gps_for_current_user(_load_search_compounds_cached(source_normalization_version, get_db_signature()))
 
@@ -13420,6 +13471,7 @@ except Exception:
     pass
 
 
+@authorized_read
 def load_compounds_for_section(section: str) -> pd.DataFrame:
     if section == "Dashboard":
         return load_dashboard_compounds()
@@ -13437,6 +13489,7 @@ def clear_compounds_cache_for_section(section: str):
     cache_clearer()
 
 
+@authorized_read
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def _load_compound_row_cached(compound_id, source_normalization_version: str, db_signature):
     _ = source_normalization_version
@@ -13455,6 +13508,7 @@ def _load_compound_row_cached(compound_id, source_normalization_version: str, db
     return enrich_compounds_dataframe(_sqlite_dataframe(f"SELECT {columns} FROM compounds WHERE id = ?", (compound_id,)))
 
 
+@authorized_read
 def load_compound_row(compound_id, source_normalization_version: str = SOURCE_NORMALIZATION_CACHE_VERSION):
     return redact_private_gps_for_current_user(_load_compound_row_cached(compound_id, source_normalization_version, get_db_signature()))
 
@@ -13465,6 +13519,7 @@ except Exception:
     pass
 
 
+@authorized_read
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_proton_data(compound_id):
     columns = "id,compound_id,delta_ppm,multiplicity,j_value,proton_count,assignment,solvent,instrument_mhz,note"
@@ -13483,6 +13538,7 @@ def load_proton_data(compound_id):
     return _sqlite_dataframe(f"SELECT {columns} FROM proton_nmr WHERE compound_id = ? ORDER BY delta_ppm DESC", (compound_id,))
 
 
+@authorized_read
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_all_proton_data():
     columns = "id,compound_id,delta_ppm,multiplicity,j_value,proton_count,assignment,solvent,instrument_mhz,note"
@@ -13499,6 +13555,7 @@ def load_all_proton_data():
     return _sqlite_dataframe("SELECT p.id, p.compound_id, c.trivial_name, p.delta_ppm, p.multiplicity, p.j_value, p.proton_count, p.assignment, p.solvent, p.instrument_mhz, p.note FROM proton_nmr p LEFT JOIN compounds c ON p.compound_id = c.id ORDER BY p.id ASC")
 
 
+@authorized_read
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_proton_row(proton_id):
     columns = "id,compound_id,delta_ppm,multiplicity,j_value,proton_count,assignment,solvent,instrument_mhz,note"
@@ -13514,6 +13571,7 @@ def load_proton_row(proton_id):
     return _sqlite_dataframe(f"SELECT {columns} FROM proton_nmr WHERE id = ?", (proton_id,))
 
 
+@authorized_read
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_carbon_data(compound_id):
     columns = "id,compound_id,delta_ppm,carbon_type,assignment,solvent,instrument_mhz,note"
@@ -13532,6 +13590,7 @@ def load_carbon_data(compound_id):
     return _sqlite_dataframe(f"SELECT {columns} FROM carbon_nmr WHERE compound_id = ? ORDER BY delta_ppm DESC", (compound_id,))
 
 
+@authorized_read
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_all_carbon_data():
     columns = "id,compound_id,delta_ppm,carbon_type,assignment,solvent,instrument_mhz,note"
@@ -13548,6 +13607,7 @@ def load_all_carbon_data():
     return _sqlite_dataframe("SELECT c.id, c.compound_id, cp.trivial_name, c.delta_ppm, c.carbon_type, c.assignment, c.solvent, c.instrument_mhz, c.note FROM carbon_nmr c LEFT JOIN compounds cp ON c.compound_id = cp.id ORDER BY c.id ASC")
 
 
+@authorized_read
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_carbon_row(carbon_id):
     columns = "id,compound_id,delta_ppm,carbon_type,assignment,solvent,instrument_mhz,note"
@@ -13563,6 +13623,7 @@ def load_carbon_row(carbon_id):
     return _sqlite_dataframe(f"SELECT {columns} FROM carbon_nmr WHERE id = ?", (carbon_id,))
 
 
+@authorized_read
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_spectra_files(compound_id):
     columns = "id,compound_id,spectrum_type,file_path,note"
@@ -13578,6 +13639,7 @@ def load_spectra_files(compound_id):
     return _sqlite_dataframe(f"SELECT {columns} FROM spectra_files WHERE compound_id = ? ORDER BY id ASC", (compound_id,))
 
 
+@authorized_read
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_all_spectra_files():
     columns = "id,compound_id,spectrum_type,file_path,note"
@@ -13594,6 +13656,7 @@ def load_all_spectra_files():
     return _sqlite_dataframe("SELECT s.id, s.compound_id, c.trivial_name, s.spectrum_type, s.file_path, s.note FROM spectra_files s LEFT JOIN compounds c ON s.compound_id = c.id ORDER BY s.id ASC")
 
 
+@authorized_read
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_spectrum_file_row(file_id):
     columns = "id,compound_id,spectrum_type,file_path,note"
@@ -13609,6 +13672,7 @@ def load_spectrum_file_row(file_id):
     return _sqlite_dataframe(f"SELECT {columns} FROM spectra_files WHERE id = ?", (file_id,))
 
 
+@authorized_read
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_bioactivity_data(compound_id):
     columns = "id,compound_id,activity_label,target_name,target_category,assay_type,potency_type,potency_relation,potency_value,potency_unit,outcome,assay_medium,selectivity,assay_source,note"
@@ -13624,6 +13688,7 @@ def load_bioactivity_data(compound_id):
     return _sqlite_dataframe(f"SELECT {columns} FROM bioactivity_records WHERE compound_id = ? ORDER BY id ASC", (compound_id,))
 
 
+@authorized_read
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_all_bioactivity_data():
     columns = "id,compound_id,activity_label,target_name,target_category,assay_type,potency_type,potency_relation,potency_value,potency_unit,outcome,assay_medium,selectivity,assay_source,note"
@@ -13640,6 +13705,7 @@ def load_all_bioactivity_data():
     return _sqlite_dataframe("SELECT b.id, b.compound_id, c.trivial_name, b.activity_label, b.target_name, b.target_category, b.assay_type, b.potency_type, b.potency_relation, b.potency_value, b.potency_unit, b.outcome, b.assay_medium, b.selectivity, b.assay_source, b.note FROM bioactivity_records b LEFT JOIN compounds c ON b.compound_id = c.id ORDER BY b.id ASC")
 
 
+@authorized_read
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_bioactivity_row(bioactivity_id):
     columns = "id,compound_id,activity_label,target_name,target_category,assay_type,potency_type,potency_relation,potency_value,potency_unit,outcome,assay_medium,selectivity,assay_source,note"
@@ -13664,6 +13730,7 @@ def _empty_dataframe_for_columns(columns: str) -> pd.DataFrame:
     return pd.DataFrame(columns=[item.strip() for item in columns.split(",") if item.strip()])
 
 
+@authorized_read
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def _load_all_specimens_cached(db_signature=None):
     backend = get_npdb_read_backend()
@@ -13677,6 +13744,7 @@ def _load_all_specimens_cached(db_signature=None):
     return _sqlite_dataframe(f"SELECT {SPECIMEN_COLUMNS} FROM specimens ORDER BY updated_at DESC")
 
 
+@authorized_read
 def load_all_specimens(db_signature=None):
     return redact_private_gps_for_current_user(_load_all_specimens_cached(db_signature))
 
@@ -13687,6 +13755,7 @@ except Exception:
     pass
 
 
+@authorized_read
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def _load_specimen_row_cached(specimen_id, db_signature=None):
     backend = get_npdb_read_backend()
@@ -13704,6 +13773,7 @@ def _load_specimen_row_cached(specimen_id, db_signature=None):
     return _sqlite_dataframe(f"SELECT {SPECIMEN_COLUMNS} FROM specimens WHERE id = ?", (specimen_id,))
 
 
+@authorized_read
 def load_specimen_row(specimen_id, db_signature=None):
     return redact_private_gps_for_current_user(_load_specimen_row_cached(specimen_id, db_signature))
 
@@ -13714,6 +13784,7 @@ except Exception:
     pass
 
 
+@authorized_read
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_specimen_compound_links(specimen_id=None, db_signature=None):
     backend = get_npdb_read_backend()
@@ -13749,6 +13820,7 @@ def load_specimen_compound_links(specimen_id=None, db_signature=None):
     return links_df.merge(compounds_df, on="compound_id", how="left")
 
 
+@authorized_read
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_specimen_extracts(specimen_id=None, db_signature=None):
     backend = get_npdb_read_backend()
@@ -13877,6 +13949,7 @@ def count_bioactivity_records(filtered_ids):
         conn.close()
 
 
+@authorized_read
 @st.cache_data(show_spinner=False, ttl=DATA_CACHE_TTL_SECONDS)
 def load_search_index(db_signature: float):
     compounds_df = load_all_compounds()
