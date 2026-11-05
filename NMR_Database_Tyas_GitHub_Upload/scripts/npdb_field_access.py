@@ -46,7 +46,7 @@ for canonical, labels in {
 
 # Explicit scientific/schema outputs allowed without treating every string as
 # location provenance. Opaque metadata and unknown columns are withheld below.
-SCIENTIFIC = {key(v) for v in '''id compound_id specimen_id proton_id carbon_id
+SCIENTIFIC = {key(v) for v in """id compound_id specimen_id proton_id carbon_id
 trivial_name iupac_name molecular_formula molecular_weight smiles inchi inchikey
 compound_class compound_subclass source_category source_organism scientific_name
 specimen_type curation_status created_at updated_at journal_name article_title
@@ -55,21 +55,30 @@ uv_data ftir_data cd_data optical_rotation melting_point crystallization_method 
 spectrum_type delta_ppm multiplicity j_value proton_count carbon_type assignment
 solvent instrument_mhz acquisition_date activity_label target_name target_category
 assay_type potency_type potency_relation potency_value potency_unit outcome assay_medium
-selectivity assay_source extract_type extract_label
-Rank Compound ID Specimen ID Trivial Name IUPAC Name Molecular Formula Molecular Weight
-Compound Class Compound Subclass Source Category Source Organism Scientific Name
-Curation Status Journal Name Article Title Publication Year DOI SMILES InChI InChIKey
-Bioactivity ID Spectra File ID Spectrum Type Activity Target Target Category Assay Type
-Metric Relation Value Unit Unit Status Outcome Assay Medium Selectivity Assay Source
-Matched Peaks Query Peaks DB Peaks Query Coverage (%) DB Coverage (%) Average Difference
-Heuristic NMR Rank (0–100) 1H Matched Peaks 1H Query Peaks 1H Query Coverage (%)
-1H Heuristic Rank (0–100) 13C Matched Peaks 13C Query Peaks 13C Query Coverage (%)
-13C Heuristic Rank (0–100) Combined Heuristic Rank (0–100) Similarity Score
-identity_relationship stereochemical_relationship stereo_relationship
-'''.splitlines() if v}
-# Tokenize schema's identifier lines, keep human labels as explicit whole labels.
-SCIENTIFIC |= {key(v) for v in '''id compound_id specimen_id proton_id carbon_id trivial_name iupac_name molecular_formula molecular_weight smiles inchi inchikey compound_class compound_subclass source_category source_organism scientific_name specimen_type curation_status created_at updated_at journal_name article_title publication_year volume issue pages doi ccdc_number data_source uv_data ftir_data cd_data optical_rotation melting_point crystallization_method hrms_data spectrum_type delta_ppm multiplicity j_value proton_count carbon_type assignment solvent instrument_mhz acquisition_date activity_label target_name target_category assay_type potency_type potency_relation potency_value potency_unit outcome assay_medium selectivity assay_source extract_type extract_label rank score total_score match_count total_query db_peak_count query_coverage db_coverage avg_difference proton_match_count proton_total_query proton_query_coverage proton_score carbon_match_count carbon_total_query carbon_query_coverage carbon_score atom_number atom_label carbon_number proton_number query_peaks matched_peaks db_peaks missing_peaks matched_pairs query_coverage_percent db_coverage_percent difference delta formula name count Category Count Percentage'''.split()}
-SCIENTIFIC |= {key(v) for v in ('proton','carbon','structures','spectra','bioactivity','compounds','proton_nmr','carbon_nmr','spectra_files','bioactivity_records','specimens','specimen_compounds','specimen_1h_extracts','Compound ID','Trivial Name','IUPAC Name','Molecular Formula','Molecular Weight','Compound Class','Compound Subclass','Source Category','Source Organism','Curation Status','Journal Name','Article Title','Publication Year','Data Source','CCDC','Bioactivity ID','Spectra File ID','Spectrum Type','Target Category','Assay Type','Unit Status','Assay Medium','Assay Source','Matched Peaks','Query Peaks','DB Peaks','Query Coverage (%)','DB Coverage (%)','Average Difference','Heuristic NMR Rank (0–100)','1H Matched Peaks','1H Query Peaks','1H Query Coverage (%)','1H Heuristic Rank (0–100)','13C Matched Peaks','13C Query Peaks','13C Query Coverage (%)','13C Heuristic Rank (0–100)','Combined Heuristic Rank (0–100)','Similarity (%)','Structure Relationship','proton_peaks','carbon_peaks','mol','fp','fingerprint','UV Data','FTIR Data','CD / ECD Data','Optical Rotation','Melting Point','HRMS Data')}
+selectivity assay_source extract_type
+rank score total_score match_count total_query db_peak_count query_coverage db_coverage avg_difference
+proton_match_count proton_total_query proton_query_coverage proton_score
+carbon_match_count carbon_total_query carbon_query_coverage carbon_score
+atom_number atom_label carbon_number proton_number query_peaks matched_peaks db_peaks missing_peaks
+matched_pairs query_coverage_percent db_coverage_percent difference delta formula name count Category Percentage
+proton carbon structures spectra bioactivity compounds proton_nmr carbon_nmr spectra_files bioactivity_records specimens
+specimen_compounds specimen_1h_extracts proton_peaks carbon_peaks mol fp fingerprint matches
+structure_score structure_match_type matched_smiles identity_relationship stereochemical_relationship stereo_relationship
+""".split()}
+SCIENTIFIC |= {key(v) for v in (
+    'Compound ID','Specimen ID','Trivial Name','IUPAC Name','Molecular Formula','Molecular Weight',
+    'Compound Class','Compound Subclass','Source Category','Source Organism','Scientific Name','Specimen Type',
+    'Curation Status','Journal Name','Article Title','Publication Year','Data Source','CCDC',
+    'Bioactivity ID','Spectra File ID','Spectrum Type','Activity','Target','Target Category','Assay Type','Metric','Relation','Value','Unit',
+    'Outcome','Selectivity','Unit Status','Assay Medium','Assay Source','Matched Peaks','Query Peaks','DB Peaks',
+    'Query Coverage (%)','DB Coverage (%)','Average Difference','Heuristic NMR Rank (0–100)',
+    '1H Matched Peaks','1H Query Peaks','1H Query Coverage (%)','1H Heuristic Rank (0–100)',
+    '13C Matched Peaks','13C Query Peaks','13C Query Coverage (%)','13C Heuristic Rank (0–100)',
+    'Combined Heuristic Rank (0–100)','Similarity (%)','Score (%)','Structure Relationship',
+    'UV Data','FTIR Data','CD / ECD Data','Optical Rotation','Melting Point','HRMS Data',
+    'δH (ppm)','δC (ppm)','J (Hz)','J Value','Proton Count','Carbon Type','Instrument (MHz)',
+)}
+
 OPAQUE = {key(v) for v in ('note','description','habitat','traits','color','texture','evidence_note','reference_note','observed_features','source_material','source_summary','specimen_name','file_path','image_path','structure_image_path','extract_label')}
 
 

@@ -29,7 +29,7 @@ def isolated_function(name, namespace):
     never uses the real Supabase client or real credentials.
     """
     if "require_backend_permission" not in namespace:
-        for key, value in bind_authorization(role="viewer").items():
+        for key, value in bind_authorization(role="viewer" if namespace.get("_viewer_fixture") else "owner").items():
             namespace.setdefault(key, value)
     tree = ast.parse(APP_PATH.read_text(encoding="utf-8"), filename=str(APP_PATH))
     matches = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name]
@@ -74,6 +74,7 @@ class SourceAndCacheRegressionTests(unittest.TestCase):
         snapshot_rows = pd.DataFrame([{"id": 101, "trivial_name": "old snapshot", "source_category": "", "gps_coordinates": "SYNTHETIC-GPS-SNAPSHOT"}])
         live_rows = pd.DataFrame([{"id": 101, "trivial_name": "fresh cloud", "source_category": "Sponge", "gps_coordinates": "SYNTHETIC-GPS-CLOUD"}])
         namespace = {
+            "_viewer_fixture":True,
             "st": FakeStreamlitCache(),
             "DATA_CACHE_TTL_SECONDS": 60,
             "SOURCE_NORMALIZATION_CACHE_VERSION": "v1",
@@ -140,6 +141,7 @@ class ColumnProbeRegressionTests(unittest.TestCase):
             return []
 
         ns = {
+            "_viewer_fixture":True,
             "st": FakeStreamlitCache(),
             "use_supabase_backend": lambda: True,
             "_supabase_request": fake_request,

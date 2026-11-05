@@ -25,6 +25,7 @@ import pandas as pd
 
 APP = Path(__file__).resolve().parents[1] / "scripts" / "app.py"
 sys.path.insert(0, str(APP.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 SOURCE = APP.read_text(encoding="utf-8")
 TREE = ast.parse(SOURCE)
 HAVE_RDKIT = importlib.util.find_spec("rdkit") is not None
