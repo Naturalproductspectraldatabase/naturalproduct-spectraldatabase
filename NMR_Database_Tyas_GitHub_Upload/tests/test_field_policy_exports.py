@@ -405,6 +405,23 @@ class SuccessfulFieldExports(unittest.TestCase):
         viewer['st'].image=lambda *a,**k:self.fail('old owner media registered')
         with self.assertRaises(PermissionError):viewer['guarded_scientific_image'](payload)
 
+    def test_actual_normalized_image_receipt_rejects_mutated_pixels_and_role_swap(self):
+        from PIL import Image,ImageOps
+        ns,_,_=fixture('owner')
+        png=io.BytesIO();Image.new('RGB',(8,8),'white').save(png,format='PNG')
+        ns.update(Image=Image,ImageOps=ImageOps,STRUCTURE_DETAIL_IMAGE_SIZE=(32,32),
+            read_scientific_asset=lambda *a:png.getvalue())
+        load(ns,'pil_image_to_png_bytes','normalize_structure_image','load_standardized_structure_image')
+        image=ns['load_standardized_structure_image'](Path('synthetic.png'))
+        captured=[];ns['st'].image=lambda data,**kw:captured.append(data)
+        ns['guarded_scientific_image'](image);self.assertEqual(len(captured),1)
+        image.putpixel((0,0),(0,0,0))
+        with self.assertRaises(PermissionError):ns['guarded_scientific_image'](image)
+        image=ns['load_standardized_structure_image'](Path('synthetic.png'))
+        ns['load_approved_users']()[0]['role']='viewer';ns['st'].session_state['npdb_role']='viewer'
+        ns['st'].session_state['npdb_credential_revision']=ns['configured_session_identity']()[1]
+        with self.assertRaises(PermissionError):ns['guarded_scientific_image'](image)
+
     def test_owner_review_requires_individually_enumerated_verified_evidence(self):
         _,record,_=fixture()
         packet=prepare('compounds',[record]);self.assertTrue(all(e['classification']=='UNKNOWN_UNVERIFIED' for e in packet['entries']))
